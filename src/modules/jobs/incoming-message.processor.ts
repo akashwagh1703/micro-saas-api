@@ -1,0 +1,86 @@
+import { Inject, Injectable } from '@nestjs/common';
+import { Workflow } from '@prisma/client';
+import { PrismaService } from '../../prisma/prisma.service';
+import { JOB_DISPATCHER, JobDispatcher } from '../queue/job-dispatcher';
+
+/** Ports ProcessIncomingWhatsAppMessage: matches workflows and fans out executions. */
+@Injectable()
+export class IncomingMessageProcessor {
+  constructor(
+    private readonly prisma: PrismaService,
+    @Inject(JOB_DISPATCHER) private readonly queue: JobDispatcher,
+  ) {}
+
+  async handle(messageId: number): Promise<void> {
+    const message = await this.prisma.message.findUnique({
+      where: { id: messageId },
+      include: { contact: true, conversation: true },
+    });
+
+    if (!message || message.direction !== 'incoming') {
+      return;
+    }
+
+    const metadata = (message.metadata as Record<string, any>) ?? {};
+    if (metadata.from_bot) {
+      return;
+    }
+
+    const workflows = await this.prisma.workflow.findMany({
+      where: {
+        userId: message.userId,
+        status: 'published',
+        isActive: true,
+        triggerType: 'message_received',
+      },
+    });
+
+    for (const workflow of workflows) {
+      if (!this.triggerMatches(workflow, String(message.content))) {
+        continue;
+      }
+
+      const execution = await this.prisma.workflowExecution.create({
+        data: {
+          userId: message.userId,
+          workflowId: workflow.id,
+          contactId: message.contactId,
+          conversationId: message.conversationId,
+          messageId: message.id,
+          status: 'pending',
+          context: {
+            message: message.content,
+            contact_phone: message.contact.phone,
+            contact_name: message.contact.name,
+          },
+        },
+      });
+
+      await this.queue.enqueueExecuteWorkflow(execution.id);
+    }
+  }
+
+  private triggerMatches(workflow: Workflow, messageText: string): boolean {
+    const definition = (workflow.definition as { nodes?: any[] }) ?? {};
+    const trigger = (definition.nodes ?? []).find((n) => n.type === 'trigger');
+    const data = trigger?.data ?? {};
+
+    const raw = data.keywords ?? '';
+    const keywords = (Array.isArray(raw) ? raw : String(raw).split(','))
+      .map((k: any) => String(k).trim())
+      .filter((k: string) => k.length > 0);
+
+    if (keywords.length === 0) {
+      return true;
+    }
+
+    const match = data.match ?? 'any';
+    const haystack = messageText.toLowerCase();
+
+    const hits = keywords.filter((k: string) =>
+      match === 'exact' ? haystack === k.toLowerCase() : haystack.includes(k.toLowerCase()),
+    );
+
+    return match === 'all' ? hits.length === keywords.length : hits.length > 0;
+  }
+}

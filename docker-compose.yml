@@ -1,0 +1,41 @@
+# Local development stack: PostgreSQL + the API (with in-process queue worker).
+# Usage:
+#   docker compose up --build
+#   docker compose exec api npx prisma migrate deploy
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: workflow_automation
+    ports:
+      - "5432:5432"
+    volumes:
+      - db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  api:
+    build: .
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      PORT: "3000"
+      APP_URL: http://localhost:3000
+      DATABASE_URL: postgresql://postgres:postgres@db:5432/workflow_automation?schema=public
+      DIRECT_URL: postgresql://postgres:postgres@db:5432/workflow_automation?schema=public
+      QUEUE_DRIVER: pgboss
+      APP_ENCRYPTION_KEY: "local-development-key-change-me"
+      BCRYPT_ROUNDS: "12"
+      WHATSAPP_GRAPH_VERSION: v21.0
+    ports:
+      - "3000:3000"
+
+volumes:
+  db_data:

@@ -1,0 +1,17 @@
+import { WorkflowExecution } from '@prisma/client';
+
+export interface NodeExecutionResult {
+  success: boolean;
+  output?: Record<string, any>;
+  error?: string | null;
+  stop?: boolean;
+  branch?: 'true' | 'false';
+}
+
+export interface NodeExecutor {
+  execute(
+    execution: WorkflowExecution,
+    node: Record<string, any>,
+    context: Record<string, any>,
+  ): Promise<NodeExecutionResult>;
+}

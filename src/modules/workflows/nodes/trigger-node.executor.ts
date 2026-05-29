@@ -1,0 +1,21 @@
+import { Injectable } from '@nestjs/common';
+import { WorkflowExecution } from '@prisma/client';
+import { NodeExecutionResult, NodeExecutor } from './node-executor.interface';
+
+@Injectable()
+export class TriggerNodeExecutor implements NodeExecutor {
+  async execute(
+    _execution: WorkflowExecution,
+    _node: Record<string, any>,
+    context: Record<string, any>,
+  ): Promise<NodeExecutionResult> {
+    return {
+      success: true,
+      output: {
+        message: context.message ?? '',
+        contact_phone: context.contact_phone ?? '',
+        contact_name: context.contact_name ?? '',
+      },
+    };
+  }
+}

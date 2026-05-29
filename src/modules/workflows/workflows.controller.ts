@@ -1,0 +1,251 @@
+import {
+  Body,
+  Controller,
+  Delete,
+  Get,
+  NotFoundException,
+  Param,
+  ParseIntPipe,
+  Patch,
+  Post,
+  Put,
+  Query,
+  Req,
+  Res,
+  UnprocessableEntityException,
+  UseGuards,
+} from '@nestjs/common';
+import { Request, Response } from 'express';
+import { TokenAuthGuard } from '../../common/guards/token-auth.guard';
+import { CurrentUser } from '../../common/decorators/current-user.decorator';
+import { PrismaService } from '../../prisma/prisma.service';
+import { ActivityLogger } from '../../common/activity-logger.service';
+import { paginate, resolvePage } from '../../common/pagination';
+import { serializeWorkflow, serializeWorkflowExecution } from '../../common/serializers';
+import { WorkflowValidator } from './workflow-validator.service';
+import { WorkflowTemplateService } from './workflow-template.service';
+import { CreateWorkflowDto, UpdateWorkflowDto, ValidateDefinitionDto } from './dto/workflow.dto';
+
+@Controller('workflows')
+@UseGuards(TokenAuthGuard)
+export class WorkflowsController {
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly validator: WorkflowValidator,
+    private readonly templates: WorkflowTemplateService,
+    private readonly activity: ActivityLogger,
+  ) {}
+
+  // --- Static / specific routes first (must precede ":id") ---
+
+  @Get('templates/list')
+  async templatesList(@CurrentUser('id') userId: number) {
+    const templates = this.templates.listTemplates();
+    const imported = (
+      await this.prisma.workflow.findMany({
+        where: { userId, sourceTemplate: { not: null } },
+        select: { sourceTemplate: true },
+      })
+    ).map((w) => w.sourceTemplate);
+
+    return {
+      templates: templates.map((t) => ({ ...t, imported: imported.includes(t.slug) })),
+    };
+  }
+
+  @Post('templates/seed-all')
+  async seedAll(@CurrentUser('id') userId: number) {
+    const created = await this.templates.seedAllForUser(userId);
+    return { message: `${created.length} workflow(s) added`, count: created.length };
+  }
+
+  @Post('templates/:slug/clone')
+  async cloneTemplate(
+    @CurrentUser('id') userId: number,
+    @Param('slug') slug: string,
+    @Res() res: Response,
+  ) {
+    const existing = await this.prisma.workflow.findFirst({
+      where: { userId, sourceTemplate: slug },
+    });
+    if (existing) {
+      return res.status(200).json({
+        workflow: serializeWorkflow(existing),
+        already_existed: true,
+        message: 'Template already in your account',
+      });
+    }
+
+    const workflow = await this.templates.cloneForUser(userId, slug);
+    if (!workflow) {
+      return res.status(404).json({ message: 'Template not found' });
+    }
+
+    return res.status(201).json({
+      workflow: serializeWorkflow(workflow),
+      already_existed: false,
+      message: 'Template added to your workflows',
+    });
+  }
+
+  @Post('validate')
+  validateDefinition(@Body() dto: ValidateDefinitionDto) {
+    const errors = this.validator.validate(dto.definition);
+    return { valid: errors.length === 0, errors };
+  }
+
+  @Post(':id/publish')
+  async publish(@CurrentUser('id') userId: number, @Param('id', ParseIntPipe) id: number) {
+    const workflow = await this.findOrFail(userId, id);
+    const errors = this.validator.validate(workflow.definition as any);
+    if (errors.length > 0) {
+      throw new UnprocessableEntityException({ errors });
+    }
+    const updated = await this.prisma.workflow.update({
+      where: { id },
+      data: { status: 'published', isActive: true },
+    });
+    return { workflow: serializeWorkflow(updated) };
+  }
+
+  @Post(':id/unpublish')
+  async unpublish(@CurrentUser('id') userId: number, @Param('id', ParseIntPipe) id: number) {
+    await this.findOrFail(userId, id);
+    const updated = await this.prisma.workflow.update({
+      where: { id },
+      data: { status: 'draft', isActive: false },
+    });
+    return { workflow: serializeWorkflow(updated) };
+  }
+
+  @Get(':id/executions')
+  async executions(
+    @CurrentUser('id') userId: number,
+    @Param('id', ParseIntPipe) id: number,
+    @Query('page') page: string | undefined,
+    @Req() req: Request,
+  ) {
+    await this.findOrFail(userId, id);
+
+    const perPage = 20;
+    const currentPage = resolvePage(page);
+
+    const [items, total] = await this.prisma.$transaction([
+      this.prisma.workflowExecution.findMany({
+        where: { userId, workflowId: id },
+        include: { logs: true },
+        orderBy: { createdAt: 'desc' },
+        skip: (currentPage - 1) * perPage,
+        take: perPage,
+      }),
+      this.prisma.workflowExecution.count({ where: { userId, workflowId: id } }),
+    ]);
+
+    const path = `${req.protocol}://${req.get('host')}${req.path}`;
+    return paginate(items, total, currentPage, perPage, path, serializeWorkflowExecution);
+  }
+
+  // --- Resource routes ---
+
+  @Get()
+  async index(
+    @CurrentUser('id') userId: number,
+    @Query('page') page: string | undefined,
+    @Req() req: Request,
+  ) {
+    const perPage = 15;
+    const currentPage = resolvePage(page);
+
+    const [items, total] = await this.prisma.$transaction([
+      this.prisma.workflow.findMany({
+        where: { userId },
+        orderBy: { createdAt: 'desc' },
+        skip: (currentPage - 1) * perPage,
+        take: perPage,
+      }),
+      this.prisma.workflow.count({ where: { userId } }),
+    ]);
+
+    const path = `${req.protocol}://${req.get('host')}${req.path}`;
+    return paginate(items, total, currentPage, perPage, path, serializeWorkflow);
+  }
+
+  @Post()
+  async store(@CurrentUser('id') userId: number, @Body() dto: CreateWorkflowDto) {
+    const workflow = await this.prisma.workflow.create({
+      data: {
+        userId,
+        name: dto.name,
+        description: dto.description ?? null,
+        triggerType: dto.trigger_type ?? 'message_received',
+        status: 'draft',
+        definition: (dto.definition ?? this.defaultDefinition()) as any,
+      },
+    });
+
+    await this.activity.log(userId, 'workflow_created', `Workflow created: ${workflow.name}`);
+    return { workflow: serializeWorkflow(workflow) };
+  }
+
+  @Get(':id')
+  async show(@CurrentUser('id') userId: number, @Param('id', ParseIntPipe) id: number) {
+    const workflow = await this.findOrFail(userId, id);
+    return { workflow: serializeWorkflow(workflow) };
+  }
+
+  @Put(':id')
+  @Patch(':id')
+  async update(
+    @CurrentUser('id') userId: number,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: UpdateWorkflowDto,
+  ) {
+    await this.findOrFail(userId, id);
+
+    if (dto.definition !== undefined) {
+      const errors = this.validator.validate(dto.definition);
+      if (errors.length > 0) {
+        throw new UnprocessableEntityException({ errors });
+      }
+    }
+
+    const data: Record<string, any> = {};
+    if (dto.name !== undefined) data.name = dto.name;
+    if (dto.description !== undefined) data.description = dto.description;
+    if (dto.trigger_type !== undefined) data.triggerType = dto.trigger_type;
+    if (dto.definition !== undefined) data.definition = dto.definition;
+    if (dto.is_active !== undefined) data.isActive = dto.is_active;
+
+    const workflow = await this.prisma.workflow.update({ where: { id }, data });
+    return { workflow: serializeWorkflow(workflow) };
+  }
+
+  @Delete(':id')
+  async destroy(@CurrentUser('id') userId: number, @Param('id', ParseIntPipe) id: number) {
+    await this.findOrFail(userId, id);
+    await this.prisma.workflow.delete({ where: { id } });
+    return { message: 'Workflow deleted' };
+  }
+
+  private async findOrFail(userId: number, id: number) {
+    const workflow = await this.prisma.workflow.findFirst({ where: { userId, id } });
+    if (!workflow) {
+      throw new NotFoundException('No query results for model [Workflow].');
+    }
+    return workflow;
+  }
+
+  private defaultDefinition() {
+    return {
+      nodes: [
+        {
+          id: 'trigger-1',
+          type: 'trigger',
+          position: { x: 100, y: 100 },
+          data: { label: 'Message Received' },
+        },
+      ],
+      edges: [],
+    };
+  }
+}

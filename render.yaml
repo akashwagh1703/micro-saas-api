@@ -1,0 +1,39 @@
+# Render Blueprint: one free web service + one free PostgreSQL.
+# The web instance serves the API and runs the pg-boss queue worker in-process,
+# so there is no separate worker service and no Redis required.
+services:
+  - type: web
+    name: micro-saas-api
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    plan: free
+    healthCheckPath: /up
+    envVars:
+      - key: NODE_ENV
+        value: production
+      # 32-byte secret for encrypting WhatsApp/AI credentials. Render generates a
+      # random value; CryptoService derives a 32-byte key from it.
+      - key: APP_ENCRYPTION_KEY
+        generateValue: true
+      - key: BCRYPT_ROUNDS
+        value: "12"
+      - key: WHATSAPP_GRAPH_VERSION
+        value: v21.0
+      - key: QUEUE_DRIVER
+        value: pgboss
+      - key: DATABASE_URL
+        fromDatabase:
+          name: micro-saas-db
+          property: connectionString
+      # Render Postgres is not pooled, so the direct URL is the same connection string.
+      - key: DIRECT_URL
+        fromDatabase:
+          name: micro-saas-db
+          property: connectionString
+      # Set this to your deployed URL after the first deploy (used for webhook_url).
+      - key: APP_URL
+        sync: false
+
+databases:
+  - name: micro-saas-db
+    plan: free
