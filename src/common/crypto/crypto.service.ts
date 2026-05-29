@@ -3,10 +3,6 @@ import { ConfigService } from '@nestjs/config';
 import * as crypto from 'crypto';
 import * as bcrypt from 'bcryptjs';
 
-/**
- * Handles password hashing (bcrypt), at-rest secret encryption (AES-256-GCM),
- * and Sanctum-style access token generation (random plaintext + sha256 hash).
- */
 @Injectable()
 export class CryptoService {
   private readonly logger = new Logger(CryptoService.name);
