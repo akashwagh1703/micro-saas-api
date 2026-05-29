@@ -1,6 +1,8 @@
-# Render Blueprint: one free web service + one free PostgreSQL.
+# Render Blueprint: one free web service (Docker).
 # The web instance serves the API and runs the pg-boss queue worker in-process,
 # so there is no separate worker service and no Redis required.
+# DATABASE_URL/DIRECT_URL point to an externally-created Render Postgres (set in
+# the dashboard), so this blueprint does not provision its own database.
 services:
   - type: web
     name: micro-saas-api
