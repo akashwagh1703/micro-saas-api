@@ -297,8 +297,14 @@ export class WorkflowsController {
 
   @Delete(':id')
   async destroy(@CurrentUser('id') userId: number, @Param('id', ParseIntPipe) id: number) {
+    // Must belong to the authenticated user and be visible in their current business scope.
     await this.findOrFail(userId, id);
-    await this.prisma.workflow.delete({ where: { id } });
+    const deleted = await this.prisma.workflow.deleteMany({
+      where: { id, userId },
+    });
+    if (deleted.count === 0) {
+      throw new NotFoundException('No query results for model [Workflow].');
+    }
     return { message: 'Workflow deleted' };
   }
 
