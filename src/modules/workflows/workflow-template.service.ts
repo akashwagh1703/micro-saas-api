@@ -2,6 +2,12 @@ import { Injectable } from '@nestjs/common';
 import { Workflow } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { WORKFLOW_TEMPLATES, WorkflowDefinition, findTemplate } from './workflow-templates';
+import {
+  businessLabel,
+  businessPromptPrefix,
+  resolveTemplateSlug,
+  useCaseLabel,
+} from './business-workflow';
 
 export interface TemplateSummary {
   slug: string;
@@ -52,6 +58,58 @@ export class WorkflowTemplateService {
         sourceTemplate: slug,
       },
     });
+  }
+
+  /**
+   * Builds a workflow tailored to a business + use case: picks the closest
+   * starter template, personalizes its AI prompts with business context, and
+   * saves it as a fresh draft (always created, never deduped).
+   */
+  async generateForUser(
+    userId: number,
+    businessCategory: string,
+    useCase: string,
+  ): Promise<Workflow | null> {
+    const slug = resolveTemplateSlug(businessCategory, useCase);
+    const template = findTemplate(slug);
+    if (!template) {
+      return null;
+    }
+
+    const definition = this.personalizeDefinition(template.definition, businessCategory);
+    const name = `${businessLabel(businessCategory)} · ${useCaseLabel(useCase)}`;
+
+    return this.prisma.workflow.create({
+      data: {
+        userId,
+        name,
+        description: `Auto-generated for ${businessLabel(businessCategory)} (${useCaseLabel(useCase)}). Based on "${template.name}".`,
+        status: 'draft',
+        isActive: false,
+        triggerType: template.trigger_type,
+        definition: definition as any,
+        sourceTemplate: slug,
+      },
+    });
+  }
+
+  /** Deep-clones a definition and prepends business context to every AI node prompt. */
+  private personalizeDefinition(
+    definition: WorkflowDefinition,
+    businessCategory: string,
+  ): WorkflowDefinition {
+    const clone: WorkflowDefinition = JSON.parse(JSON.stringify(definition));
+    const prefix = businessPromptPrefix(businessCategory);
+
+    for (const node of clone.nodes ?? []) {
+      if (node.type === 'ai' && node.data && typeof node.data.prompt === 'string') {
+        if (!node.data.prompt.startsWith(prefix)) {
+          node.data.prompt = `${prefix}${node.data.prompt}`;
+        }
+      }
+    }
+
+    return clone;
   }
 
   async seedAllForUser(userId: number): Promise<Workflow[]> {

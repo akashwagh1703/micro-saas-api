@@ -13,7 +13,12 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { CryptoService } from '../../common/crypto/crypto.service';
 import { serializeUser } from '../../common/serializers';
 import { SettingsService } from './settings.service';
-import { ChangePasswordDto, UpdateIntegrationsDto, UpdateProfileDto } from './dto/settings.dto';
+import {
+  ChangePasswordDto,
+  UpdateBusinessProfileDto,
+  UpdateIntegrationsDto,
+  UpdateProfileDto,
+} from './dto/settings.dto';
 
 @Controller('settings')
 @UseGuards(TokenAuthGuard)
@@ -68,6 +73,30 @@ export class SettingsController {
     const password = await this.crypto.hashPassword(dto.password);
     await this.prisma.user.update({ where: { id: user.id }, data: { password } });
     return { message: 'Password updated' };
+  }
+
+  @Get('business-profile')
+  async getBusinessProfile(@CurrentUser('id') userId: number) {
+    const settings = await this.settings.getMany(userId, ['business_category', 'use_case']);
+    return {
+      business_category: settings.business_category,
+      use_case: settings.use_case,
+      configured: !!settings.business_category && !!settings.use_case,
+    };
+  }
+
+  @Put('business-profile')
+  async updateBusinessProfile(
+    @CurrentUser('id') userId: number,
+    @Body() dto: UpdateBusinessProfileDto,
+  ) {
+    await this.settings.set(userId, 'business_category', dto.business_category);
+    await this.settings.set(userId, 'use_case', dto.use_case);
+    return {
+      business_category: dto.business_category,
+      use_case: dto.use_case,
+      configured: true,
+    };
   }
 
   @Get('integrations')

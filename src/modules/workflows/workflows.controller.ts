@@ -24,7 +24,12 @@ import { paginate, resolvePage } from '../../common/pagination';
 import { serializeWorkflow, serializeWorkflowExecution } from '../../common/serializers';
 import { WorkflowValidator } from './workflow-validator.service';
 import { WorkflowTemplateService } from './workflow-template.service';
-import { CreateWorkflowDto, UpdateWorkflowDto, ValidateDefinitionDto } from './dto/workflow.dto';
+import {
+  CreateWorkflowDto,
+  GenerateWorkflowDto,
+  UpdateWorkflowDto,
+  ValidateDefinitionDto,
+} from './dto/workflow.dto';
 
 @Controller('workflows')
 @UseGuards(TokenAuthGuard)
@@ -92,6 +97,24 @@ export class WorkflowsController {
   validateDefinition(@Body() dto: ValidateDefinitionDto) {
     const errors = this.validator.validate(dto.definition);
     return { valid: errors.length === 0, errors };
+  }
+
+  @Post('generate')
+  async generate(@CurrentUser('id') userId: number, @Body() dto: GenerateWorkflowDto) {
+    const workflow = await this.templates.generateForUser(
+      userId,
+      dto.business_category,
+      dto.use_case,
+    );
+    if (!workflow) {
+      throw new UnprocessableEntityException({ message: 'Could not generate a workflow' });
+    }
+    await this.activity.log(
+      userId,
+      'workflow_generated',
+      `Guided workflow created: ${workflow.name}`,
+    );
+    return { workflow: serializeWorkflow(workflow) };
   }
 
   @Post(':id/publish')

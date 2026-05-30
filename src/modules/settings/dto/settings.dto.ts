@@ -25,6 +25,36 @@ export class ChangePasswordDto {
   password_confirmation?: string;
 }
 
+export const BUSINESS_CATEGORIES = [
+  'farmer',
+  'real_estate',
+  'coaching',
+  'clinic',
+  'local_shop',
+  'travel',
+  'insurance',
+  'ca_accountant',
+  'support',
+  'other',
+] as const;
+
+export const USE_CASES = [
+  'customer_support',
+  'lead_generation',
+  'appointment_booking',
+  'sales_assistant',
+  'faq_bot',
+  'ai_chat',
+] as const;
+
+export class UpdateBusinessProfileDto {
+  @IsIn(BUSINESS_CATEGORIES as unknown as string[])
+  business_category: string;
+
+  @IsIn(USE_CASES as unknown as string[])
+  use_case: string;
+}
+
 export class UpdateIntegrationsDto {
   @IsOptional()
   @IsString()

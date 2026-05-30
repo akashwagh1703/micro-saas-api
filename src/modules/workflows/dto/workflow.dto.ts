@@ -1,4 +1,5 @@
-import { IsBoolean, IsObject, IsOptional, IsString, MaxLength } from 'class-validator';
+import { IsBoolean, IsIn, IsObject, IsOptional, IsString, MaxLength } from 'class-validator';
+import { BUSINESS_CATEGORIES, USE_CASES } from '../../settings/dto/settings.dto';
 
 export class CreateWorkflowDto {
   @IsString()
@@ -44,4 +45,12 @@ export class UpdateWorkflowDto {
 export class ValidateDefinitionDto {
   @IsObject()
   definition: Record<string, any>;
+}
+
+export class GenerateWorkflowDto {
+  @IsIn(BUSINESS_CATEGORIES as unknown as string[])
+  business_category: string;
+
+  @IsIn(USE_CASES as unknown as string[])
+  use_case: string;
 }
