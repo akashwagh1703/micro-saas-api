@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { IntegrationsModule } from '../integrations/integrations.module';
 import { SettingsModule } from '../settings/settings.module';
+import { BillingModule } from '../billing/billing.module';
 import { WorkflowsController } from './workflows.controller';
 import { WorkflowValidator } from './workflow-validator.service';
 import { WorkflowTemplateService } from './workflow-template.service';
@@ -14,7 +15,7 @@ import { SendMessageNodeExecutor } from './nodes/send-message-node.executor';
 import { CollectInputNodeExecutor } from './nodes/collect-input-node.executor';
 
 @Module({
-  imports: [IntegrationsModule, SettingsModule],
+  imports: [IntegrationsModule, SettingsModule, BillingModule],
   controllers: [WorkflowsController],
   providers: [
     WorkflowValidator,

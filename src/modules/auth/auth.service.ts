@@ -2,6 +2,7 @@ import { Injectable, UnprocessableEntityException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CryptoService } from '../../common/crypto/crypto.service';
 import { serializeUser } from '../../common/serializers';
+import { BillingService } from '../billing/billing.service';
 import { ForgotPasswordDto, LoginDto, RegisterDto } from './dto/auth.dto';
 
 @Injectable()
@@ -9,6 +10,7 @@ export class AuthService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly crypto: CryptoService,
+    private readonly billing: BillingService,
   ) {}
 
   async register(dto: RegisterDto) {
@@ -32,6 +34,8 @@ export class AuthService {
         name: dto.name,
         email: dto.email,
         password: await this.crypto.hashPassword(dto.password),
+        trialEndsAt: this.billing.trialEndsAtForNewUser(),
+        subscriptionStatus: 'trial',
       },
     });
 

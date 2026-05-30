@@ -23,6 +23,14 @@ model User {
   createdAt       DateTime? @default(now()) @map("created_at")
   updatedAt       DateTime? @updatedAt @map("updated_at")
 
+  // Platform billing (14-day trial, then Razorpay monthly/yearly)
+  trialEndsAt            DateTime  @map("trial_ends_at")
+  subscriptionStatus     String    @default("trial") @map("subscription_status") @db.VarChar(20)
+  subscriptionPlan       String?   @map("subscription_plan") @db.VarChar(20)
+  razorpayCustomerId     String?   @map("razorpay_customer_id") @db.VarChar(64)
+  razorpaySubscriptionId String?   @map("razorpay_subscription_id") @db.VarChar(64)
+  currentPeriodEnd       DateTime? @map("current_period_end")
+
   whatsAppAccount     WhatsAppAccount?
   contacts            Contact[]
   conversations       Conversation[]

@@ -2,6 +2,7 @@ import { Inject, Injectable } from '@nestjs/common';
 import { Workflow } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { SettingsService } from '../settings/settings.service';
+import { BillingService } from '../billing/billing.service';
 import { workflowHasTriggerKeywords } from '../workflows/business-workflow';
 import { JOB_DISPATCHER, JobDispatcher } from '../queue/job-dispatcher';
 
@@ -11,6 +12,7 @@ export class IncomingMessageProcessor {
   constructor(
     private readonly prisma: PrismaService,
     private readonly settings: SettingsService,
+    private readonly billing: BillingService,
     @Inject(JOB_DISPATCHER) private readonly queue: JobDispatcher,
   ) {}
 
@@ -21,6 +23,10 @@ export class IncomingMessageProcessor {
     });
 
     if (!message || message.direction !== 'incoming') {
+      return;
+    }
+
+    if (!(await this.billing.hasPlatformAccess(message.userId))) {
       return;
     }
 

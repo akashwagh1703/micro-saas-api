@@ -43,6 +43,7 @@ export class AllExceptionsFilter implements ExceptionFilter {
         } else {
           const message = obj.message;
           body = { message: Array.isArray(message) ? message[0] : (message ?? 'Error') };
+          if (obj.code) body.code = obj.code;
         }
       }
     } else if (exception instanceof Prisma.PrismaClientKnownRequestError) {

@@ -24,6 +24,7 @@ import { paginate, resolvePage } from '../../common/pagination';
 import { serializeWorkflow, serializeWorkflowExecution } from '../../common/serializers';
 import { buildVisibleWorkflowsWhere } from '../../common/workflow-scope';
 import { SettingsService } from '../settings/settings.service';
+import { BillingService } from '../billing/billing.service';
 import { WorkflowValidator } from './workflow-validator.service';
 import { WorkflowTemplateService } from './workflow-template.service';
 import {
@@ -44,6 +45,7 @@ export class WorkflowsController {
     private readonly templates: WorkflowTemplateService,
     private readonly activity: ActivityLogger,
     private readonly settings: SettingsService,
+    private readonly billing: BillingService,
   ) {}
 
   // --- Static / specific routes first (must precede ":id") ---
@@ -167,6 +169,7 @@ export class WorkflowsController {
 
   @Post(':id/publish')
   async publish(@CurrentUser('id') userId: number, @Param('id', ParseIntPipe) id: number) {
+    await this.billing.assertPlatformAccess(userId);
     const workflow = await this.findOrFail(userId, id);
     const errors = this.validator.validate(workflow.definition as any);
     if (errors.length > 0) {
