@@ -15,6 +15,7 @@
     "start:render": "sh scripts/render-start.sh",
     "render:build": "npm ci && npm run build",
     "render:migrate": "prisma migrate deploy",
+    "db:apply-business-scope": "powershell -ExecutionPolicy Bypass -File scripts/apply-business-scope.ps1",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
     "prisma:deploy": "prisma migrate deploy",
