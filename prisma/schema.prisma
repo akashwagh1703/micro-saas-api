@@ -140,23 +140,27 @@ model Message {
 }
 
 model Workflow {
-  id             Int       @id @default(autoincrement())
-  userId         Int       @map("user_id")
-  name           String
-  description    String?
-  status         String    @default("draft")
-  isActive       Boolean   @default(false) @map("is_active")
-  triggerType    String    @default("message_received") @map("trigger_type")
-  sourceTemplate String?   @map("source_template")
-  definition     Json?
-  createdAt      DateTime? @default(now()) @map("created_at")
-  updatedAt      DateTime? @updatedAt @map("updated_at")
+  id               Int       @id @default(autoincrement())
+  userId           Int       @map("user_id")
+  name             String
+  description      String?
+  status           String    @default("draft")
+  isActive         Boolean   @default(false) @map("is_active")
+  triggerType      String    @default("message_received") @map("trigger_type")
+  sourceTemplate   String?   @map("source_template")
+  businessCategory String?   @map("business_category")
+  useCase          String?   @map("use_case")
+  isArchived       Boolean   @default(false) @map("is_archived")
+  definition       Json?
+  createdAt        DateTime? @default(now()) @map("created_at")
+  updatedAt        DateTime? @updatedAt @map("updated_at")
 
   user       User                @relation(fields: [userId], references: [id], onDelete: Cascade)
   executions WorkflowExecution[]
 
   @@index([userId, status])
   @@index([userId, sourceTemplate])
+  @@index([userId, businessCategory, isArchived])
   @@map("workflows")
 }
 

@@ -4,6 +4,8 @@
  * "generate workflow" flow. Slugs reference WORKFLOW_TEMPLATES or guided templates.
  */
 
+import type { WorkflowDefinition } from './workflow-templates';
+
 export const BUSINESS_LABELS: Record<string, string> = {
   farmer: 'Farmer / Agriculture',
   real_estate: 'Real Estate',
@@ -159,4 +161,49 @@ export function useCaseLabel(key: string): string {
 export function businessPromptPrefix(businessCategory: string): string {
   const context = BUSINESS_CONTEXT[businessCategory] ?? BUSINESS_CONTEXT.other;
   return `You are a WhatsApp assistant for ${context}. Keep replies relevant to this business. `;
+}
+
+/**
+ * Default trigger keywords per use case so multiple published workflows do not all
+ * fire on every message. Empty = catch-all (typically ai_chat only).
+ */
+export const USE_CASE_TRIGGER_KEYWORDS: Record<string, string[]> = {
+  lead_generation: ['lead', 'buy', 'quote', 'interested', 'inquiry', 'price'],
+  appointment_booking: ['book', 'appointment', 'schedule', 'slot', 'meeting', 'visit'],
+  faq_bot: ['faq', 'hours', 'location', 'info', 'timing', 'address', 'where'],
+  customer_support: ['help', 'support', 'issue', 'problem', 'complaint', 'assist'],
+  sales_assistant: ['order', 'purchase', 'catalog', 'product', 'shop', 'buy'],
+  ai_chat: [],
+};
+
+/** Tags the trigger node with use-case keywords so only the matching workflow runs. */
+export function applyUseCaseTriggerKeywords(
+  definition: WorkflowDefinition,
+  useCase: string,
+): WorkflowDefinition {
+  const clone: WorkflowDefinition = JSON.parse(JSON.stringify(definition));
+  const keywords = USE_CASE_TRIGGER_KEYWORDS[useCase] ?? [];
+  const trigger = (clone.nodes ?? []).find((n) => n.type === 'trigger');
+
+  if (trigger?.data) {
+    if (keywords.length > 0) {
+      trigger.data.keywords = keywords.join(',');
+      trigger.data.match = 'any';
+      trigger.data.summary = `Runs when the message matches ${useCaseLabel(useCase)} keywords`;
+    } else {
+      trigger.data.summary = 'Runs on any message (general assistant)';
+    }
+  }
+
+  return clone;
+}
+
+export function workflowHasTriggerKeywords(definition: unknown): boolean {
+  const nodes = ((definition as { nodes?: any[] }) ?? {}).nodes ?? [];
+  const trigger = nodes.find((n) => n.type === 'trigger');
+  const raw = trigger?.data?.keywords ?? '';
+  const keywords = (Array.isArray(raw) ? raw : String(raw).split(','))
+    .map((k: string) => k.trim())
+    .filter(Boolean);
+  return keywords.length > 0;
 }

@@ -12,10 +12,14 @@ import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CryptoService } from '../../common/crypto/crypto.service';
 import { serializeUser } from '../../common/serializers';
+import {
+  currentBusinessPublishedWhere,
+  parseUseCases,
+} from '../../common/workflow-scope';
+import { businessLabel, useCaseLabel } from '../workflows/business-workflow';
 import { SettingsService } from './settings.service';
 import {
   ChangePasswordDto,
-  UpdateBusinessProfileDto,
   UpdateIntegrationsDto,
   UpdateProfileDto,
 } from './dto/settings.dto';
@@ -79,39 +83,29 @@ export class SettingsController {
   async getBusinessProfile(@CurrentUser('id') userId: number) {
     const settings = await this.settings.getMany(userId, [
       'business_category',
+      'use_cases',
       'use_case',
       'business_description',
     ]);
-    return {
-      business_category: settings.business_category,
-      use_case: settings.use_case,
-      business_description: settings.business_description,
-      configured: !!settings.business_category && !!settings.use_case,
-    };
-  }
+    const use_cases = parseUseCases(settings);
+    const business_category = settings.business_category ?? null;
 
-  @Put('business-profile')
-  async updateBusinessProfile(
-    @CurrentUser('id') userId: number,
-    @Body() dto: UpdateBusinessProfileDto,
-  ) {
-    if (dto.business_category === 'other' && !dto.business_description?.trim()) {
-      throw new UnprocessableEntityException({
-        message: 'The given data was invalid.',
-        errors: { business_description: ['Please describe your business when selecting Other.'] },
+    let published_count = 0;
+    if (business_category) {
+      published_count = await this.prisma.workflow.count({
+        where: currentBusinessPublishedWhere(userId, business_category),
       });
     }
 
-    await this.settings.set(userId, 'business_category', dto.business_category);
-    await this.settings.set(userId, 'use_case', dto.use_case);
-    if (dto.business_description !== undefined) {
-      await this.settings.set(userId, 'business_description', dto.business_description.trim());
-    }
     return {
-      business_category: dto.business_category,
-      use_case: dto.use_case,
-      business_description: dto.business_description?.trim() ?? null,
-      configured: true,
+      business_category,
+      use_cases,
+      business_description: settings.business_description ?? null,
+      business_label: business_category ? businessLabel(business_category) : null,
+      use_case_labels: use_cases.map((uc) => useCaseLabel(uc)),
+      configured: !!business_category && use_cases.length > 0,
+      published_count,
+      can_change_business: published_count === 0,
     };
   }
 

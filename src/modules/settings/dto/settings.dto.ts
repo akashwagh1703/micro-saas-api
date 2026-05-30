@@ -1,4 +1,4 @@
-import { IsEmail, IsIn, IsOptional, IsString, MaxLength, MinLength } from 'class-validator';
+import { IsArray, IsEmail, IsIn, IsOptional, IsString, MaxLength, MinLength, ArrayMinSize } from 'class-validator';
 
 export class UpdateProfileDto {
   @IsOptional()
@@ -51,8 +51,10 @@ export class UpdateBusinessProfileDto {
   @IsIn(BUSINESS_CATEGORIES as unknown as string[])
   business_category: string;
 
-  @IsIn(USE_CASES as unknown as string[])
-  use_case: string;
+  @IsArray()
+  @ArrayMinSize(1)
+  @IsIn(USE_CASES as unknown as string[], { each: true })
+  use_cases: string[];
 
   /** Required when business_category is "other" — describes the business for AI workflow generation. */
   @IsOptional()

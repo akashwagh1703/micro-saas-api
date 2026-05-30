@@ -1,6 +1,8 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { Workflow } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import { SettingsService } from '../settings/settings.service';
+import { workflowHasTriggerKeywords } from '../workflows/business-workflow';
 import { JOB_DISPATCHER, JobDispatcher } from '../queue/job-dispatcher';
 
 /** Ports ProcessIncomingWhatsAppMessage: matches workflows and fans out executions. */
@@ -8,6 +10,7 @@ import { JOB_DISPATCHER, JobDispatcher } from '../queue/job-dispatcher';
 export class IncomingMessageProcessor {
   constructor(
     private readonly prisma: PrismaService,
+    private readonly settings: SettingsService,
     @Inject(JOB_DISPATCHER) private readonly queue: JobDispatcher,
   ) {}
 
@@ -54,20 +57,29 @@ export class IncomingMessageProcessor {
       return;
     }
 
+    const businessCategory = await this.settings.get(message.userId, 'business_category');
     const workflows = await this.prisma.workflow.findMany({
       where: {
         userId: message.userId,
         status: 'published',
         isActive: true,
+        isArchived: false,
         triggerType: 'message_received',
+        ...(businessCategory ? { businessCategory } : {}),
       },
     });
 
-    for (const workflow of workflows) {
-      if (!this.triggerMatches(workflow, String(message.content))) {
-        continue;
-      }
+    const content = String(message.content);
+    const matching = workflows.filter((w) => this.triggerMatches(w, content));
+    const keywordWorkflows = matching.filter((w) =>
+      workflowHasTriggerKeywords(w.definition),
+    );
+    const catchAllWorkflows = matching.filter(
+      (w) => !workflowHasTriggerKeywords(w.definition),
+    );
+    const toRun = keywordWorkflows.length > 0 ? keywordWorkflows : catchAllWorkflows;
 
+    for (const workflow of toRun) {
       const execution = await this.prisma.workflowExecution.create({
         data: {
           userId: message.userId,

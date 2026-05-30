@@ -1,4 +1,4 @@
-import { IsBoolean, IsIn, IsObject, IsOptional, IsString, MaxLength } from 'class-validator';
+import { IsArray, IsBoolean, IsIn, IsObject, IsOptional, IsString, MaxLength, ArrayMinSize } from 'class-validator';
 import { BUSINESS_CATEGORIES, USE_CASES } from '../../settings/dto/settings.dto';
 
 export class CreateWorkflowDto {
@@ -61,3 +61,18 @@ export class GenerateWorkflowDto {
 }
 
 export class GenerateWorkflowQueryDto extends GenerateWorkflowDto {}
+
+export class SetupBusinessDto {
+  @IsIn(BUSINESS_CATEGORIES as unknown as string[])
+  business_category: string;
+
+  @IsArray()
+  @ArrayMinSize(1)
+  @IsIn(USE_CASES as unknown as string[], { each: true })
+  use_cases: string[];
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  business_description?: string;
+}

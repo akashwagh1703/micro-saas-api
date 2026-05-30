@@ -22,13 +22,15 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { ActivityLogger } from '../../common/activity-logger.service';
 import { paginate, resolvePage } from '../../common/pagination';
 import { serializeWorkflow, serializeWorkflowExecution } from '../../common/serializers';
-import { visibleWorkflowsWhere } from './workflow-templates';
+import { buildVisibleWorkflowsWhere } from '../../common/workflow-scope';
+import { SettingsService } from '../settings/settings.service';
 import { WorkflowValidator } from './workflow-validator.service';
 import { WorkflowTemplateService } from './workflow-template.service';
 import {
   CreateWorkflowDto,
   GenerateWorkflowDto,
   GenerateWorkflowQueryDto,
+  SetupBusinessDto,
   UpdateWorkflowDto,
   ValidateDefinitionDto,
 } from './dto/workflow.dto';
@@ -41,6 +43,7 @@ export class WorkflowsController {
     private readonly validator: WorkflowValidator,
     private readonly templates: WorkflowTemplateService,
     private readonly activity: ActivityLogger,
+    private readonly settings: SettingsService,
   ) {}
 
   // --- Static / specific routes first (must precede ":id") ---
@@ -112,6 +115,35 @@ export class WorkflowsController {
       throw new NotFoundException('No template for this combination');
     }
     return result;
+  }
+
+  @Post('setup-business')
+  async setupBusiness(@CurrentUser('id') userId: number, @Body() dto: SetupBusinessDto) {
+    if (dto.business_category === 'other' && !dto.business_description?.trim()) {
+      throw new UnprocessableEntityException({
+        message: 'The given data was invalid.',
+        errors: { business_description: ['Please describe your business when selecting Other.'] },
+      });
+    }
+
+    const workflows = await this.templates.setupBusinessForUser(
+      userId,
+      dto.business_category,
+      dto.use_cases,
+      dto.business_description,
+    );
+
+    await this.activity.log(
+      userId,
+      'business_setup',
+      `Business configured: ${dto.business_category} (${dto.use_cases.length} use case(s))`,
+    );
+
+    return {
+      business_category: dto.business_category,
+      use_cases: dto.use_cases,
+      workflows: workflows.map(serializeWorkflow),
+    };
   }
 
   @Post('generate')
@@ -195,7 +227,7 @@ export class WorkflowsController {
     const perPage = 15;
     const currentPage = resolvePage(page);
 
-    const where = visibleWorkflowsWhere(userId);
+    const where = await buildVisibleWorkflowsWhere(userId, this.settings);
 
     const [items, total] = await this.prisma.$transaction([
       this.prisma.workflow.findMany({
@@ -213,6 +245,7 @@ export class WorkflowsController {
 
   @Post()
   async store(@CurrentUser('id') userId: number, @Body() dto: CreateWorkflowDto) {
+    const businessCategory = await this.settings.get(userId, 'business_category');
     const workflow = await this.prisma.workflow.create({
       data: {
         userId,
@@ -221,6 +254,7 @@ export class WorkflowsController {
         triggerType: dto.trigger_type ?? 'message_received',
         status: 'draft',
         definition: (dto.definition ?? this.defaultDefinition()) as any,
+        businessCategory: businessCategory ?? null,
       },
     });
 
@@ -269,7 +303,8 @@ export class WorkflowsController {
   }
 
   private async findOrFail(userId: number, id: number) {
-    const workflow = await this.prisma.workflow.findFirst({ where: { userId, id } });
+    const scope = await buildVisibleWorkflowsWhere(userId, this.settings);
+    const workflow = await this.prisma.workflow.findFirst({ where: { ...scope, id } });
     if (!workflow) {
       throw new NotFoundException('No query results for model [Workflow].');
     }

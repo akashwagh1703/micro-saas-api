@@ -1,11 +1,13 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, UnprocessableEntityException } from '@nestjs/common';
 import { Workflow } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { SettingsService } from '../settings/settings.service';
+import { currentBusinessPublishedWhere, parseUseCases } from '../../common/workflow-scope';
 import { WORKFLOW_TEMPLATES, WorkflowDefinition, findTemplate } from './workflow-templates';
 import { findAnyTemplate } from './business-workflow-templates';
 import { AiWorkflowGeneratorService } from './ai-workflow-generator.service';
 import {
+  applyUseCaseTriggerKeywords,
   businessLabel,
   businessPromptPrefix,
   resolveTemplateSlug,
@@ -69,6 +71,101 @@ export class WorkflowTemplateService {
   }
 
   /**
+   * Saves business profile, enforces one active business at a time, and ensures
+   * one workflow per selected use case for the current business.
+   */
+  async setupBusinessForUser(
+    userId: number,
+    businessCategory: string,
+    useCases: string[],
+    businessDescription?: string | null,
+  ): Promise<Workflow[]> {
+    const uniqueUseCases = [...new Set(useCases)];
+    const currentCategory = await this.settings.get(userId, 'business_category');
+    const currentSettings = await this.settings.getMany(userId, ['use_cases', 'use_case']);
+    const currentUseCases = parseUseCases(currentSettings);
+    const isBusinessChange = !!currentCategory && currentCategory !== businessCategory;
+
+    if (isBusinessChange) {
+      await this.assertNoPublishedWorkflows(userId, currentCategory, 'business_category');
+      await this.prisma.workflow.updateMany({
+        where: { userId, businessCategory: currentCategory, isArchived: false },
+        data: { isArchived: true, status: 'draft', isActive: false },
+      });
+    } else if (currentCategory === businessCategory) {
+      const removed = currentUseCases.filter((uc) => !uniqueUseCases.includes(uc));
+      if (removed.length > 0) {
+        const publishedRemoved = await this.prisma.workflow.count({
+          where: {
+            userId,
+            businessCategory: currentCategory,
+            isArchived: false,
+            useCase: { in: removed },
+            status: 'published',
+            isActive: true,
+          },
+        });
+        if (publishedRemoved > 0) {
+          throw new UnprocessableEntityException({
+            message: 'Pause published workflows before removing use cases.',
+            errors: {
+              use_cases: ['Unpublish workflows for use cases you want to remove.'],
+            },
+          });
+        }
+        await this.prisma.workflow.updateMany({
+          where: {
+            userId,
+            businessCategory: currentCategory,
+            isArchived: false,
+            useCase: { in: removed },
+          },
+          data: { isArchived: true, status: 'draft', isActive: false },
+        });
+      }
+    }
+
+    await this.settings.set(userId, 'business_category', businessCategory);
+    await this.settings.set(userId, 'use_cases', JSON.stringify(uniqueUseCases));
+    if (businessDescription !== undefined && businessDescription !== null) {
+      await this.settings.set(userId, 'business_description', businessDescription.trim());
+    }
+
+    const workflows: Workflow[] = [];
+    for (const useCase of uniqueUseCases) {
+      const workflow = await this.generateForUser(
+        userId,
+        businessCategory,
+        useCase,
+        businessDescription,
+      );
+      if (workflow) {
+        workflows.push(workflow);
+      }
+    }
+
+    return workflows;
+  }
+
+  private async assertNoPublishedWorkflows(
+    userId: number,
+    businessCategory: string,
+    field: string,
+  ): Promise<void> {
+    const published = await this.prisma.workflow.count({
+      where: currentBusinessPublishedWhere(userId, businessCategory),
+    });
+    if (published > 0) {
+      throw new UnprocessableEntityException({
+        message: 'Pause all published workflows before changing your business.',
+        errors: {
+          [field]: ['Unpublish every workflow for your current business first.'],
+        },
+      });
+    }
+  }
+
+  /**
    * Builds a workflow tailored to a business + use case. Uses AI generation for
    * "Other" businesses (Phase 4), otherwise clones the closest curated template.
    */
@@ -78,6 +175,13 @@ export class WorkflowTemplateService {
     useCase: string,
     businessDescription?: string | null,
   ): Promise<Workflow | null> {
+    const existing = await this.prisma.workflow.findFirst({
+      where: { userId, businessCategory, useCase, isArchived: false },
+    });
+    if (existing) {
+      return existing;
+    }
+
     const description =
       businessDescription?.trim() ||
       (await this.settings.get(userId, 'business_description')) ||
@@ -94,6 +198,7 @@ export class WorkflowTemplateService {
       );
 
       if (aiResult) {
+        const definition = applyUseCaseTriggerKeywords(aiResult.definition, useCase);
         return this.prisma.workflow.create({
           data: {
             userId,
@@ -102,8 +207,10 @@ export class WorkflowTemplateService {
             status: 'draft',
             isActive: false,
             triggerType: 'message_received',
-            definition: aiResult.definition as any,
+            definition: definition as any,
             sourceTemplate: 'ai-generated',
+            businessCategory,
+            useCase,
           },
         });
       }
@@ -162,10 +269,12 @@ export class WorkflowTemplateService {
       return null;
     }
 
-    const definition =
+    let definition =
       template.category === 'guided'
         ? (JSON.parse(JSON.stringify(template.definition)) as WorkflowDefinition)
         : this.personalizeDefinition(template.definition, businessCategory);
+
+    definition = applyUseCaseTriggerKeywords(definition, useCase);
 
     return this.prisma.workflow.create({
       data: {
@@ -177,6 +286,8 @@ export class WorkflowTemplateService {
         triggerType: template.trigger_type,
         definition: definition as any,
         sourceTemplate: slug,
+        businessCategory,
+        useCase,
       },
     });
   }
