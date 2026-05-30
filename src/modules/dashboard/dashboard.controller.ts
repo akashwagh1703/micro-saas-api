@@ -3,6 +3,7 @@ import { TokenAuthGuard } from '../../common/guards/token-auth.guard';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { PrismaService } from '../../prisma/prisma.service';
 import { serializeActivity } from '../../common/serializers';
+import { visibleWorkflowsWhere } from '../workflows/workflow-templates';
 
 @Controller('dashboard')
 @UseGuards(TokenAuthGuard)
@@ -20,7 +21,9 @@ export class DashboardController {
       aiUsage,
     ] = await this.prisma.$transaction([
       this.prisma.message.count({ where: { userId } }),
-      this.prisma.workflow.count({ where: { userId, isActive: true } }),
+      this.prisma.workflow.count({
+        where: { ...visibleWorkflowsWhere(userId), isActive: true },
+      }),
       this.prisma.conversation.count({ where: { userId } }),
       this.prisma.contact.count({ where: { userId } }),
       this.prisma.whatsAppAccount.findUnique({ where: { userId } }),

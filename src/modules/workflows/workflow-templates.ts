@@ -373,3 +373,14 @@ export const WORKFLOW_TEMPLATES: WorkflowTemplate[] = [
 export function findTemplate(slug: string): WorkflowTemplate | undefined {
   return WORKFLOW_TEMPLATES.find((t) => t.slug === slug);
 }
+
+/** Built-in starter/demo slugs — hidden from the portal workflow list. */
+export const STARTER_TEMPLATE_SLUGS = WORKFLOW_TEMPLATES.map((t) => t.slug);
+
+/** Prisma filter: user workflows except auto-seeded starter/demo copies. */
+export function visibleWorkflowsWhere(userId: number) {
+  return {
+    userId,
+    OR: [{ sourceTemplate: null }, { sourceTemplate: { notIn: STARTER_TEMPLATE_SLUGS } }],
+  };
+}

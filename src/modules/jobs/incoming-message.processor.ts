@@ -26,6 +26,34 @@ export class IncomingMessageProcessor {
       return;
     }
 
+    // Phase 3: resume a paused (Ask & Wait) workflow before starting new ones.
+    const waiting = await this.prisma.workflowExecution.findFirst({
+      where: {
+        userId: message.userId,
+        contactId: message.contactId,
+        status: 'waiting',
+      },
+      orderBy: { updatedAt: 'desc' },
+    });
+
+    if (waiting) {
+      const ctx = (waiting.context as Record<string, any>) ?? {};
+      await this.prisma.workflowExecution.update({
+        where: { id: waiting.id },
+        data: {
+          status: 'pending',
+          messageId: message.id,
+          context: {
+            ...ctx,
+            message: message.content,
+            __resuming: true,
+          },
+        },
+      });
+      await this.queue.enqueueExecuteWorkflow(waiting.id);
+      return;
+    }
+
     const workflows = await this.prisma.workflow.findMany({
       where: {
         userId: message.userId,
@@ -52,6 +80,7 @@ export class IncomingMessageProcessor {
             message: message.content,
             contact_phone: message.contact.phone,
             contact_name: message.contact.name,
+            __collected: {},
           },
         },
       });

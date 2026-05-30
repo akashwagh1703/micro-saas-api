@@ -53,6 +53,11 @@ export class GenerateWorkflowDto {
 
   @IsIn(USE_CASES as unknown as string[])
   use_case: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  business_description?: string;
 }
 
 export class GenerateWorkflowQueryDto extends GenerateWorkflowDto {}

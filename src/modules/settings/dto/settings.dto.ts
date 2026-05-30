@@ -53,6 +53,12 @@ export class UpdateBusinessProfileDto {
 
   @IsIn(USE_CASES as unknown as string[])
   use_case: string;
+
+  /** Required when business_category is "other" — describes the business for AI workflow generation. */
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  business_description?: string;
 }
 
 export class UpdateIntegrationsDto {

@@ -22,11 +22,37 @@ export class AiService {
     config: Record<string, any>,
     variables: Record<string, any> = {},
   ): Promise<AiResult> {
-    const provider = config.provider ?? 'openrouter';
     const prompt = this.replaceVariables(config.prompt ?? '', variables);
-    const model = config.model ?? 'openai/gpt-4o-mini';
-    const temperature = Number(config.temperature ?? 0.7);
-    const maxTokens = parseInt(String(config.max_tokens ?? 256), 10);
+    const result = await this.complete(userId, prompt, {
+      provider: config.provider,
+      model: config.model,
+      temperature: config.temperature,
+      max_tokens: config.max_tokens ?? 256,
+    });
+
+    if (!result.success) {
+      return { ...result, fallback: config.fallback_message ?? null };
+    }
+    return result;
+  }
+
+  /** Raw chat completion using the user's configured AI provider (or overrides). */
+  async complete(
+    userId: number,
+    prompt: string,
+    options: {
+      provider?: string;
+      model?: string;
+      temperature?: number;
+      max_tokens?: number;
+    } = {},
+  ): Promise<AiResult> {
+    const provider =
+      options.provider ?? (await this.settings.get(userId, 'ai_provider')) ?? 'openrouter';
+    const model =
+      options.model ?? (await this.settings.get(userId, 'ai_model')) ?? 'openai/gpt-4o-mini';
+    const temperature = Number(options.temperature ?? 0.4);
+    const maxTokens = parseInt(String(options.max_tokens ?? 256), 10);
 
     const apiKey =
       provider === 'openai'
@@ -37,7 +63,7 @@ export class AiService {
       return {
         success: false,
         error: 'AI API key not configured',
-        fallback: config.fallback_message ?? null,
+        fallback: null,
       };
     }
 
@@ -55,7 +81,7 @@ export class AiService {
         },
         {
           headers: { Authorization: `Bearer ${apiKey}` },
-          timeout: 30000,
+          timeout: 60000,
           validateStatus: () => true,
         },
       );
@@ -71,11 +97,11 @@ export class AiService {
       return {
         success: false,
         error: response.data?.error?.message ?? 'AI request failed',
-        fallback: config.fallback_message ?? null,
+        fallback: null,
       };
     } catch (e: any) {
-      this.logger.error(`AI generation failed: ${e.message}`);
-      return { success: false, error: e.message, fallback: config.fallback_message ?? null };
+      this.logger.error(`AI completion failed: ${e.message}`);
+      return { success: false, error: e.message, fallback: null };
     }
   }
 

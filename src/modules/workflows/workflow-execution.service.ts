@@ -8,8 +8,9 @@ import { ConditionNodeExecutor } from './nodes/condition-node.executor';
 import { ApiNodeExecutor } from './nodes/api-node.executor';
 import { AiNodeExecutor } from './nodes/ai-node.executor';
 import { SendMessageNodeExecutor } from './nodes/send-message-node.executor';
+import { CollectInputNodeExecutor } from './nodes/collect-input-node.executor';
 
-const MAX_NODES = 20;
+const MAX_NODES = 30;
 
 interface Edge {
   source?: string;
@@ -31,6 +32,7 @@ export class WorkflowExecutionService {
     api: ApiNodeExecutor,
     ai: AiNodeExecutor,
     sendMessage: SendMessageNodeExecutor,
+    collectInput: CollectInputNodeExecutor,
   ) {
     this.executors = {
       trigger,
@@ -38,6 +40,7 @@ export class WorkflowExecutionService {
       api,
       ai,
       send_message: sendMessage,
+      collect_input: collectInput,
     };
   }
 
@@ -73,10 +76,11 @@ export class WorkflowExecutionService {
 
     await this.prisma.workflowExecution.update({
       where: { id: execution.id },
-      data: { status: 'running', startedAt: new Date() },
+      data: { status: 'running', startedAt: execution.startedAt ?? new Date() },
     });
 
     let context: Record<string, any> = (execution.context as Record<string, any>) ?? {};
+    context = this.mergeCollectedIntoContext(context);
 
     const nodes = definition.nodes ?? [];
     const edges = definition.edges ?? [];
@@ -88,7 +92,12 @@ export class WorkflowExecutionService {
       return;
     }
 
-    let currentId: string | null = trigger.id;
+    const resumeFromPause =
+      context.__resuming === true && typeof context.__paused_at_node_id === 'string';
+    let currentId: string | null = resumeFromPause
+      ? (context.__paused_at_node_id as string)
+      : trigger.id;
+
     const visited: Record<string, boolean> = {};
     let steps = 0;
 
@@ -123,7 +132,7 @@ export class WorkflowExecutionService {
         });
 
         const result = await executor.execute(execution, node, context);
-        context = { ...context, ...(result.output ?? {}) };
+        context = this.mergeCollectedIntoContext({ ...context, ...(result.output ?? {}) });
 
         await this.prisma.executionLog.update({
           where: { id: log.id },
@@ -135,6 +144,26 @@ export class WorkflowExecutionService {
           },
         });
 
+        if (!result.success) {
+          await this.fail(execution.id, result.error ?? 'Node execution failed');
+          return;
+        }
+
+        if (result.pause) {
+          await this.prisma.workflowExecution.update({
+            where: { id: execution.id },
+            data: {
+              status: 'waiting',
+              context: {
+                ...context,
+                __paused_at_node_id: node.id,
+                __resuming: false,
+              } as any,
+            },
+          });
+          return;
+        }
+
         if (result.stop) {
           break;
         }
@@ -142,9 +171,17 @@ export class WorkflowExecutionService {
         currentId = this.resolveNextNodeId(edges, node, result);
       }
 
+      const finalContext = { ...context };
+      delete finalContext.__resuming;
+
       await this.prisma.workflowExecution.update({
         where: { id: execution.id },
-        data: { status: 'completed', context: context as any, completedAt: new Date() },
+        data: {
+          status: 'completed',
+          context: finalContext as any,
+          completedAt: new Date(),
+          errorMessage: null,
+        },
       });
     } catch (e: any) {
       this.logger.error(`Workflow execution failed (id=${execution.id}): ${e.message}`);
@@ -153,6 +190,15 @@ export class WorkflowExecutionService {
         data: { status: 'failed', errorMessage: e.message, completedAt: new Date() },
       });
     }
+  }
+
+  /** Flattens __collected answers onto the context root for {{field}} templates. */
+  private mergeCollectedIntoContext(context: Record<string, any>): Record<string, any> {
+    const collected = context.__collected;
+    if (!collected || typeof collected !== 'object') {
+      return context;
+    }
+    return { ...context, ...collected };
   }
 
   private resolveNextNodeId(
@@ -186,7 +232,7 @@ export class WorkflowExecutionService {
   private async fail(executionId: number, message: string): Promise<void> {
     await this.prisma.workflowExecution.update({
       where: { id: executionId },
-      data: { status: 'failed', errorMessage: message },
+      data: { status: 'failed', errorMessage: message, completedAt: new Date() },
     });
   }
 }

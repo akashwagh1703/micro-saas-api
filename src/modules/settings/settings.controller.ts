@@ -77,10 +77,15 @@ export class SettingsController {
 
   @Get('business-profile')
   async getBusinessProfile(@CurrentUser('id') userId: number) {
-    const settings = await this.settings.getMany(userId, ['business_category', 'use_case']);
+    const settings = await this.settings.getMany(userId, [
+      'business_category',
+      'use_case',
+      'business_description',
+    ]);
     return {
       business_category: settings.business_category,
       use_case: settings.use_case,
+      business_description: settings.business_description,
       configured: !!settings.business_category && !!settings.use_case,
     };
   }
@@ -90,11 +95,22 @@ export class SettingsController {
     @CurrentUser('id') userId: number,
     @Body() dto: UpdateBusinessProfileDto,
   ) {
+    if (dto.business_category === 'other' && !dto.business_description?.trim()) {
+      throw new UnprocessableEntityException({
+        message: 'The given data was invalid.',
+        errors: { business_description: ['Please describe your business when selecting Other.'] },
+      });
+    }
+
     await this.settings.set(userId, 'business_category', dto.business_category);
     await this.settings.set(userId, 'use_case', dto.use_case);
+    if (dto.business_description !== undefined) {
+      await this.settings.set(userId, 'business_description', dto.business_description.trim());
+    }
     return {
       business_category: dto.business_category,
       use_case: dto.use_case,
+      business_description: dto.business_description?.trim() ?? null,
       configured: true,
     };
   }

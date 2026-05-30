@@ -52,6 +52,16 @@ export class WorkflowValidator {
       if (node.type !== 'trigger' && !connected[node.id]) {
         errors.push(`Node ${node.id} is disconnected`);
       }
+      if (node.type === 'collect_input') {
+        const field = node.data?.field;
+        const question = node.data?.question;
+        if (!field || !String(field).trim()) {
+          errors.push(`collect_input node ${node.id} requires a field name`);
+        }
+        if (!question || !String(question).trim()) {
+          errors.push(`collect_input node ${node.id} requires a question`);
+        }
+      }
     }
 
     if (this.hasCycle(edges, nodeIds)) {

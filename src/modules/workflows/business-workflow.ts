@@ -130,6 +130,11 @@ const COMBO_OVERRIDES: Record<string, string> = {
 
 const DEFAULT_TEMPLATE = 'ai-support-assistant';
 
+/** Phase 4: "Other" businesses get an AI-drafted workflow instead of a generic template. */
+export function shouldUseAiGeneration(businessCategory: string): boolean {
+  return businessCategory === 'other';
+}
+
 /** Resolves the best starter template slug for a business + use case. */
 export function resolveTemplateSlug(businessCategory: string, useCase: string): string {
   if (businessCategory === 'other') {

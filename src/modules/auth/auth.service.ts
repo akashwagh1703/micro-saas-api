@@ -2,7 +2,6 @@ import { Injectable, UnprocessableEntityException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CryptoService } from '../../common/crypto/crypto.service';
 import { serializeUser } from '../../common/serializers';
-import { WorkflowTemplateService } from '../workflows/workflow-template.service';
 import { ForgotPasswordDto, LoginDto, RegisterDto } from './dto/auth.dto';
 
 @Injectable()
@@ -10,7 +9,6 @@ export class AuthService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly crypto: CryptoService,
-    private readonly templates: WorkflowTemplateService,
   ) {}
 
   async register(dto: RegisterDto) {
@@ -36,8 +34,6 @@ export class AuthService {
         password: await this.crypto.hashPassword(dto.password),
       },
     });
-
-    await this.templates.seedAllForUser(user.id);
 
     const token = await this.createToken(user.id);
     return { user: serializeUser(user), token };

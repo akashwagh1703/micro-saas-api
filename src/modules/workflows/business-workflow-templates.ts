@@ -56,13 +56,38 @@ function triggerNode(y = 80) {
   };
 }
 
-function leadCaptureTail(yStart: number, confirmMessage: string) {
+function collectNode(
+  id: string,
+  y: number,
+  field: string,
+  label: string,
+  question: string,
+) {
+  return {
+    id,
+    type: 'collect_input',
+    y,
+    data: {
+      label,
+      summary: `Ask: ${question.slice(0, 50)}${question.length > 50 ? '…' : ''}`,
+      field,
+      question,
+    },
+  };
+}
+
+function leadCaptureTail(yStart: number, confirmMessage: string, extraBody: Record<string, string> = {}) {
   return [
     {
       id: 'api-1',
       type: 'api',
       y: yStart,
-      data: { label: 'Save Lead', summary: 'POST lead to your CRM — replace URL', ...LEAD_API },
+      data: {
+        label: 'Save Lead',
+        summary: 'POST lead to your CRM — replace URL',
+        ...LEAD_API,
+        body: { ...LEAD_API.body, ...extraBody },
+      },
     },
     sendNode(
       'send-confirm',
@@ -80,22 +105,36 @@ const realEstateLeadGen: WorkflowTemplate = {
   slug: 'real-estate-lead-gen',
   name: 'Real Estate Lead Qualification',
   description:
-    'Qualify property leads: AI asks about budget, location, and buy/rent preference, saves the lead, and confirms to the customer.',
+    'Multi-step lead qualification: asks budget, location, and property type one at a time, saves the lead, then confirms.',
   category: 'guided',
   trigger_type: 'message_received',
   definition: linearFlow([
     triggerNode(),
-    aiNode(
-      'ai-1',
+    collectNode(
+      'collect-budget',
       200,
-      'Qualify Lead',
-      'Asks budget, location, property type',
-      'You are a real estate WhatsApp assistant. The customer wrote: "{{message}}". Reply warmly in 3–4 short lines. Ask for: (1) budget range, (2) preferred location/area, (3) buy or rent and property type (1BHK/2BHK/house). Use bullet points if helpful.',
+      'budget',
+      'Ask Budget',
+      'What is your budget range? (e.g. ₹50 lakh – ₹80 lakh)',
     ),
-    sendNode('send-1', 320, 'Send Qualification', '{{ai_response}}'),
-    ...leadCaptureTail(
+    collectNode(
+      'collect-location',
+      320,
+      'location',
+      'Ask Location',
+      'Which area or location are you looking in?',
+    ),
+    collectNode(
+      'collect-type',
       440,
-      "Hi {{contact_name}}! ✅ We've noted your property enquiry. An agent will contact you within 24 hours with matching options.",
+      'property_type',
+      'Ask Property Type',
+      'Buy or rent? Which type — 1BHK, 2BHK, or house?',
+    ),
+    ...leadCaptureTail(
+      560,
+      "Hi {{contact_name}}! ✅ We've saved your enquiry.\n\nBudget: {{budget}}\nLocation: {{location}}\nType: {{property_type}}\n\nAn agent will contact you within 24 hours.",
+      { budget: '{{budget}}', location: '{{location}}', property_type: '{{property_type}}' },
     ),
   ]),
 };

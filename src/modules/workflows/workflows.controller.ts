@@ -22,6 +22,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { ActivityLogger } from '../../common/activity-logger.service';
 import { paginate, resolvePage } from '../../common/pagination';
 import { serializeWorkflow, serializeWorkflowExecution } from '../../common/serializers';
+import { visibleWorkflowsWhere } from './workflow-templates';
 import { WorkflowValidator } from './workflow-validator.service';
 import { WorkflowTemplateService } from './workflow-template.service';
 import {
@@ -105,6 +106,7 @@ export class WorkflowsController {
     const result = this.templates.previewGeneration(
       query.business_category,
       query.use_case,
+      query.business_description,
     );
     if (!result) {
       throw new NotFoundException('No template for this combination');
@@ -118,6 +120,7 @@ export class WorkflowsController {
       userId,
       dto.business_category,
       dto.use_case,
+      dto.business_description,
     );
     if (!workflow) {
       throw new UnprocessableEntityException({ message: 'Could not generate a workflow' });
@@ -192,14 +195,16 @@ export class WorkflowsController {
     const perPage = 15;
     const currentPage = resolvePage(page);
 
+    const where = visibleWorkflowsWhere(userId);
+
     const [items, total] = await this.prisma.$transaction([
       this.prisma.workflow.findMany({
-        where: { userId },
+        where,
         orderBy: { createdAt: 'desc' },
         skip: (currentPage - 1) * perPage,
         take: perPage,
       }),
-      this.prisma.workflow.count({ where: { userId } }),
+      this.prisma.workflow.count({ where }),
     ]);
 
     const path = `${req.protocol}://${req.get('host')}${req.path}`;

@@ -5,6 +5,8 @@ export interface NodeExecutionResult {
   output?: Record<string, any>;
   error?: string | null;
   stop?: boolean;
+  /** When true, execution pauses until the contact replies (Ask & Wait). */
+  pause?: boolean;
   branch?: 'true' | 'false';
 }
 
