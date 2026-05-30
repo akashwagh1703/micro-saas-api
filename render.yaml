@@ -30,6 +30,8 @@ services:
         sync: false
       - key: DIRECT_URL
         sync: false
+      # If DIRECT_URL is empty on Render, set it to the same value as DATABASE_URL
+      # (the Docker CMD falls back automatically). Required for Neon/pooled hosts.
       # Set this to your deployed URL after the first deploy (used for webhook_url).
       - key: APP_URL
         sync: false

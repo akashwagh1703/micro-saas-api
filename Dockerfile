@@ -28,4 +28,5 @@ COPY package*.json ./
 EXPOSE 3000
 
 # Apply pending migrations on boot, then start the API + in-process queue worker.
-CMD ["sh", "-c", "npx prisma migrate deploy && node dist/main.js"]
+# Render Postgres is not pooled — default DIRECT_URL to DATABASE_URL when unset.
+CMD ["sh", "-c", "export DIRECT_URL=\"${DIRECT_URL:-$DATABASE_URL}\" && npx prisma migrate deploy && node dist/main.js"]
