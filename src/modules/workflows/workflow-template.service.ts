@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { Workflow } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { WORKFLOW_TEMPLATES, WorkflowDefinition, findTemplate } from './workflow-templates';
+import { findAnyTemplate } from './business-workflow-templates';
 import {
   businessLabel,
   businessPromptPrefix,
@@ -71,12 +72,15 @@ export class WorkflowTemplateService {
     useCase: string,
   ): Promise<Workflow | null> {
     const slug = resolveTemplateSlug(businessCategory, useCase);
-    const template = findTemplate(slug);
+    const template = findAnyTemplate(slug);
     if (!template) {
       return null;
     }
 
-    const definition = this.personalizeDefinition(template.definition, businessCategory);
+    const definition =
+      template.category === 'guided'
+        ? (JSON.parse(JSON.stringify(template.definition)) as WorkflowDefinition)
+        : this.personalizeDefinition(template.definition, businessCategory);
     const name = `${businessLabel(businessCategory)} · ${useCaseLabel(useCase)}`;
 
     return this.prisma.workflow.create({
@@ -110,6 +114,23 @@ export class WorkflowTemplateService {
     }
 
     return clone;
+  }
+
+  /** Preview which template would be generated for a business + use case pair. */
+  previewGeneration(businessCategory: string, useCase: string) {
+    const slug = resolveTemplateSlug(businessCategory, useCase);
+    const template = findAnyTemplate(slug);
+    if (!template) {
+      return null;
+    }
+    return {
+      template_slug: slug,
+      template_name: template.name,
+      description: template.description,
+      node_count: template.definition.nodes?.length ?? 0,
+      node_types: this.extractNodeTypes(template.definition),
+      is_guided: template.category === 'guided',
+    };
   }
 
   async seedAllForUser(userId: number): Promise<Workflow[]> {

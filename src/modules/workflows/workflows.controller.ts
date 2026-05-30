@@ -27,6 +27,7 @@ import { WorkflowTemplateService } from './workflow-template.service';
 import {
   CreateWorkflowDto,
   GenerateWorkflowDto,
+  GenerateWorkflowQueryDto,
   UpdateWorkflowDto,
   ValidateDefinitionDto,
 } from './dto/workflow.dto';
@@ -97,6 +98,18 @@ export class WorkflowsController {
   validateDefinition(@Body() dto: ValidateDefinitionDto) {
     const errors = this.validator.validate(dto.definition);
     return { valid: errors.length === 0, errors };
+  }
+
+  @Get('generate/preview')
+  preview(@Query() query: GenerateWorkflowQueryDto) {
+    const result = this.templates.previewGeneration(
+      query.business_category,
+      query.use_case,
+    );
+    if (!result) {
+      throw new NotFoundException('No template for this combination');
+    }
+    return result;
   }
 
   @Post('generate')

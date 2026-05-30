@@ -54,3 +54,5 @@ export class GenerateWorkflowDto {
   @IsIn(USE_CASES as unknown as string[])
   use_case: string;
 }
+
+export class GenerateWorkflowQueryDto extends GenerateWorkflowDto {}

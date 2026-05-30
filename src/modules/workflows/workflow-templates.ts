@@ -39,7 +39,7 @@ interface LinearNodeDef {
   data: Record<string, any>;
 }
 
-function linearFlow(nodeDefs: LinearNodeDef[]): WorkflowDefinition {
+export function linearFlow(nodeDefs: LinearNodeDef[]): WorkflowDefinition {
   const nodes: WorkflowNode[] = [];
   const edges: WorkflowEdge[] = [];
 
