@@ -6,6 +6,7 @@ import {
   HttpStatus,
   Logger,
 } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { Request, Response } from 'express';
 
 /**
@@ -43,6 +44,19 @@ export class AllExceptionsFilter implements ExceptionFilter {
           const message = obj.message;
           body = { message: Array.isArray(message) ? message[0] : (message ?? 'Error') };
         }
+      }
+    } else if (exception instanceof Prisma.PrismaClientKnownRequestError) {
+      this.logger.error(
+        `Prisma error on ${request.method} ${request.url}: ${exception.code} ${exception.message}`,
+        exception.stack,
+      );
+      if (exception.code === 'P2022') {
+        body = {
+          message:
+            'Database schema is out of date. Run `npx prisma migrate deploy` on the API server (Render shell or redeploy).',
+        };
+      } else {
+        body = { message: 'Database error. Please try again or contact support.' };
       }
     } else {
       this.logger.error(
