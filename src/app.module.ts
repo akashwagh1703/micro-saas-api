@@ -8,6 +8,7 @@ import { AuthModule } from './modules/auth/auth.module';
 import { DashboardModule } from './modules/dashboard/dashboard.module';
 import { WhatsappModule } from './modules/whatsapp/whatsapp.module';
 import { ContactsModule } from './modules/contacts/contacts.module';
+import { LeadsModule } from './modules/leads/leads.module';
 import { InboxModule } from './modules/inbox/inbox.module';
 import { WorkflowsModule } from './modules/workflows/workflows.module';
 import { SettingsModule } from './modules/settings/settings.module';
@@ -27,6 +28,7 @@ import { AppController } from './app.controller';
     DashboardModule,
     WhatsappModule,
     ContactsModule,
+    LeadsModule,
     InboxModule,
     WorkflowsModule,
     SettingsModule,

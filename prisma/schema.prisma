@@ -40,6 +40,7 @@ model User {
   settings            UserSetting[]
   activities          Activity[]
   tokens              PersonalAccessToken[]
+  leads               Lead[]
 
   @@map("users")
 }
@@ -246,4 +247,29 @@ model Activity {
 
   @@index([userId, createdAt])
   @@map("activities")
+}
+
+model Lead {
+  id               Int       @id @default(autoincrement())
+  userId           Int       @map("user_id")
+  channel          String    @default("whatsapp") @db.VarChar(20)
+  status           String    @default("new") @db.VarChar(20)
+  contactId        Int?      @map("contact_id")
+  conversationId   Int?      @map("conversation_id")
+  workflowId       Int?      @map("workflow_id")
+  executionId      Int?      @map("execution_id")
+  name             String?
+  phone            String?
+  username         String?
+  sourceMessage    String?   @map("source_message")
+  collected        Json?
+  notes            String?
+  createdAt        DateTime? @default(now()) @map("created_at")
+  updatedAt        DateTime? @updatedAt @map("updated_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, status, createdAt])
+  @@index([userId, channel, createdAt])
+  @@map("leads")
 }

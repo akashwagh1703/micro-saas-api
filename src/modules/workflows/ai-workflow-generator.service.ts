@@ -11,6 +11,7 @@ const ALLOWED_NODE_TYPES = new Set([
   'ai',
   'send_message',
   'api',
+  'save_lead',
 ]);
 
 export interface AiGeneratedWorkflow {
@@ -96,7 +97,7 @@ export class AiWorkflowGeneratorService {
 
     const useCaseHints: Record<string, string> = {
       lead_generation:
-        'Use 2–4 collect_input nodes to qualify the lead (e.g. need, budget, timeline), then api to save lead, then send_message confirmation.',
+        'Use 2–4 collect_input nodes to qualify the lead (e.g. need, budget, timeline), then save_lead to store the lead, then send_message confirmation.',
       appointment_booking:
         'Use collect_input nodes for date/time and reason, then send_message confirmation. Optionally one ai node for scheduling help.',
       faq_bot:
@@ -118,7 +119,7 @@ export class AiWorkflowGeneratorService {
   }
 }
 
-ALLOWED node types: trigger, collect_input, ai, send_message, api, condition
+ALLOWED node types: trigger, collect_input, ai, send_message, api, save_lead, condition
 
 RULES:
 - Exactly ONE trigger node with id "trigger-1" and type "trigger"
@@ -129,7 +130,8 @@ RULES:
 - collect_input data: { "label": "...", "field": "snake_case_name", "question": "..." }
 - ai data: { "label": "...", "provider": "openrouter", "model": "openai/gpt-4o-mini", "prompt": "...", "temperature": 0.6, "max_tokens": 250, "fallback_message": "..." }
 - send_message data: { "label": "...", "message": "..." } — use {{contact_name}}, {{message}}, {{ai_response}}, and collect_input field names as {{field}}
-- api data (optional for leads): { "label": "Save Lead", "url": "https://your-crm.com/api/leads", "method": "POST", "headers": {"Content-Type":"application/json"}, "body": {"phone":"{{contact_phone}}","name":"{{contact_name}}"}, "timeout": 15, "retries": 2, "use_fallback": true }
+- save_lead data: { "label": "Save Lead" } — saves contact + collected answers to WhatsFlow leads
+- api data (optional for external CRM): { "label": "...", "url": "...", "method": "POST", "headers": {"Content-Type":"application/json"}, "body": {...}, "timeout": 15, "retries": 2, "use_fallback": true }
 - condition data: { "label": "...", "field": "message", "operator": "contains", "value": "keyword" } — only if needed; use sourceHandle "true" on edges from condition
 - edges: { "id": "e1", "source": "node-id", "target": "node-id", "sourceHandle": null } (sourceHandle "true"/"false" only for condition branches)
 - Maximum 10 nodes

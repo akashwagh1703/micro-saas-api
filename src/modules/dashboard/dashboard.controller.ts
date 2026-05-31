@@ -23,6 +23,7 @@ export class DashboardController {
       activeWorkflows,
       inboxConversations,
       contactsCount,
+      leadsCount,
       account,
       aiUsage,
     ] = await this.prisma.$transaction([
@@ -32,6 +33,7 @@ export class DashboardController {
       }),
       this.prisma.conversation.count({ where: { userId } }),
       this.prisma.contact.count({ where: { userId } }),
+      this.prisma.lead.count({ where: { userId } }),
       this.prisma.whatsAppAccount.findUnique({ where: { userId } }),
       this.prisma.executionLog.count({ where: { nodeType: 'ai', execution: { userId } } }),
     ]);
@@ -41,6 +43,7 @@ export class DashboardController {
       active_workflows: activeWorkflows,
       inbox_conversations: inboxConversations,
       contacts_count: contactsCount,
+      leads_count: leadsCount,
       whatsapp_connected: !!account?.isConnected,
       whatsapp_display: account?.displayPhoneNumber ?? null,
       ai_usage: aiUsage,

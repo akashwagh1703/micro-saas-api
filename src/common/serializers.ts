@@ -3,6 +3,7 @@ import {
   Contact,
   Conversation,
   ExecutionLog,
+  Lead,
   Message,
   User,
   Workflow,
@@ -136,5 +137,26 @@ export function serializeActivity(a: Activity) {
     metadata: a.metadata ?? null,
     created_at: dt(a.createdAt),
     updated_at: dt(a.updatedAt),
+  };
+}
+
+export function serializeLead(l: Lead) {
+  return {
+    id: l.id,
+    user_id: l.userId,
+    channel: l.channel,
+    status: l.status,
+    contact_id: l.contactId,
+    conversation_id: l.conversationId,
+    workflow_id: l.workflowId,
+    execution_id: l.executionId,
+    name: l.name,
+    phone: l.phone,
+    username: l.username,
+    source_message: l.sourceMessage,
+    collected: l.collected ?? null,
+    notes: l.notes,
+    created_at: dt(l.createdAt),
+    updated_at: dt(l.updatedAt),
   };
 }

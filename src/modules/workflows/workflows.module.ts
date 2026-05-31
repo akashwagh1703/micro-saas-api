@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { IntegrationsModule } from '../integrations/integrations.module';
 import { SettingsModule } from '../settings/settings.module';
 import { BillingModule } from '../billing/billing.module';
+import { LeadsModule } from '../leads/leads.module';
 import { WorkflowsController } from './workflows.controller';
 import { WorkflowValidator } from './workflow-validator.service';
 import { WorkflowTemplateService } from './workflow-template.service';
@@ -13,9 +14,10 @@ import { ApiNodeExecutor } from './nodes/api-node.executor';
 import { AiNodeExecutor } from './nodes/ai-node.executor';
 import { SendMessageNodeExecutor } from './nodes/send-message-node.executor';
 import { CollectInputNodeExecutor } from './nodes/collect-input-node.executor';
+import { SaveLeadNodeExecutor } from './nodes/save-lead-node.executor';
 
 @Module({
-  imports: [IntegrationsModule, SettingsModule, BillingModule],
+  imports: [IntegrationsModule, SettingsModule, BillingModule, LeadsModule],
   controllers: [WorkflowsController],
   providers: [
     WorkflowValidator,
@@ -28,6 +30,7 @@ import { CollectInputNodeExecutor } from './nodes/collect-input-node.executor';
     AiNodeExecutor,
     SendMessageNodeExecutor,
     CollectInputNodeExecutor,
+    SaveLeadNodeExecutor,
   ],
   exports: [WorkflowValidator, WorkflowTemplateService, WorkflowExecutionService],
 })

@@ -255,9 +255,9 @@ const aiSupportAssistant: WorkflowTemplate = {
 
 const leadCaptureApi: WorkflowTemplate = {
   slug: 'lead-capture-api',
-  name: '📋 Lead Capture (API)',
+  name: '📋 Lead Capture',
   description:
-    'Send contact details to your CRM or Google Sheet via API, then confirm to the customer on WhatsApp.',
+    'Save customer details as a lead in WhatsFlow, then confirm on WhatsApp. View leads in the Leads page.',
   category: 'common',
   trigger_type: 'message_received',
   definition: linearFlow([
@@ -268,27 +268,12 @@ const leadCaptureApi: WorkflowTemplate = {
       data: { label: 'Message Received', summary: 'New lead message' },
     },
     {
-      id: 'api-1',
-      type: 'api',
+      id: 'save-lead-1',
+      type: 'save_lead',
       y: 200,
       data: {
-        label: 'Save to CRM',
-        summary: 'POST lead to your webhook — replace URL',
-        url: 'https://your-crm.com/api/leads',
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: 'Bearer YOUR_API_KEY',
-        },
-        body: {
-          phone: '{{contact_phone}}',
-          name: '{{contact_name}}',
-          message: '{{message}}',
-          source: 'whatsapp',
-        },
-        timeout: 15,
-        retries: 2,
-        use_fallback: true,
+        label: 'Save Lead',
+        summary: 'Saves lead to WhatsFlow',
       },
     },
     {

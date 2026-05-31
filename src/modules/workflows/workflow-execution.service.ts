@@ -9,6 +9,7 @@ import { ApiNodeExecutor } from './nodes/api-node.executor';
 import { AiNodeExecutor } from './nodes/ai-node.executor';
 import { SendMessageNodeExecutor } from './nodes/send-message-node.executor';
 import { CollectInputNodeExecutor } from './nodes/collect-input-node.executor';
+import { SaveLeadNodeExecutor } from './nodes/save-lead-node.executor';
 
 const MAX_NODES = 30;
 
@@ -33,6 +34,7 @@ export class WorkflowExecutionService {
     ai: AiNodeExecutor,
     sendMessage: SendMessageNodeExecutor,
     collectInput: CollectInputNodeExecutor,
+    saveLead: SaveLeadNodeExecutor,
   ) {
     this.executors = {
       trigger,
@@ -41,6 +43,7 @@ export class WorkflowExecutionService {
       ai,
       send_message: sendMessage,
       collect_input: collectInput,
+      save_lead: saveLead,
     };
   }
 

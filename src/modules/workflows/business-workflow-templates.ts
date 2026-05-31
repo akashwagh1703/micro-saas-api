@@ -14,20 +14,6 @@ const DEFAULT_AI = {
   fallback_message: 'Thanks for your message! Our team will get back to you shortly.',
 };
 
-const LEAD_API = {
-  url: 'https://your-crm.com/api/leads',
-  method: 'POST',
-  headers: { 'Content-Type': 'application/json', Authorization: 'Bearer YOUR_API_KEY' },
-  body: {
-    phone: '{{contact_phone}}',
-    name: '{{contact_name}}',
-    message: '{{message}}',
-    source: 'whatsapp',
-  },
-  timeout: 15,
-  retries: 2,
-  use_fallback: true,
-};
 
 function aiNode(id: string, y: number, label: string, summary: string, prompt: string) {
   return {
@@ -76,17 +62,15 @@ function collectNode(
   };
 }
 
-function leadCaptureTail(yStart: number, confirmMessage: string, extraBody: Record<string, string> = {}) {
+function leadCaptureTail(yStart: number, confirmMessage: string) {
   return [
     {
-      id: 'api-1',
-      type: 'api',
+      id: 'save-lead-1',
+      type: 'save_lead',
       y: yStart,
       data: {
         label: 'Save Lead',
-        summary: 'POST lead to your CRM — replace URL',
-        ...LEAD_API,
-        body: { ...LEAD_API.body, ...extraBody },
+        summary: 'Saves lead to WhatsFlow',
       },
     },
     sendNode(
@@ -134,7 +118,6 @@ const realEstateLeadGen: WorkflowTemplate = {
     ...leadCaptureTail(
       560,
       "Hi {{contact_name}}! ✅ We've saved your enquiry.\n\nBudget: {{budget}}\nLocation: {{location}}\nType: {{property_type}}\n\nAn agent will contact you within 24 hours.",
-      { budget: '{{budget}}', location: '{{location}}', property_type: '{{property_type}}' },
     ),
   ]),
 };
