@@ -7,6 +7,11 @@ import { ActivityLogger } from '../../common/activity-logger.service';
 import { InstagramApiService, InstagramApiResult } from '../integrations/instagram-api.service';
 import { INSTAGRAM_SETUP_GUIDE } from './instagram-setup.guide';
 import { UpdateInstagramDto } from './dto/update-instagram.dto';
+import {
+  metaAccessTokenHint,
+  normalizeMetaAccessToken,
+  normalizeMetaPageId,
+} from '../../common/meta-token';
 
 export interface DecryptedInstagramCredentials {
   account: InstagramAccount;
@@ -89,13 +94,20 @@ export class InstagramService {
       }
     };
 
-    setIf('access_token', 'accessToken', true);
-    setIf('page_id', 'pageId');
+    if (dto.access_token !== undefined && dto.access_token !== null && dto.access_token !== '') {
+      data.accessToken = this.crypto.encrypt(normalizeMetaAccessToken(dto.access_token));
+    }
+    if (dto.page_id !== undefined && dto.page_id !== null && dto.page_id !== '') {
+      data.pageId = normalizeMetaPageId(dto.page_id);
+    }
     setIf('instagram_user_id', 'instagramUserId');
     setIf('username', 'username');
     setIf('display_name', 'displayName');
-    setIf('verify_token', 'verifyToken', true);
     setIf('app_secret', 'appSecret', true);
+
+    if (dto.verify_token !== undefined && dto.verify_token !== null && dto.verify_token !== '') {
+      data.verifyToken = this.crypto.encrypt(String(dto.verify_token).trim());
+    }
 
     const account = await this.prisma.instagramAccount.update({ where: { userId }, data });
 
@@ -119,9 +131,13 @@ export class InstagramService {
       throw new NotFoundException();
     }
 
-    const accessToken = this.crypto.decrypt(account.accessToken);
-    const pageId = account.pageId ?? '';
-    const result = await this.api.testConnection(accessToken ?? '', pageId);
+    const accessToken = normalizeMetaAccessToken(this.crypto.decrypt(account.accessToken));
+    const pageId = normalizeMetaPageId(account.pageId);
+    const result = await this.api.testConnection(accessToken, pageId);
+
+    if (!result.success && result.message) {
+      result.message = metaAccessTokenHint(result.message) ?? result.message;
+    }
 
     if (result.success && result.data) {
       await this.prisma.instagramAccount.update({

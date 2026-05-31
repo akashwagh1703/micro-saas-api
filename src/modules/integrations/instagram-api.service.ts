@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import axios from 'axios';
 import * as crypto from 'crypto';
 import { withMetaApiRetry } from '../../common/meta-api-retry';
+import { metaAccessTokenHint, normalizeMetaAccessToken } from '../../common/meta-token';
 
 export interface InstagramApiResult {
   success: boolean;
@@ -30,8 +31,16 @@ export class InstagramApiService {
   }
 
   async testConnection(accessToken: string, pageId: string): Promise<InstagramApiResult> {
+    accessToken = normalizeMetaAccessToken(accessToken);
     if (!accessToken || !pageId) {
       return { success: false, message: 'Missing Page access token or Page ID' };
+    }
+
+    if (!/^[A-Za-z0-9|._-]+$/.test(accessToken)) {
+      return {
+        success: false,
+        message: metaAccessTokenHint('Invalid OAuth access token - Cannot parse access token'),
+      };
     }
 
     try {
@@ -45,7 +54,7 @@ export class InstagramApiService {
       if (pageResponse.status < 200 || pageResponse.status >= 300) {
         return {
           success: false,
-          message: pageResponse.data?.error?.message ?? 'Could not load Facebook Page',
+          message: metaAccessTokenHint(pageResponse.data?.error?.message) ?? 'Could not load Facebook Page',
         };
       }
 
