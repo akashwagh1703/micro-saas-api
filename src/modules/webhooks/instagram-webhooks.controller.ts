@@ -27,18 +27,32 @@ export class InstagramWebhooksController {
     @Req() req: Request,
     @Res() res: Response,
   ) {
-    const q = req.query as Record<string, string>;
-    const mode = q['hub.mode'] ?? q['hub_mode'];
-    const token = q['hub.verify_token'] ?? q['hub_verify_token'];
-    const challenge = q['hub.challenge'] ?? q['hub_challenge'];
+    const q = req.query as Record<string, string | string[] | undefined>;
+    const mode = this.queryString(q['hub.mode'] ?? q['hub_mode']);
+    const token = this.queryString(q['hub.verify_token'] ?? q['hub_verify_token']);
+    const challenge = this.queryString(q['hub.challenge'] ?? q['hub_challenge']);
 
     const creds = await this.instagram.credentials(userId);
+    const expected = creds?.verifyToken?.trim() ?? '';
+    const received = token?.trim() ?? '';
 
-    if (mode === 'subscribe' && creds && token === creds.verifyToken) {
+    if (mode === 'subscribe' && expected && received === expected) {
+      this.logger.log(`Instagram webhook verified for user ${userId}`);
       res.status(200).type('text/plain').send(challenge ?? '');
       return;
     }
+
+    this.logger.warn(
+      `Instagram webhook verify failed for user ${userId} (mode=${mode ?? 'missing'}, has_creds=${!!creds}, has_stored_token=${!!expected}, token_match=${!!expected && received === expected})`,
+    );
     res.status(403).type('text/plain').send('Forbidden');
+  }
+
+  private queryString(value: string | string[] | undefined): string | undefined {
+    if (Array.isArray(value)) {
+      return value[0];
+    }
+    return value;
   }
 
   @Post(':userId')
