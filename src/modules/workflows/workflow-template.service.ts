@@ -2,6 +2,8 @@ import { Injectable, UnprocessableEntityException } from '@nestjs/common';
 import { Workflow } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { SettingsService } from '../settings/settings.service';
+import { LeadsService } from '../leads/leads.service';
+import { buildSaveLeadApiConfig } from '../leads/lead-api.config';
 import { currentBusinessPublishedWhere, parseUseCases } from '../../common/workflow-scope';
 import { WORKFLOW_TEMPLATES, WorkflowDefinition, findTemplate } from './workflow-templates';
 import { findAnyTemplate } from './business-workflow-templates';
@@ -30,6 +32,7 @@ export class WorkflowTemplateService {
     private readonly prisma: PrismaService,
     private readonly settings: SettingsService,
     private readonly aiGenerator: AiWorkflowGeneratorService,
+    private readonly leads: LeadsService,
   ) {}
 
   listTemplates(): TemplateSummary[] {
@@ -64,7 +67,7 @@ export class WorkflowTemplateService {
         status: 'draft',
         isActive: false,
         triggerType: template.trigger_type,
-        definition: template.definition as any,
+        definition: (await this.injectSaveLeadApi(userId, template.definition)) as any,
         sourceTemplate: slug,
       },
     });
@@ -198,7 +201,8 @@ export class WorkflowTemplateService {
       );
 
       if (aiResult) {
-        const definition = applyUseCaseTriggerKeywords(aiResult.definition, useCase);
+        let definition = applyUseCaseTriggerKeywords(aiResult.definition, useCase);
+        definition = await this.injectSaveLeadApi(userId, definition);
         return this.prisma.workflow.create({
           data: {
             userId,
@@ -275,6 +279,7 @@ export class WorkflowTemplateService {
         : this.personalizeDefinition(template.definition, businessCategory);
 
     definition = applyUseCaseTriggerKeywords(definition, useCase);
+    definition = await this.injectSaveLeadApi(userId, definition);
 
     return this.prisma.workflow.create({
       data: {
@@ -329,5 +334,36 @@ export class WorkflowTemplateService {
 
   private extractNodeTypes(definition: WorkflowDefinition): string[] {
     return [...new Set((definition.nodes ?? []).map((n) => n.type))];
+  }
+
+  /** Fills save_lead nodes with this user's real API URL and Bearer token. */
+  async injectSaveLeadApi(
+    userId: number,
+    definition: WorkflowDefinition,
+  ): Promise<WorkflowDefinition> {
+    const token = await this.leads.getOrCreateApiBearerToken(userId);
+    const baseUrl = this.leads.resolveApiBaseUrl();
+    const def = JSON.parse(JSON.stringify(definition)) as WorkflowDefinition;
+
+    for (const node of def.nodes ?? []) {
+      if (node.type !== 'save_lead') {
+        continue;
+      }
+      const collectedFields = Array.isArray(node.data?.collected_fields)
+        ? (node.data.collected_fields as string[])
+        : [];
+      const notes = typeof node.data?.notes === 'string' ? node.data.notes : undefined;
+      node.data = {
+        ...node.data,
+        api: buildSaveLeadApiConfig({
+          apiBaseUrl: baseUrl,
+          bearerToken: token,
+          collectedFields,
+          notes,
+        }),
+      };
+    }
+
+    return def;
   }
 }

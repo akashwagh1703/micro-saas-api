@@ -4,6 +4,8 @@
  * `workflows` row (see WorkflowTemplateService).
  */
 
+import { buildSaveLeadApiPlaceholder } from '../leads/lead-api.config';
+
 export interface WorkflowNode {
   id: string;
   type: string;
@@ -273,7 +275,10 @@ const leadCaptureApi: WorkflowTemplate = {
       y: 200,
       data: {
         label: 'Save Lead',
-        summary: 'Saves lead to WhatsFlow',
+        summary: 'Saves lead to WhatsFlow Leads',
+        notes: 'WhatsApp lead capture',
+        collected_fields: [],
+        api: buildSaveLeadApiPlaceholder([], 'WhatsApp lead capture'),
       },
     },
     {

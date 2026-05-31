@@ -5,6 +5,7 @@
  */
 
 import { findTemplate, linearFlow, WorkflowTemplate } from './workflow-templates';
+import { buildSaveLeadApiPlaceholder } from '../leads/lead-api.config';
 
 const DEFAULT_AI = {
   provider: 'openrouter',
@@ -62,7 +63,13 @@ function collectNode(
   };
 }
 
-function leadCaptureTail(yStart: number, confirmMessage: string) {
+function leadCaptureTail(
+  yStart: number,
+  confirmMessage: string,
+  options?: { collectedFields?: string[]; notes?: string },
+) {
+  const collectedFields = options?.collectedFields ?? [];
+  const notes = options?.notes;
   return [
     {
       id: 'save-lead-1',
@@ -70,7 +77,10 @@ function leadCaptureTail(yStart: number, confirmMessage: string) {
       y: yStart,
       data: {
         label: 'Save Lead',
-        summary: 'Saves lead to WhatsFlow',
+        summary: 'Saves lead to WhatsFlow Leads',
+        notes,
+        collected_fields: collectedFields,
+        api: buildSaveLeadApiPlaceholder(collectedFields, notes),
       },
     },
     sendNode(
@@ -118,6 +128,10 @@ const realEstateLeadGen: WorkflowTemplate = {
     ...leadCaptureTail(
       560,
       "Hi {{contact_name}}! ✅ We've saved your enquiry.\n\nBudget: {{budget}}\nLocation: {{location}}\nType: {{property_type}}\n\nAn agent will contact you within 24 hours.",
+      {
+        collectedFields: ['budget', 'location', 'property_type'],
+        notes: 'Real estate lead from WhatsApp',
+      },
     ),
   ]),
 };
@@ -243,6 +257,7 @@ const coachingLeadGen: WorkflowTemplate = {
     ...leadCaptureTail(
       440,
       "Thanks {{contact_name}}! 📚 We've received your enquiry. Our counsellor will call you with batch details and fees.",
+      { notes: 'Coaching admission lead from WhatsApp' },
     ),
   ]),
 };
@@ -378,6 +393,7 @@ const travelLeadGen: WorkflowTemplate = {
     ...leadCaptureTail(
       440,
       "Thanks {{contact_name}}! 🌴 We've saved your trip enquiry. Our travel expert will share package options soon.",
+      { notes: 'Travel package lead from WhatsApp' },
     ),
   ]),
 };
@@ -403,6 +419,7 @@ const insuranceLeadGen: WorkflowTemplate = {
     ...leadCaptureTail(
       440,
       "Hi {{contact_name}}! We've registered your insurance enquiry. An advisor will share plan options shortly.",
+      { notes: 'Insurance lead from WhatsApp' },
     ),
   ]),
 };

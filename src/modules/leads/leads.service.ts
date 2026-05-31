@@ -1,7 +1,15 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { Lead, Prisma, WorkflowExecution } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ActivityLogger } from '../../common/activity-logger.service';
+import { CryptoService } from '../../common/crypto/crypto.service';
+import { SettingsService } from '../settings/settings.service';
+import {
+  buildSaveLeadApiConfig,
+  buildSaveLeadCurl,
+  SaveLeadApiConfig,
+} from './lead-api.config';
 import { SaveLeadDto, UpdateLeadDto } from './dto/lead.dto';
 
 interface CreateFromExecutionInput {
@@ -29,6 +37,9 @@ export class LeadsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly activity: ActivityLogger,
+    private readonly config: ConfigService,
+    private readonly settings: SettingsService,
+    private readonly crypto: CryptoService,
   ) {}
 
   /** Same persistence path as the workflow save_lead node. */
@@ -56,6 +67,57 @@ export class LeadsService {
       notes,
       channel: 'whatsapp',
     });
+  }
+
+  /** Creates or returns the Bearer token used in Save Lead API configs. */
+  async getOrCreateApiBearerToken(userId: number): Promise<string> {
+    const existing = await this.settings.get(userId, 'lead_api_bearer_token');
+    if (existing) {
+      return existing;
+    }
+
+    const { plainText, hash } = this.crypto.generateToken();
+    await this.prisma.personalAccessToken.create({
+      data: { userId, name: 'lead-api', token: hash },
+    });
+    await this.settings.set(userId, 'lead_api_bearer_token', plainText);
+    return plainText;
+  }
+
+  resolveApiBaseUrl(): string {
+    return (this.config.get<string>('APP_URL') ?? 'http://localhost:3000').replace(/\/$/, '');
+  }
+
+  buildSaveLeadApiForUser(
+    userId: number,
+    collectedFields: string[] = [],
+    notes?: string,
+  ): Promise<SaveLeadApiConfig> {
+    return this.getOrCreateApiBearerToken(userId).then((token) =>
+      buildSaveLeadApiConfig({
+        apiBaseUrl: this.resolveApiBaseUrl(),
+        bearerToken: token,
+        collectedFields,
+        notes,
+      }),
+    );
+  }
+
+  async getIntegrationConfig(
+    userId: number,
+    collectedFields: string[] = [],
+    notes?: string,
+  ) {
+    const api = await this.buildSaveLeadApiForUser(userId, collectedFields, notes);
+    return {
+      save_url: api.url,
+      method: api.method,
+      bearer_token: api.headers.Authorization?.replace(/^Bearer\s+/i, '') ?? '',
+      headers: api.headers,
+      body: api.body,
+      api,
+      curl: buildSaveLeadCurl(api),
+    };
   }
 
   async update(userId: number, id: number, dto: UpdateLeadDto): Promise<Lead> {

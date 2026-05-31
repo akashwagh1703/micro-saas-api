@@ -2,7 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CryptoService } from '../../common/crypto/crypto.service';
 
-const ENCRYPTED_KEYS = ['openrouter_api_key', 'openai_api_key'];
+const ENCRYPTED_KEYS = ['openrouter_api_key', 'openai_api_key', 'lead_api_bearer_token'];
 
 /** Per-user key/value settings, with at-rest encryption for API keys. */
 @Injectable()

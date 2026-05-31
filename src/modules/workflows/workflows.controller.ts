@@ -27,6 +27,7 @@ import { SettingsService } from '../settings/settings.service';
 import { BillingService } from '../billing/billing.service';
 import { WorkflowValidator } from './workflow-validator.service';
 import { WorkflowTemplateService } from './workflow-template.service';
+import { WorkflowDefinition } from './workflow-templates';
 import {
   CreateWorkflowDto,
   GenerateWorkflowDto,
@@ -280,19 +281,22 @@ export class WorkflowsController {
   ) {
     await this.findOrFail(userId, id);
 
+    const data: Record<string, any> = {};
+    if (dto.name !== undefined) data.name = dto.name;
+    if (dto.description !== undefined) data.description = dto.description;
+    if (dto.trigger_type !== undefined) data.triggerType = dto.trigger_type;
+    if (dto.is_active !== undefined) data.isActive = dto.is_active;
+
     if (dto.definition !== undefined) {
       const errors = this.validator.validate(dto.definition);
       if (errors.length > 0) {
         throw new UnprocessableEntityException({ errors });
       }
+      data.definition = await this.templates.injectSaveLeadApi(
+        userId,
+        dto.definition as WorkflowDefinition,
+      );
     }
-
-    const data: Record<string, any> = {};
-    if (dto.name !== undefined) data.name = dto.name;
-    if (dto.description !== undefined) data.description = dto.description;
-    if (dto.trigger_type !== undefined) data.triggerType = dto.trigger_type;
-    if (dto.definition !== undefined) data.definition = dto.definition;
-    if (dto.is_active !== undefined) data.isActive = dto.is_active;
 
     const workflow = await this.prisma.workflow.update({ where: { id }, data });
     return { workflow: serializeWorkflow(workflow) };

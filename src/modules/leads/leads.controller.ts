@@ -31,6 +31,18 @@ export class LeadsController {
     private readonly leads: LeadsService,
   ) {}
 
+  @Get('integration')
+  async integration(
+    @CurrentUser('id') userId: number,
+    @Query('collected_fields') collectedFieldsRaw: string | undefined,
+    @Query('notes') notes: string | undefined,
+  ) {
+    const collectedFields = collectedFieldsRaw
+      ? collectedFieldsRaw.split(',').map((s) => s.trim()).filter(Boolean)
+      : [];
+    return this.leads.getIntegrationConfig(userId, collectedFields, notes);
+  }
+
   @Get('stats')
   async stats(@CurrentUser('id') userId: number) {
     return this.leads.stats(userId);
