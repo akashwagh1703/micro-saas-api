@@ -96,8 +96,10 @@ export class IncomingMessageProcessor {
           status: 'pending',
           context: {
             message: message.content,
-            contact_phone: message.contact.phone,
+            channel: message.contact.channel,
+            contact_phone: message.contact.phone ?? '',
             contact_name: message.contact.name,
+            contact_username: message.contact.username ?? '',
             __collected: {},
           },
         },

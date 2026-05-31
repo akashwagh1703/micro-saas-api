@@ -7,6 +7,7 @@ import { QueueModule } from './modules/queue/queue.module';
 import { AuthModule } from './modules/auth/auth.module';
 import { DashboardModule } from './modules/dashboard/dashboard.module';
 import { WhatsappModule } from './modules/whatsapp/whatsapp.module';
+import { InstagramModule } from './modules/instagram/instagram.module';
 import { ContactsModule } from './modules/contacts/contacts.module';
 import { LeadsModule } from './modules/leads/leads.module';
 import { InboxModule } from './modules/inbox/inbox.module';
@@ -27,6 +28,7 @@ import { AppController } from './app.controller';
     AuthModule,
     DashboardModule,
     WhatsappModule,
+    InstagramModule,
     ContactsModule,
     LeadsModule,
     InboxModule,

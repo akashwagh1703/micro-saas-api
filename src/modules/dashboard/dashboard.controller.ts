@@ -25,6 +25,7 @@ export class DashboardController {
       contactsCount,
       leadsCount,
       account,
+      instagramAccount,
       aiUsage,
     ] = await this.prisma.$transaction([
       this.prisma.message.count({ where: { userId } }),
@@ -35,6 +36,7 @@ export class DashboardController {
       this.prisma.contact.count({ where: { userId } }),
       this.prisma.lead.count({ where: { userId } }),
       this.prisma.whatsAppAccount.findUnique({ where: { userId } }),
+      this.prisma.instagramAccount.findUnique({ where: { userId } }),
       this.prisma.executionLog.count({ where: { nodeType: 'ai', execution: { userId } } }),
     ]);
 
@@ -46,6 +48,9 @@ export class DashboardController {
       leads_count: leadsCount,
       whatsapp_connected: !!account?.isConnected,
       whatsapp_display: account?.displayPhoneNumber ?? null,
+      instagram_connected: !!instagramAccount?.isConnected,
+      instagram_username: instagramAccount?.username ?? null,
+      instagram_display: instagramAccount?.displayName ?? null,
       ai_usage: aiUsage,
     };
   }

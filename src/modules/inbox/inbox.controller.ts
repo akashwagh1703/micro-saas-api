@@ -45,6 +45,7 @@ export class InboxController {
         OR: [
           { name: { contains: search, mode: 'insensitive' } },
           { phone: { contains: search, mode: 'insensitive' } },
+          { username: { contains: search, mode: 'insensitive' } },
         ],
       };
     }

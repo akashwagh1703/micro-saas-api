@@ -32,6 +32,7 @@ model User {
   currentPeriodEnd       DateTime? @map("current_period_end")
 
   whatsAppAccount     WhatsAppAccount?
+  instagramAccount    InstagramAccount?
   contacts            Contact[]
   conversations       Conversation[]
   messages            Message[]
@@ -83,17 +84,41 @@ model WhatsAppAccount {
   @@map("whats_app_accounts")
 }
 
+model InstagramAccount {
+  id              Int       @id @default(autoincrement())
+  userId          Int       @unique @map("user_id")
+  instagramUserId String?   @map("instagram_user_id")
+  pageId          String?   @map("page_id")
+  accessToken     String?   @map("access_token")
+  verifyToken     String?   @map("verify_token")
+  appSecret       String?   @map("app_secret")
+  username        String?
+  displayName     String?   @map("display_name")
+  isConnected     Boolean   @default(false) @map("is_connected")
+  connectedAt     DateTime? @map("connected_at")
+  createdAt       DateTime? @default(now()) @map("created_at")
+  updatedAt       DateTime? @updatedAt @map("updated_at")
+
+  user          User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  conversations Conversation[]
+
+  @@map("instagram_accounts")
+}
+
 model Contact {
-  id            Int       @id @default(autoincrement())
-  userId        Int       @map("user_id")
-  name          String?
-  phone         String
-  email         String?
-  tags          Json?
-  notes         String?
-  lastMessageAt DateTime? @map("last_message_at")
-  createdAt     DateTime? @default(now()) @map("created_at")
-  updatedAt     DateTime? @updatedAt @map("updated_at")
+  id              Int       @id @default(autoincrement())
+  userId          Int       @map("user_id")
+  channel         String    @default("whatsapp") @db.VarChar(20)
+  name            String?
+  phone           String?
+  instagramUserId String?   @map("instagram_user_id")
+  username        String?
+  email           String?
+  tags            Json?
+  notes           String?
+  lastMessageAt   DateTime? @map("last_message_at")
+  createdAt       DateTime? @default(now()) @map("created_at")
+  updatedAt       DateTime? @updatedAt @map("updated_at")
 
   user               User                @relation(fields: [userId], references: [id], onDelete: Cascade)
   conversation       Conversation?
@@ -101,42 +126,50 @@ model Contact {
   workflowExecutions WorkflowExecution[]
 
   @@unique([userId, phone])
+  @@unique([userId, instagramUserId])
+  @@index([userId, channel, lastMessageAt])
   @@index([userId, lastMessageAt])
   @@map("contacts")
 }
 
 model Conversation {
-  id                Int       @id @default(autoincrement())
-  userId            Int       @map("user_id")
-  contactId         Int       @unique @map("contact_id")
-  whatsAppAccountId Int?      @map("whats_app_account_id")
-  unreadCount       Int       @default(0) @map("unread_count")
-  lastMessageAt     DateTime? @map("last_message_at")
-  createdAt         DateTime? @default(now()) @map("created_at")
-  updatedAt         DateTime? @updatedAt @map("updated_at")
+  id                  Int       @id @default(autoincrement())
+  userId              Int       @map("user_id")
+  contactId           Int       @unique @map("contact_id")
+  channel             String    @default("whatsapp") @db.VarChar(20)
+  whatsAppAccountId   Int?      @map("whats_app_account_id")
+  instagramAccountId  Int?      @map("instagram_account_id")
+  unreadCount         Int       @default(0) @map("unread_count")
+  lastMessageAt       DateTime? @map("last_message_at")
+  createdAt           DateTime? @default(now()) @map("created_at")
+  updatedAt           DateTime? @updatedAt @map("updated_at")
 
   user               User                @relation(fields: [userId], references: [id], onDelete: Cascade)
   contact            Contact             @relation(fields: [contactId], references: [id], onDelete: Cascade)
   whatsAppAccount    WhatsAppAccount?    @relation(fields: [whatsAppAccountId], references: [id], onDelete: SetNull)
+  instagramAccount   InstagramAccount?   @relation(fields: [instagramAccountId], references: [id], onDelete: SetNull)
   messages           Message[]
   workflowExecutions WorkflowExecution[]
 
+  @@index([userId, channel, lastMessageAt])
   @@index([userId, lastMessageAt])
   @@map("conversations")
 }
 
 model Message {
-  id             Int       @id @default(autoincrement())
-  userId         Int       @map("user_id")
-  conversationId Int       @map("conversation_id")
-  contactId      Int       @map("contact_id")
-  direction      String
-  content        String
-  waMessageId    String?   @map("wa_message_id")
-  status         String    @default("pending")
-  metadata       Json?
-  createdAt      DateTime? @default(now()) @map("created_at")
-  updatedAt      DateTime? @updatedAt @map("updated_at")
+  id                 Int       @id @default(autoincrement())
+  userId             Int       @map("user_id")
+  conversationId     Int       @map("conversation_id")
+  contactId          Int       @map("contact_id")
+  channel            String    @default("whatsapp") @db.VarChar(20)
+  direction          String
+  content            String
+  waMessageId        String?   @map("wa_message_id")
+  externalMessageId  String?   @map("external_message_id")
+  status             String    @default("pending")
+  metadata           Json?
+  createdAt          DateTime? @default(now()) @map("created_at")
+  updatedAt          DateTime? @updatedAt @map("updated_at")
 
   user               User                @relation(fields: [userId], references: [id], onDelete: Cascade)
   conversation       Conversation        @relation(fields: [conversationId], references: [id], onDelete: Cascade)
@@ -144,7 +177,9 @@ model Message {
   workflowExecutions WorkflowExecution[]
 
   @@index([conversationId, createdAt])
+  @@index([userId, channel, createdAt])
   @@index([userId, waMessageId])
+  @@index([userId, externalMessageId])
   @@map("messages")
 }
 

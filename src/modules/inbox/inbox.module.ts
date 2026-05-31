@@ -1,11 +1,12 @@
 import { Module } from '@nestjs/common';
 import { IntegrationsModule } from '../integrations/integrations.module';
 import { WhatsappModule } from '../whatsapp/whatsapp.module';
+import { InstagramModule } from '../instagram/instagram.module';
 import { InboxService } from './inbox.service';
 import { InboxController } from './inbox.controller';
 
 @Module({
-  imports: [IntegrationsModule, WhatsappModule],
+  imports: [IntegrationsModule, WhatsappModule, InstagramModule],
   controllers: [InboxController],
   providers: [InboxService],
   exports: [InboxService],

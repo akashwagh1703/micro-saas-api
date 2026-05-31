@@ -3,6 +3,7 @@ import {
   Contact,
   Conversation,
   ExecutionLog,
+  InstagramAccount,
   Lead,
   Message,
   User,
@@ -30,8 +31,11 @@ export function serializeContact(c: Contact) {
   return {
     id: c.id,
     user_id: c.userId,
+    channel: c.channel,
     name: c.name,
     phone: c.phone,
+    instagram_user_id: c.instagramUserId,
+    username: c.username,
     email: c.email,
     tags: c.tags ?? null,
     notes: c.notes,
@@ -47,9 +51,11 @@ export function serializeMessage(m: Message) {
     user_id: m.userId,
     conversation_id: m.conversationId,
     contact_id: m.contactId,
+    channel: m.channel,
     direction: m.direction,
     content: m.content,
     wa_message_id: m.waMessageId,
+    external_message_id: m.externalMessageId,
     status: m.status,
     metadata: m.metadata ?? null,
     created_at: dt(m.createdAt),
@@ -62,12 +68,32 @@ export function serializeConversation(c: Conversation & { contact?: Contact | nu
     id: c.id,
     user_id: c.userId,
     contact_id: c.contactId,
+    channel: c.channel,
     whats_app_account_id: c.whatsAppAccountId,
+    instagram_account_id: c.instagramAccountId,
     unread_count: c.unreadCount,
     last_message_at: dt(c.lastMessageAt),
     created_at: dt(c.createdAt),
     updated_at: dt(c.updatedAt),
     ...(c.contact !== undefined ? { contact: c.contact ? serializeContact(c.contact) : null } : {}),
+  };
+}
+
+export function serializeInstagramAccount(a: InstagramAccount) {
+  return {
+    id: a.id,
+    user_id: a.userId,
+    instagram_user_id: a.instagramUserId,
+    page_id: a.pageId,
+    username: a.username,
+    display_name: a.displayName,
+    is_connected: a.isConnected,
+    connected_at: dt(a.connectedAt),
+    has_access_token: !!a.accessToken,
+    has_verify_token: !!a.verifyToken,
+    has_app_secret: !!a.appSecret,
+    created_at: dt(a.createdAt),
+    updated_at: dt(a.updatedAt),
   };
 }
 

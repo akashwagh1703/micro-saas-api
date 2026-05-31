@@ -1,8 +1,12 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { Contact, Conversation, Message } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import { CHANNEL_INSTAGRAM, CHANNEL_WHATSAPP } from '../../common/channels';
+import { contactDisplayLabel } from '../../common/contact-display';
 import { WhatsappService } from '../whatsapp/whatsapp.service';
+import { InstagramService } from '../instagram/instagram.service';
 import { WhatsAppApiService } from '../integrations/whatsapp-api.service';
+import { InstagramApiService } from '../integrations/instagram-api.service';
 
 export interface SendResult {
   success: boolean;
@@ -10,13 +14,59 @@ export interface SendResult {
   error: string | null;
 }
 
+type ConversationWithContact = Conversation & { contact: Contact };
+
 @Injectable()
 export class InboxService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly whatsapp: WhatsappService,
-    private readonly api: WhatsAppApiService,
+    private readonly instagram: InstagramService,
+    private readonly whatsAppApi: WhatsAppApiService,
+    private readonly instagramApi: InstagramApiService,
   ) {}
+
+  async findOrCreateInstagramContact(
+    userId: number,
+    instagramUserId: string,
+    name?: string | null,
+    username?: string | null,
+  ): Promise<Contact> {
+    const scopedId = String(instagramUserId).trim();
+    const existing = await this.prisma.contact.findUnique({
+      where: { userId_instagramUserId: { userId, instagramUserId: scopedId } },
+    });
+
+    if (existing) {
+      const updates: { name?: string; username?: string } = {};
+      if (name && !existing.name) updates.name = name;
+      if (username && !existing.username) updates.username = username;
+      if (Object.keys(updates).length > 0) {
+        return this.prisma.contact.update({ where: { id: existing.id }, data: updates });
+      }
+      return existing;
+    }
+
+    return this.prisma.contact.create({
+      data: {
+        userId,
+        channel: CHANNEL_INSTAGRAM,
+        instagramUserId: scopedId,
+        username: username ?? null,
+        name: name ?? username ?? null,
+        phone: null,
+      },
+    });
+  }
+
+  async findMessageByExternalId(userId: number, externalMessageId: string): Promise<Message | null> {
+    if (!externalMessageId) {
+      return null;
+    }
+    return this.prisma.message.findFirst({
+      where: { userId, externalMessageId },
+    });
+  }
 
   async findOrCreateContact(userId: number, phone: string, name?: string | null): Promise<Contact> {
     const normalized = (phone ?? '').replace(/\D/g, '');
@@ -27,7 +77,12 @@ export class InboxService {
       return existing;
     }
     return this.prisma.contact.create({
-      data: { userId, phone: normalized, name: name ?? normalized },
+      data: {
+        userId,
+        channel: CHANNEL_WHATSAPP,
+        phone: normalized,
+        name: name ?? normalized,
+      },
     });
   }
 
@@ -35,6 +90,7 @@ export class InboxService {
     userId: number,
     contact: Contact,
     whatsAppAccountId?: number | null,
+    instagramAccountId?: number | null,
   ): Promise<Conversation> {
     const existing = await this.prisma.conversation.findUnique({
       where: { contactId: contact.id },
@@ -43,7 +99,14 @@ export class InboxService {
       return existing;
     }
     return this.prisma.conversation.create({
-      data: { userId, contactId: contact.id, whatsAppAccountId: whatsAppAccountId ?? null, unreadCount: 0 },
+      data: {
+        userId,
+        contactId: contact.id,
+        channel: contact.channel,
+        whatsAppAccountId: whatsAppAccountId ?? null,
+        instagramAccountId: instagramAccountId ?? null,
+        unreadCount: 0,
+      },
     });
   }
 
@@ -52,7 +115,7 @@ export class InboxService {
     contact: Contact,
     conversation: Conversation,
     content: string,
-    waMessageId?: string | null,
+    ids?: { waMessageId?: string | null; externalMessageId?: string | null },
     metadata?: Record<string, any> | null,
   ): Promise<Message> {
     return this.prisma.$transaction(async (tx) => {
@@ -61,9 +124,11 @@ export class InboxService {
           userId,
           conversationId: conversation.id,
           contactId: contact.id,
+          channel: contact.channel,
           direction: 'incoming',
           content,
-          waMessageId: waMessageId ?? null,
+          waMessageId: ids?.waMessageId ?? null,
+          externalMessageId: ids?.externalMessageId ?? null,
           status: 'received',
           metadata: metadata ?? undefined,
         },
@@ -79,7 +144,7 @@ export class InboxService {
         data: {
           userId,
           type: 'message_received',
-          title: `New message from ${contact.phone}`,
+          title: `New message from ${contactDisplayLabel(contact)}`,
           description: content,
         },
       });
@@ -101,28 +166,91 @@ export class InboxService {
       throw new NotFoundException();
     }
 
+    if (conversation.channel === CHANNEL_INSTAGRAM) {
+      return this.sendInstagramMessage(userId, conversation, content);
+    }
+
+    return this.sendWhatsAppMessage(userId, conversation, content);
+  }
+
+  private async sendWhatsAppMessage(
+    userId: number,
+    conversation: ConversationWithContact,
+    content: string,
+  ): Promise<SendResult> {
     const creds = await this.whatsapp.credentials(userId);
     if (!creds?.account.isConnected) {
       return { success: false, message: null, error: 'WhatsApp not connected' };
     }
 
-    const result = await this.api.sendTextMessage(
+    const result = await this.whatsAppApi.sendTextMessage(
       creds.accessToken ?? '',
       creds.phoneNumberId ?? '',
-      conversation.contact.phone,
+      conversation.contact.phone ?? '',
       content,
     );
 
+    return this.persistOutgoingMessage(conversation, content, {
+      success: result.success,
+      waMessageId: result.data?.messages?.[0]?.id ?? null,
+      metadata: result,
+      error: result.message ?? null,
+    });
+  }
+
+  private async sendInstagramMessage(
+    userId: number,
+    conversation: ConversationWithContact,
+    content: string,
+  ): Promise<SendResult> {
+    const creds = await this.instagram.credentials(userId);
+    if (!creds?.account.isConnected) {
+      return { success: false, message: null, error: 'Instagram not connected' };
+    }
+
+    const recipientId = conversation.contact.instagramUserId;
+    if (!recipientId) {
+      return { success: false, message: null, error: 'Contact has no Instagram user id' };
+    }
+
+    const result = await this.instagramApi.sendTextMessage(
+      creds.accessToken ?? '',
+      creds.account.instagramUserId,
+      recipientId,
+      content,
+    );
+
+    return this.persistOutgoingMessage(conversation, content, {
+      success: result.success,
+      externalMessageId: result.data?.message_id ?? null,
+      metadata: result,
+      error: result.message ?? null,
+    });
+  }
+
+  private async persistOutgoingMessage(
+    conversation: ConversationWithContact,
+    content: string,
+    send: {
+      success: boolean;
+      waMessageId?: string | null;
+      externalMessageId?: string | null;
+      metadata?: unknown;
+      error?: string | null;
+    },
+  ): Promise<SendResult> {
     const message = await this.prisma.message.create({
       data: {
-        userId,
+        userId: conversation.userId,
         conversationId: conversation.id,
         contactId: conversation.contactId,
+        channel: conversation.channel,
         direction: 'outgoing',
         content,
-        waMessageId: result.data?.messages?.[0]?.id ?? null,
-        status: result.success ? 'sent' : 'failed',
-        metadata: result as any,
+        waMessageId: send.waMessageId ?? null,
+        externalMessageId: send.externalMessageId ?? null,
+        status: send.success ? 'sent' : 'failed',
+        metadata: (send.metadata ?? null) as any,
       },
     });
 
@@ -137,12 +265,16 @@ export class InboxService {
     });
     await this.prisma.activity.create({
       data: {
-        userId,
+        userId: conversation.userId,
         type: 'message_sent',
-        title: `Message sent to ${conversation.contact.phone}`,
+        title: `Message sent to ${contactDisplayLabel(conversation.contact)}`,
       },
     });
 
-    return { success: result.success, message, error: result.message ?? null };
+    return {
+      success: send.success,
+      message,
+      error: send.error ?? null,
+    };
   }
 }

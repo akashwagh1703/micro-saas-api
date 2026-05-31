@@ -1,21 +1,22 @@
 import { Controller, Get, Inject, Logger, Param, ParseIntPipe, Post, Req, Res } from '@nestjs/common';
 import { Request, Response } from 'express';
-import { WhatsappService } from '../whatsapp/whatsapp.service';
-import { WhatsAppApiService } from '../integrations/whatsapp-api.service';
+import { InstagramService } from '../instagram/instagram.service';
+import { InstagramApiService } from '../integrations/instagram-api.service';
 import { InboxService } from '../inbox/inbox.service';
 import { JOB_DISPATCHER, JobDispatcher } from '../queue/job-dispatcher';
+import { parseInstagramWebhookPayload } from './instagram-webhook.parser';
 
 /**
- * Meta WhatsApp webhook endpoints. These return plain text (not JSON) to match
- * Meta's expectations and the original Laravel behavior.
+ * Meta Instagram DM webhook (Messenger Platform / Instagram Messaging).
+ * Verify + receive mirror the WhatsApp webhook pattern.
  */
-@Controller('webhook/whatsapp')
-export class WebhooksController {
-  private readonly logger = new Logger(WebhooksController.name);
+@Controller('webhook/instagram')
+export class InstagramWebhooksController {
+  private readonly logger = new Logger(InstagramWebhooksController.name);
 
   constructor(
-    private readonly whatsapp: WhatsappService,
-    private readonly api: WhatsAppApiService,
+    private readonly instagram: InstagramService,
+    private readonly api: InstagramApiService,
     private readonly inbox: InboxService,
     @Inject(JOB_DISPATCHER) private readonly queue: JobDispatcher,
   ) {}
@@ -31,7 +32,7 @@ export class WebhooksController {
     const token = q['hub.verify_token'] ?? q['hub_verify_token'];
     const challenge = q['hub.challenge'] ?? q['hub_challenge'];
 
-    const creds = await this.whatsapp.credentials(userId);
+    const creds = await this.instagram.credentials(userId);
 
     if (mode === 'subscribe' && creds && token === creds.verifyToken) {
       res.status(200).type('text/plain').send(challenge ?? '');
@@ -46,61 +47,59 @@ export class WebhooksController {
     @Req() req: Request,
     @Res() res: Response,
   ) {
-    const creds = await this.whatsapp.credentials(userId);
+    const creds = await this.instagram.credentials(userId);
     if (!creds || !creds.account.isConnected) {
       res.status(200).type('text/plain').send('OK');
       return;
     }
 
     if (!this.signatureIsValid(req, creds.appSecret, userId)) {
-      this.logger.warn(`Webhook signature rejected for user ${userId}`);
+      this.logger.warn(`Instagram webhook signature rejected for user ${userId}`);
       res.status(403).type('text/plain').send('Invalid signature');
       return;
     }
 
     const payload = req.body ?? {};
-
-    if (this.isStatusUpdate(payload)) {
-      res.status(200).type('text/plain').send('OK');
-      return;
-    }
+    const inbound = parseInstagramWebhookPayload(payload);
 
     try {
-      const entry = payload?.entry?.[0]?.changes?.[0]?.value ?? null;
-      const messages = entry?.messages ?? [];
-
-      for (const waMessage of messages) {
-        if ((waMessage.type ?? '') !== 'text') {
-          continue;
-        }
-        const from = waMessage.from ?? null;
-        const text = waMessage.text?.body ?? '';
-        const waId = waMessage.id ?? null;
-        const contactName = entry?.contacts?.[0]?.profile?.name ?? null;
-
-        if (!from) {
+      for (const item of inbound) {
+        const duplicate = await this.inbox.findMessageByExternalId(userId, item.messageId);
+        if (duplicate) {
           continue;
         }
 
-        const contact = await this.inbox.findOrCreateContact(userId, from, contactName);
+        const profile = await this.api.fetchSenderProfile(
+          creds.accessToken ?? '',
+          item.senderId,
+        );
+
+        const contact = await this.inbox.findOrCreateInstagramContact(
+          userId,
+          item.senderId,
+          profile?.name ?? null,
+          profile?.username ?? null,
+        );
         const conversation = await this.inbox.findOrCreateConversation(
           userId,
           contact,
+          null,
           creds.account.id,
         );
+
         const message = await this.inbox.storeIncomingMessage(
           userId,
           contact,
           conversation,
-          text,
-          { waMessageId: waId },
-          { raw: waMessage },
+          item.text,
+          { externalMessageId: item.messageId },
+          { raw: item.raw, channel: 'instagram', sender_id: item.senderId },
         );
 
         await this.queue.enqueueProcessIncoming(message.id);
       }
     } catch (e: any) {
-      this.logger.error(`Webhook processing error for user ${userId}: ${e.message}`);
+      this.logger.error(`Instagram webhook processing error for user ${userId}: ${e.message}`);
     }
 
     res.status(200).type('text/plain').send('OK');
@@ -109,7 +108,7 @@ export class WebhooksController {
   private signatureIsValid(req: Request, appSecret: string | null, userId: number): boolean {
     if (!appSecret) {
       this.logger.warn(
-        `WhatsApp webhook received without app_secret configured; signature not verified (user ${userId})`,
+        `Instagram webhook received without app_secret configured; signature not verified (user ${userId})`,
       );
       return true;
     }
@@ -119,10 +118,5 @@ export class WebhooksController {
       req.header('X-Hub-Signature-256') ?? undefined,
       appSecret,
     );
-  }
-
-  private isStatusUpdate(payload: any): boolean {
-    const statuses = payload?.entry?.[0]?.changes?.[0]?.value?.statuses ?? null;
-    return !!statuses && statuses.length > 0;
   }
 }

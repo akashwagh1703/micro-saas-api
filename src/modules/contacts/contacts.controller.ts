@@ -16,6 +16,7 @@ import {
 import { Request } from 'express';
 import { Prisma } from '@prisma/client';
 import { TokenAuthGuard } from '../../common/guards/token-auth.guard';
+import { CHANNEL_WHATSAPP } from '../../common/channels';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { PrismaService } from '../../prisma/prisma.service';
 import { paginate, resolvePage } from '../../common/pagination';
@@ -43,6 +44,7 @@ export class ContactsController {
       where.OR = [
         { name: { contains: search, mode: 'insensitive' } },
         { phone: { contains: search, mode: 'insensitive' } },
+        { username: { contains: search, mode: 'insensitive' } },
         { email: { contains: search, mode: 'insensitive' } },
       ];
     }
@@ -70,6 +72,7 @@ export class ContactsController {
       data: {
         userId,
         name: dto.name ?? null,
+        channel: CHANNEL_WHATSAPP,
         phone: dto.phone.replace(/\D/g, ''),
         email: dto.email ?? null,
         tags: dto.tags ?? undefined,
