@@ -21,7 +21,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { paginate, resolvePage } from '../../common/pagination';
 import { serializeLead } from '../../common/serializers';
 import { LeadsService } from './leads.service';
-import { CreateLeadWhatsAppDto, UpdateLeadDto } from './dto/lead.dto';
+import { SaveLeadDto, UpdateLeadDto } from './dto/lead.dto';
 
 @Controller('leads')
 @UseGuards(TokenAuthGuard)
@@ -97,9 +97,21 @@ export class LeadsController {
     return paginate(items, total, currentPage, perPage, path, serializeLead);
   }
 
+  @Post('save')
+  async save(@CurrentUser('id') userId: number, @Body() dto: SaveLeadDto) {
+    const lead = await this.leads.save(userId, dto);
+    return { lead: serializeLead(lead) };
+  }
+
   @Post('whatsapp')
-  async createWhatsApp(@CurrentUser('id') userId: number, @Body() dto: CreateLeadWhatsAppDto) {
-    const lead = await this.leads.createFromWhatsApp(userId, dto);
+  async createWhatsApp(@CurrentUser('id') userId: number, @Body() dto: SaveLeadDto) {
+    const lead = await this.leads.save(userId, { ...dto, channel: dto.channel ?? 'whatsapp' });
+    return { lead: serializeLead(lead) };
+  }
+
+  @Post()
+  async store(@CurrentUser('id') userId: number, @Body() dto: SaveLeadDto) {
+    const lead = await this.leads.save(userId, dto);
     return { lead: serializeLead(lead) };
   }
 

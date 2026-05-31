@@ -1,12 +1,26 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { Lead, Prisma, WorkflowExecution } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ActivityLogger } from '../../common/activity-logger.service';
-import { CreateLeadWhatsAppDto, UpdateLeadDto } from './dto/lead.dto';
+import { SaveLeadDto, UpdateLeadDto } from './dto/lead.dto';
 
 interface CreateFromExecutionInput {
   execution: WorkflowExecution;
   context: Record<string, unknown>;
+  notes?: string;
+}
+
+interface NormalizedLeadInput {
+  channel: string;
+  name?: string;
+  phone?: string;
+  username?: string;
+  sourceMessage?: string;
+  collected?: Record<string, unknown>;
+  contactId?: number;
+  conversationId?: number;
+  workflowId?: number;
+  executionId?: number;
   notes?: string;
 }
 
@@ -17,36 +31,30 @@ export class LeadsService {
     private readonly activity: ActivityLogger,
   ) {}
 
+  /** Same persistence path as the workflow save_lead node. */
+  async save(userId: number, dto: SaveLeadDto): Promise<Lead> {
+    const normalized = this.normalizeSaveLeadDto(dto);
+    this.assertHasLeadData(normalized);
+    return this.createLead(userId, normalized);
+  }
+
   async createFromExecution({ execution, context, notes }: CreateFromExecutionInput): Promise<Lead> {
     const collected =
       context.__collected && typeof context.__collected === 'object'
         ? (context.__collected as Record<string, unknown>)
-        : {};
+        : undefined;
 
-    return this.createLead(execution.userId, {
+    return this.save(execution.userId, {
+      contact_name: this.asString(context.contact_name) || undefined,
+      contact_phone: this.asString(context.contact_phone) || undefined,
+      message: this.asString(context.message) || undefined,
+      collected,
+      contact_id: execution.contactId ?? undefined,
+      conversation_id: execution.conversationId ?? undefined,
+      workflow_id: execution.workflowId,
+      execution_id: execution.id,
+      notes,
       channel: 'whatsapp',
-      name: this.asString(context.contact_name) || undefined,
-      phone: this.normalizePhone(this.asString(context.contact_phone)),
-      sourceMessage: this.asString(context.message) || undefined,
-      collected: Object.keys(collected).length > 0 ? collected : undefined,
-      contactId: execution.contactId ?? undefined,
-      conversationId: execution.conversationId ?? undefined,
-      workflowId: execution.workflowId,
-      executionId: execution.id,
-      notes: notes?.trim() || undefined,
-    });
-  }
-
-  async createFromWhatsApp(userId: number, dto: CreateLeadWhatsAppDto): Promise<Lead> {
-    return this.createLead(userId, {
-      channel: 'whatsapp',
-      name: dto.name,
-      phone: dto.phone ? this.normalizePhone(dto.phone) : undefined,
-      sourceMessage: dto.source_message,
-      collected: dto.collected,
-      contactId: dto.contact_id,
-      conversationId: dto.conversation_id,
-      notes: dto.notes,
     });
   }
 
@@ -104,6 +112,8 @@ export class LeadsService {
       'username',
       'source_message',
       'collected',
+      'workflow_id',
+      'execution_id',
       'notes',
       'created_at',
     ];
@@ -117,6 +127,8 @@ export class LeadsService {
         lead.username ?? '',
         lead.sourceMessage ?? '',
         lead.collected ? JSON.stringify(lead.collected) : '',
+        lead.workflowId ?? '',
+        lead.executionId ?? '',
         lead.notes ?? '',
         lead.createdAt?.toISOString() ?? '',
       ]
@@ -126,22 +138,42 @@ export class LeadsService {
     return [headers.join(','), ...rows].join('\n');
   }
 
-  private async createLead(
-    userId: number,
-    data: {
-      channel: string;
-      name?: string;
-      phone?: string;
-      username?: string;
-      sourceMessage?: string;
-      collected?: Record<string, unknown>;
-      contactId?: number;
-      conversationId?: number;
-      workflowId?: number;
-      executionId?: number;
-      notes?: string;
-    },
-  ): Promise<Lead> {
+  private normalizeSaveLeadDto(dto: SaveLeadDto): NormalizedLeadInput {
+    const name = (dto.name ?? dto.contact_name)?.trim() || undefined;
+    const phoneRaw = dto.phone ?? dto.contact_phone;
+    const phone = phoneRaw ? this.normalizePhone(phoneRaw) : undefined;
+    const sourceMessage = (dto.source_message ?? dto.message)?.trim() || undefined;
+    const collected = dto.collected ?? dto.__collected;
+    const collectedClean =
+      collected && typeof collected === 'object' && Object.keys(collected).length > 0
+        ? collected
+        : undefined;
+
+    return {
+      channel: (dto.channel ?? 'whatsapp').trim() || 'whatsapp',
+      name,
+      phone: phone || undefined,
+      username: dto.username?.trim() || undefined,
+      sourceMessage,
+      collected: collectedClean,
+      contactId: dto.contact_id,
+      conversationId: dto.conversation_id,
+      workflowId: dto.workflow_id,
+      executionId: dto.execution_id,
+      notes: dto.notes?.trim() || undefined,
+    };
+  }
+
+  private assertHasLeadData(data: NormalizedLeadInput): void {
+    const hasCollected = data.collected && Object.keys(data.collected).length > 0;
+    if (!data.name && !data.phone && !data.username && !data.sourceMessage && !hasCollected) {
+      throw new BadRequestException(
+        'Lead must include at least one of: contact_name, contact_phone, message, or collected answers.',
+      );
+    }
+  }
+
+  private async createLead(userId: number, data: NormalizedLeadInput): Promise<Lead> {
     const lead = await this.prisma.lead.create({
       data: {
         userId,
@@ -159,10 +191,18 @@ export class LeadsService {
       },
     });
 
-    await this.activity.log(userId, 'lead_created', 'New lead captured', data.name || data.phone || 'WhatsApp lead', {
-      lead_id: lead.id,
-      channel: data.channel,
-    });
+    await this.activity.log(
+      userId,
+      'lead_created',
+      'New lead captured',
+      data.name || data.phone || `${data.channel} lead`,
+      {
+        lead_id: lead.id,
+        channel: data.channel,
+        workflow_id: data.workflowId ?? null,
+        execution_id: data.executionId ?? null,
+      },
+    );
 
     return lead;
   }
