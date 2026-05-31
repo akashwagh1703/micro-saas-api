@@ -3,6 +3,11 @@ import { Contact, Conversation, Message } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CHANNEL_INSTAGRAM, CHANNEL_WHATSAPP } from '../../common/channels';
 import { contactDisplayLabel } from '../../common/contact-display';
+import {
+  INSTAGRAM_MESSAGING_WINDOW_ERROR,
+  isWithinInstagramMessagingWindow,
+} from '../../common/instagram-messaging-window';
+import { ActivityLogger } from '../../common/activity-logger.service';
 import { WhatsappService } from '../whatsapp/whatsapp.service';
 import { InstagramService } from '../instagram/instagram.service';
 import { WhatsAppApiService } from '../integrations/whatsapp-api.service';
@@ -24,6 +29,7 @@ export class InboxService {
     private readonly instagram: InstagramService,
     private readonly whatsAppApi: WhatsAppApiService,
     private readonly instagramApi: InstagramApiService,
+    private readonly activity: ActivityLogger,
   ) {}
 
   async findOrCreateInstagramContact(
@@ -56,6 +62,15 @@ export class InboxService {
         name: name ?? username ?? null,
         phone: null,
       },
+    });
+  }
+
+  async findMessageByWaId(userId: number, waMessageId: string): Promise<Message | null> {
+    if (!waMessageId) {
+      return null;
+    }
+    return this.prisma.message.findFirst({
+      where: { userId, waMessageId },
     });
   }
 
@@ -213,6 +228,19 @@ export class InboxService {
       return { success: false, message: null, error: 'Contact has no Instagram user id' };
     }
 
+    const lastIncoming = await this.prisma.message.findFirst({
+      where: { conversationId: conversation.id, direction: 'incoming' },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    if (!isWithinInstagramMessagingWindow(lastIncoming?.createdAt)) {
+      await this.logIntegrationError(userId, CHANNEL_INSTAGRAM, INSTAGRAM_MESSAGING_WINDOW_ERROR, {
+        conversation_id: conversation.id,
+        contact_id: conversation.contactId,
+      });
+      return { success: false, message: null, error: INSTAGRAM_MESSAGING_WINDOW_ERROR };
+    }
+
     const result = await this.instagramApi.sendTextMessage(
       creds.accessToken ?? '',
       creds.account.instagramUserId,
@@ -226,6 +254,21 @@ export class InboxService {
       metadata: result,
       error: result.message ?? null,
     });
+  }
+
+  private async logIntegrationError(
+    userId: number,
+    channel: string,
+    error: string,
+    metadata?: Record<string, unknown>,
+  ): Promise<void> {
+    await this.activity.log(
+      userId,
+      'integration_error',
+      `${channel === CHANNEL_INSTAGRAM ? 'Instagram' : 'WhatsApp'} delivery issue`,
+      error,
+      { channel, ...(metadata ?? {}) },
+    );
   }
 
   private async persistOutgoingMessage(
@@ -270,6 +313,19 @@ export class InboxService {
         title: `Message sent to ${contactDisplayLabel(conversation.contact)}`,
       },
     });
+
+    if (!send.success && send.error) {
+      await this.logIntegrationError(
+        conversation.userId,
+        conversation.channel,
+        send.error,
+        {
+          conversation_id: conversation.id,
+          contact_id: conversation.contactId,
+          message_id: message.id,
+        },
+      );
+    }
 
     return {
       success: send.success,

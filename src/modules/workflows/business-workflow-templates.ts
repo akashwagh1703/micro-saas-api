@@ -34,12 +34,21 @@ function sendNode(id: string, y: number, label: string, message: string, summary
   };
 }
 
-function triggerNode(y = 80) {
+function triggerNode(y = 80, channel: 'both' | 'whatsapp' | 'instagram' = 'both') {
+  const summaries: Record<string, string> = {
+    both: 'WhatsApp or Instagram DMs',
+    whatsapp: 'WhatsApp messages only',
+    instagram: 'Instagram DMs only',
+  };
   return {
     id: 'trigger-1',
     type: 'trigger',
     y,
-    data: { label: 'Message Received', summary: 'Fires on every incoming WhatsApp message' },
+    data: {
+      label: 'Message Received',
+      summary: summaries[channel] ?? summaries.both,
+      channel,
+    },
   };
 }
 
@@ -66,10 +75,11 @@ function collectNode(
 function leadCaptureTail(
   yStart: number,
   confirmMessage: string,
-  options?: { collectedFields?: string[]; notes?: string },
+  options?: { collectedFields?: string[]; notes?: string; channel?: 'whatsapp' | 'instagram' | 'both' },
 ) {
   const collectedFields = options?.collectedFields ?? [];
   const notes = options?.notes;
+  const channel = options?.channel ?? 'whatsapp';
   return [
     {
       id: 'save-lead-1',
@@ -80,7 +90,7 @@ function leadCaptureTail(
         summary: 'Saves lead to WhatsFlow Leads',
         notes,
         collected_fields: collectedFields,
-        api: buildSaveLeadApiPlaceholder(collectedFields, notes),
+        api: buildSaveLeadApiPlaceholder(collectedFields, notes, channel),
       },
     },
     sendNode(
@@ -258,6 +268,30 @@ const coachingLeadGen: WorkflowTemplate = {
       440,
       "Thanks {{contact_name}}! 📚 We've received your enquiry. Our counsellor will call you with batch details and fees.",
       { notes: 'Coaching admission lead from WhatsApp' },
+    ),
+  ]),
+};
+
+const coachingInstagramLeadGen: WorkflowTemplate = {
+  slug: 'coaching-lead-gen-instagram',
+  name: 'Instagram Admission Lead Capture',
+  description: 'Capture course enquiries from Instagram DMs and save them as leads.',
+  category: 'guided',
+  trigger_type: 'message_received',
+  definition: linearFlow([
+    triggerNode(80, 'instagram'),
+    aiNode(
+      'ai-1',
+      200,
+      'Admission Assistant',
+      'Qualifies course interest',
+      'You are an admissions assistant for a coaching institute. Student Instagram DM: "{{message}}". Ask about: course/exam interest, current class/background, and preferred batch mode (online/offline). Be encouraging and concise.',
+    ),
+    sendNode('send-1', 320, 'Send Reply', '{{ai_response}}'),
+    ...leadCaptureTail(
+      440,
+      "Thanks {{contact_name}}! 📚 We've received your enquiry. Our counsellor will DM you with batch details and fees.",
+      { notes: 'Coaching admission lead from Instagram', channel: 'instagram' },
     ),
   ]),
 };
@@ -542,6 +576,7 @@ export const GUIDED_WORKFLOW_TEMPLATES: WorkflowTemplate[] = [
   clinicAppointment,
   clinicSupport,
   coachingLeadGen,
+  coachingInstagramLeadGen,
   coachingAppointment,
   localShopFaq,
   localShopSupport,

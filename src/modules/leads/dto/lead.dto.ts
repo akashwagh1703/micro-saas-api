@@ -42,6 +42,12 @@ export class SaveLeadDto {
   @MaxLength(30)
   phone?: string;
 
+  /** Workflow context: {{contact_username}} (Instagram) */
+  @IsOptional()
+  @IsString()
+  @MaxLength(255)
+  contact_username?: string;
+
   /** Explicit API alias for first message */
   @IsOptional()
   @IsString()
@@ -85,6 +91,9 @@ export class SaveLeadDto {
 
 /** @deprecated Use SaveLeadDto — kept as alias for POST /leads/whatsapp */
 export class CreateLeadWhatsAppDto extends SaveLeadDto {}
+
+/** Alias for POST /api/leads/instagram */
+export class CreateLeadInstagramDto extends SaveLeadDto {}
 
 export class UpdateLeadDto {
   @IsOptional()

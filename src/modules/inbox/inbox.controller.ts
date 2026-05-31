@@ -33,6 +33,7 @@ export class InboxController {
   async conversations(
     @CurrentUser('id') userId: number,
     @Query('search') search: string | undefined,
+    @Query('channel') channel: string | undefined,
     @Query('page') page: string | undefined,
     @Req() req: Request,
   ) {
@@ -40,6 +41,9 @@ export class InboxController {
     const currentPage = resolvePage(page);
 
     const where: Prisma.ConversationWhereInput = { userId };
+    if (channel && channel !== 'all') {
+      where.channel = channel;
+    }
     if (search) {
       where.contact = {
         OR: [

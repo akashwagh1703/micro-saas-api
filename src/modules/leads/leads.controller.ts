@@ -36,11 +36,14 @@ export class LeadsController {
     @CurrentUser('id') userId: number,
     @Query('collected_fields') collectedFieldsRaw: string | undefined,
     @Query('notes') notes: string | undefined,
+    @Query('channel') channel: string | undefined,
   ) {
     const collectedFields = collectedFieldsRaw
       ? collectedFieldsRaw.split(',').map((s) => s.trim()).filter(Boolean)
       : [];
-    return this.leads.getIntegrationConfig(userId, collectedFields, notes);
+    const leadChannel =
+      channel === 'instagram' || channel === 'both' ? channel : 'whatsapp';
+    return this.leads.getIntegrationConfig(userId, collectedFields, notes, leadChannel);
   }
 
   @Get('stats')
@@ -118,6 +121,12 @@ export class LeadsController {
   @Post('whatsapp')
   async createWhatsApp(@CurrentUser('id') userId: number, @Body() dto: SaveLeadDto) {
     const lead = await this.leads.save(userId, { ...dto, channel: dto.channel ?? 'whatsapp' });
+    return { lead: serializeLead(lead) };
+  }
+
+  @Post('instagram')
+  async createInstagram(@CurrentUser('id') userId: number, @Body() dto: SaveLeadDto) {
+    const lead = await this.leads.save(userId, { ...dto, channel: 'instagram' });
     return { lead: serializeLead(lead) };
   }
 

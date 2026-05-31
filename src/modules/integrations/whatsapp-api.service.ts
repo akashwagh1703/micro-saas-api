@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import axios from 'axios';
 import * as crypto from 'crypto';
+import { withMetaApiRetry } from '../../common/meta-api-retry';
 
 export interface WhatsAppApiResult {
   success: boolean;
@@ -55,26 +56,29 @@ export class WhatsAppApiService {
     const phone = (to ?? '').replace(/\D/g, '');
 
     try {
-      const response = await axios.post(
-        `${this.base}/${phoneNumberId}/messages`,
-        {
-          messaging_product: 'whatsapp',
-          to: phone,
-          type: 'text',
-          text: { body: text },
-        },
-        {
-          headers: { Authorization: `Bearer ${accessToken}` },
-          timeout: 20000,
-          validateStatus: () => true,
-        },
-      );
+      const { status, data } = await withMetaApiRetry(async () => {
+        const response = await axios.post(
+          `${this.base}/${phoneNumberId}/messages`,
+          {
+            messaging_product: 'whatsapp',
+            to: phone,
+            type: 'text',
+            text: { body: text },
+          },
+          {
+            headers: { Authorization: `Bearer ${accessToken}` },
+            timeout: 20000,
+            validateStatus: () => true,
+          },
+        );
+        return { status: response.status, data: response.data };
+      });
 
-      if (response.status >= 200 && response.status < 300) {
-        return { success: true, data: response.data };
+      if (status >= 200 && status < 300) {
+        return { success: true, data };
       }
 
-      return { success: false, message: response.data?.error?.message ?? 'Send failed' };
+      return { success: false, message: data?.error?.message ?? 'Send failed' };
     } catch (e: any) {
       this.logger.error(`WhatsApp send failed: ${e.message}`);
       return { success: false, message: e.message };

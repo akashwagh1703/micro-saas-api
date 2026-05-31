@@ -3,7 +3,11 @@ import { Workflow } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { SettingsService } from '../settings/settings.service';
 import { LeadsService } from '../leads/leads.service';
-import { buildSaveLeadApiConfig } from '../leads/lead-api.config';
+import {
+  buildSaveLeadApiConfig,
+  LeadApiChannel,
+} from '../leads/lead-api.config';
+import { resolveLeadApiChannelFromTrigger } from './workflow-trigger-channel';
 import { currentBusinessPublishedWhere, parseUseCases } from '../../common/workflow-scope';
 import { WORKFLOW_TEMPLATES, WorkflowDefinition, findTemplate } from './workflow-templates';
 import { findAnyTemplate } from './business-workflow-templates';
@@ -344,6 +348,10 @@ export class WorkflowTemplateService {
     const token = await this.leads.getOrCreateApiBearerToken(userId);
     const baseUrl = this.leads.resolveApiBaseUrl();
     const def = JSON.parse(JSON.stringify(definition)) as WorkflowDefinition;
+    const trigger = (def.nodes ?? []).find((n) => n.type === 'trigger');
+    const leadChannel = resolveLeadApiChannelFromTrigger(
+      trigger?.data as Record<string, unknown> | undefined,
+    ) as LeadApiChannel;
 
     for (const node of def.nodes ?? []) {
       if (node.type !== 'save_lead') {
@@ -360,6 +368,7 @@ export class WorkflowTemplateService {
           bearerToken: token,
           collectedFields,
           notes,
+          channel: leadChannel,
         }),
       };
     }

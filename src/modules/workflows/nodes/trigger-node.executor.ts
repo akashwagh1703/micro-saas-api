@@ -13,8 +13,10 @@ export class TriggerNodeExecutor implements NodeExecutor {
       success: true,
       output: {
         message: context.message ?? '',
+        channel: context.channel ?? 'whatsapp',
         contact_phone: context.contact_phone ?? '',
         contact_name: context.contact_name ?? '',
+        contact_username: context.contact_username ?? '',
       },
     };
   }

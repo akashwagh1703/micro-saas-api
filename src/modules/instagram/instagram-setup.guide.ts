@@ -54,4 +54,6 @@ export const INSTAGRAM_SETUP_GUIDE = {
   ],
   app_review_note:
     'For production (customers outside test users), submit Meta App Review for instagram_manage_messages and pages_messaging.',
+  app_review_doc: 'docs/INSTAGRAM_APP_REVIEW.md',
+  messaging_window_hours: 24,
 };

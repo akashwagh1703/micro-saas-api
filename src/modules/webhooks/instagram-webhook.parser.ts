@@ -17,6 +17,7 @@ interface MessagingEvent {
     text?: string;
     is_echo?: boolean;
     is_deleted?: boolean;
+    attachments?: Array<{ type?: string }>;
   };
 }
 
@@ -66,7 +67,7 @@ function parseMessagingEvent(event: MessagingEvent): ParsedInstagramInboundMessa
     return null;
   }
 
-  const text = message.text?.trim() ?? '';
+  const text = extractInstagramInboundText(message);
   if (!text) {
     return null;
   }
@@ -79,4 +80,32 @@ function parseMessagingEvent(event: MessagingEvent): ParsedInstagramInboundMessa
     timestamp: event.timestamp,
     raw: event as Record<string, unknown>,
   };
+}
+
+function extractInstagramInboundText(message: NonNullable<MessagingEvent['message']>): string | null {
+  const text = message.text?.trim();
+  if (text) {
+    return text;
+  }
+
+  const attachments = message.attachments ?? [];
+  if (attachments.length === 0) {
+    return null;
+  }
+
+  const types = attachments.map((a) => a.type).filter(Boolean);
+  if (types.includes('image')) {
+    return '[Image]';
+  }
+  if (types.includes('video')) {
+    return '[Video]';
+  }
+  if (types.includes('audio')) {
+    return '[Voice message]';
+  }
+  if (types.includes('file')) {
+    return '[File]';
+  }
+
+  return `[${types[0] ?? 'Attachment'}]`;
 }

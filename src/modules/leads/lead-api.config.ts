@@ -1,3 +1,5 @@
+export type LeadApiChannel = 'whatsapp' | 'instagram' | 'both';
+
 export interface SaveLeadApiConfig {
   url: string;
   method: string;
@@ -13,39 +15,66 @@ export interface BuildSaveLeadApiOptions {
   bearerToken: string;
   collectedFields?: string[];
   notes?: string;
+  channel?: LeadApiChannel;
 }
 
-/** Builds the HTTP config matching POST /api/leads/save (workflow variable placeholders). */
-export function buildSaveLeadApiConfig(options: BuildSaveLeadApiOptions): SaveLeadApiConfig {
-  const base = options.apiBaseUrl.replace(/\/$/, '');
-  const collected: Record<string, string> = {};
-  for (const field of options.collectedFields ?? []) {
-    collected[field] = `{{${field}}}`;
-  }
-
+function buildSaveLeadBody(
+  channel: LeadApiChannel,
+  collected: Record<string, string>,
+  notes?: string,
+): Record<string, unknown> {
   const body: Record<string, unknown> = {
     contact_name: '{{contact_name}}',
-    contact_phone: '{{contact_phone}}',
     message: '{{message}}',
-    channel: 'whatsapp',
   };
+
+  if (channel === 'instagram') {
+    body.username = '{{contact_username}}';
+    body.channel = 'instagram';
+  } else if (channel === 'whatsapp') {
+    body.contact_phone = '{{contact_phone}}';
+    body.channel = 'whatsapp';
+  } else {
+    body.contact_phone = '{{contact_phone}}';
+    body.username = '{{contact_username}}';
+    body.channel = '{{channel}}';
+  }
 
   if (Object.keys(collected).length > 0) {
     body.__collected = collected;
   }
 
-  if (options.notes?.trim()) {
-    body.notes = options.notes.trim();
+  if (notes?.trim()) {
+    body.notes = notes.trim();
+  }
+
+  return body;
+}
+
+function resolveSaveLeadUrl(base: string, channel: LeadApiChannel): string {
+  if (channel === 'instagram') {
+    return `${base}/api/leads/instagram`;
+  }
+  return `${base}/api/leads/save`;
+}
+
+/** Builds the HTTP config matching POST /api/leads/save or /api/leads/instagram. */
+export function buildSaveLeadApiConfig(options: BuildSaveLeadApiOptions): SaveLeadApiConfig {
+  const base = options.apiBaseUrl.replace(/\/$/, '');
+  const channel = options.channel ?? 'whatsapp';
+  const collected: Record<string, string> = {};
+  for (const field of options.collectedFields ?? []) {
+    collected[field] = `{{${field}}}`;
   }
 
   return {
-    url: `${base}/api/leads/save`,
+    url: resolveSaveLeadUrl(base, channel),
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
       Authorization: `Bearer ${options.bearerToken}`,
     },
-    body,
+    body: buildSaveLeadBody(channel, collected, options.notes),
     timeout: 15,
     retries: 1,
     use_fallback: true,
@@ -56,12 +85,14 @@ export function buildSaveLeadApiConfig(options: BuildSaveLeadApiOptions): SaveLe
 export function buildSaveLeadApiPlaceholder(
   collectedFields?: string[],
   notes?: string,
+  channel: LeadApiChannel = 'whatsapp',
 ): SaveLeadApiConfig {
   return buildSaveLeadApiConfig({
     apiBaseUrl: '{{APP_URL}}',
     bearerToken: '{{LEAD_API_TOKEN}}',
     collectedFields,
     notes,
+    channel,
   });
 }
 

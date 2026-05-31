@@ -33,6 +33,7 @@ export class ContactsController {
     @CurrentUser('id') userId: number,
     @Query('search') search: string | undefined,
     @Query('tag') tag: string | undefined,
+    @Query('channel') channel: string | undefined,
     @Query('page') page: string | undefined,
     @Req() req: Request,
   ) {
@@ -40,6 +41,9 @@ export class ContactsController {
     const currentPage = resolvePage(page);
 
     const where: Prisma.ContactWhereInput = { userId };
+    if (channel && channel !== 'all') {
+      where.channel = channel;
+    }
     if (search) {
       where.OR = [
         { name: { contains: search, mode: 'insensitive' } },

@@ -31,18 +31,35 @@ export class QueueWorker implements OnModuleInit {
     }
 
     await this.queue.work<{ messageId: number }>(QUEUE_PROCESS_INCOMING, async (data) => {
-      await this.incoming.handle(data.messageId);
+      try {
+        await this.incoming.handle(data.messageId);
+      } catch (e: any) {
+        this.logger.error(`process-incoming failed for message ${data.messageId}: ${e.message}`);
+        throw e;
+      }
     });
 
     await this.queue.work<{ executionId: number }>(QUEUE_EXECUTE_WORKFLOW, async (data) => {
-      await this.execution.executeById(data.executionId);
+      try {
+        await this.execution.executeById(data.executionId);
+      } catch (e: any) {
+        this.logger.error(`execute-workflow failed for execution ${data.executionId}: ${e.message}`);
+        throw e;
+      }
     });
 
     await this.queue.work<SendMessageJob>(QUEUE_SEND_MESSAGE, async (data) => {
       if (data.conversationId == null) {
         return;
       }
-      await this.inbox.sendOutgoingMessage(data.userId, data.conversationId, data.content);
+      try {
+        await this.inbox.sendOutgoingMessage(data.userId, data.conversationId, data.content);
+      } catch (e: any) {
+        this.logger.error(
+          `send-message failed for conversation ${data.conversationId}: ${e.message}`,
+        );
+        throw e;
+      }
     });
 
     this.logger.log('Queue workers registered.');

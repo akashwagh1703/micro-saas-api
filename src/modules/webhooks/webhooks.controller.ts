@@ -4,6 +4,7 @@ import { WhatsappService } from '../whatsapp/whatsapp.service';
 import { WhatsAppApiService } from '../integrations/whatsapp-api.service';
 import { InboxService } from '../inbox/inbox.service';
 import { JOB_DISPATCHER, JobDispatcher } from '../queue/job-dispatcher';
+import { extractWhatsAppInboundText } from './whatsapp-webhook.parser';
 
 /**
  * Meta WhatsApp webhook endpoints. These return plain text (not JSON) to match
@@ -70,16 +71,20 @@ export class WebhooksController {
       const messages = entry?.messages ?? [];
 
       for (const waMessage of messages) {
-        if ((waMessage.type ?? '') !== 'text') {
-          continue;
-        }
         const from = waMessage.from ?? null;
-        const text = waMessage.text?.body ?? '';
         const waId = waMessage.id ?? null;
+        const text = extractWhatsAppInboundText(waMessage as Record<string, unknown>);
         const contactName = entry?.contacts?.[0]?.profile?.name ?? null;
 
-        if (!from) {
+        if (!from || !text) {
           continue;
+        }
+
+        if (waId) {
+          const duplicate = await this.inbox.findMessageByWaId(userId, waId);
+          if (duplicate) {
+            continue;
+          }
         }
 
         const contact = await this.inbox.findOrCreateContact(userId, from, contactName);

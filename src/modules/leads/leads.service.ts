@@ -58,6 +58,7 @@ export class LeadsService {
     return this.save(execution.userId, {
       contact_name: this.asString(context.contact_name) || undefined,
       contact_phone: this.asString(context.contact_phone) || undefined,
+      contact_username: this.asString(context.contact_username) || undefined,
       message: this.asString(context.message) || undefined,
       collected,
       contact_id: execution.contactId ?? undefined,
@@ -65,7 +66,7 @@ export class LeadsService {
       workflow_id: execution.workflowId,
       execution_id: execution.id,
       notes,
-      channel: 'whatsapp',
+      channel: this.asString(context.channel) || 'whatsapp',
     });
   }
 
@@ -92,6 +93,7 @@ export class LeadsService {
     userId: number,
     collectedFields: string[] = [],
     notes?: string,
+    channel: 'whatsapp' | 'instagram' | 'both' = 'whatsapp',
   ): Promise<SaveLeadApiConfig> {
     return this.getOrCreateApiBearerToken(userId).then((token) =>
       buildSaveLeadApiConfig({
@@ -99,6 +101,7 @@ export class LeadsService {
         bearerToken: token,
         collectedFields,
         notes,
+        channel,
       }),
     );
   }
@@ -107,8 +110,9 @@ export class LeadsService {
     userId: number,
     collectedFields: string[] = [],
     notes?: string,
+    channel: 'whatsapp' | 'instagram' | 'both' = 'whatsapp',
   ) {
-    const api = await this.buildSaveLeadApiForUser(userId, collectedFields, notes);
+    const api = await this.buildSaveLeadApiForUser(userId, collectedFields, notes, channel);
     return {
       save_url: api.url,
       method: api.method,
@@ -142,7 +146,7 @@ export class LeadsService {
   async stats(userId: number) {
     const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
 
-    const [total, thisWeek, newCount, contacted, qualified, lost, won] =
+    const [total, thisWeek, newCount, contacted, qualified, lost, won, whatsappLeads, instagramLeads] =
       await this.prisma.$transaction([
         this.prisma.lead.count({ where: { userId } }),
         this.prisma.lead.count({ where: { userId, createdAt: { gte: weekAgo } } }),
@@ -151,6 +155,8 @@ export class LeadsService {
         this.prisma.lead.count({ where: { userId, status: 'qualified' } }),
         this.prisma.lead.count({ where: { userId, status: 'lost' } }),
         this.prisma.lead.count({ where: { userId, status: 'won' } }),
+        this.prisma.lead.count({ where: { userId, channel: 'whatsapp' } }),
+        this.prisma.lead.count({ where: { userId, channel: 'instagram' } }),
       ]);
 
     return {
@@ -161,6 +167,8 @@ export class LeadsService {
       qualified,
       lost,
       won,
+      whatsapp: whatsappLeads,
+      instagram: instagramLeads,
     };
   }
 
@@ -215,7 +223,7 @@ export class LeadsService {
       channel: (dto.channel ?? 'whatsapp').trim() || 'whatsapp',
       name,
       phone: phone || undefined,
-      username: dto.username?.trim() || undefined,
+      username: (dto.username ?? dto.contact_username)?.trim() || undefined,
       sourceMessage,
       collected: collectedClean,
       contactId: dto.contact_id,
@@ -230,7 +238,7 @@ export class LeadsService {
     const hasCollected = data.collected && Object.keys(data.collected).length > 0;
     if (!data.name && !data.phone && !data.username && !data.sourceMessage && !hasCollected) {
       throw new BadRequestException(
-        'Lead must include at least one of: contact_name, contact_phone, message, or collected answers.',
+        'Lead must include at least one of: contact_name, contact_phone, username, message, or collected answers.',
       );
     }
   }
@@ -257,7 +265,7 @@ export class LeadsService {
       userId,
       'lead_created',
       'New lead captured',
-      data.name || data.phone || `${data.channel} lead`,
+      data.name || data.phone || data.username || `${data.channel} lead`,
       {
         lead_id: lead.id,
         channel: data.channel,

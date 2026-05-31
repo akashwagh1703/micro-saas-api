@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import axios from 'axios';
 import * as crypto from 'crypto';
+import { withMetaApiRetry } from '../../common/meta-api-retry';
 
 export interface InstagramApiResult {
   success: boolean;
@@ -140,27 +141,30 @@ export class InstagramApiService {
 
     for (const url of endpoints) {
       try {
-        const response = await axios.post(url, body, {
-          headers: {
-            Authorization: `Bearer ${accessToken}`,
-            'Content-Type': 'application/json',
-          },
-          timeout: 20000,
-          validateStatus: () => true,
+        const { status, data } = await withMetaApiRetry(async () => {
+          const response = await axios.post(url, body, {
+            headers: {
+              Authorization: `Bearer ${accessToken}`,
+              'Content-Type': 'application/json',
+            },
+            timeout: 20000,
+            validateStatus: () => true,
+          });
+          return { status: response.status, data: response.data };
         });
 
-        if (response.status >= 200 && response.status < 300) {
+        if (status >= 200 && status < 300) {
           return {
             success: true,
             data: {
-              message_id: response.data?.message_id ?? response.data?.id ?? null,
-              recipient_id: response.data?.recipient_id ?? recipientScopedId,
+              message_id: data?.message_id ?? data?.id ?? null,
+              recipient_id: data?.recipient_id ?? recipientScopedId,
             },
           };
         }
 
-        lastError = response.data?.error?.message ?? 'Instagram send failed';
-        this.logger.warn(`Instagram send via ${url}: ${lastError}`);
+        lastError = data?.error?.message ?? 'Instagram send failed';
+        this.logger.warn(`Instagram send via ${url}: ${lastError} (HTTP ${status})`);
       } catch (e: any) {
         lastError = e.message;
         this.logger.error(`Instagram send failed: ${e.message}`);

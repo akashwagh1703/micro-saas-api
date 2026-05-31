@@ -4,6 +4,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { SettingsService } from '../settings/settings.service';
 import { BillingService } from '../billing/billing.service';
 import { workflowHasTriggerKeywords } from '../workflows/business-workflow';
+import { triggerChannelMatches } from '../workflows/workflow-trigger-channel';
 import { JOB_DISPATCHER, JobDispatcher } from '../queue/job-dispatcher';
 
 /** Ports ProcessIncomingWhatsAppMessage: matches workflows and fans out executions. */
@@ -55,6 +56,8 @@ export class IncomingMessageProcessor {
           context: {
             ...ctx,
             message: message.content,
+            channel: message.contact.channel,
+            contact_username: message.contact.username ?? '',
             __resuming: true,
           },
         },
@@ -76,7 +79,8 @@ export class IncomingMessageProcessor {
     });
 
     const content = String(message.content);
-    const matching = workflows.filter((w) => this.triggerMatches(w, content));
+    const messageChannel = message.contact.channel || 'whatsapp';
+    const matching = workflows.filter((w) => this.triggerMatches(w, content, messageChannel));
     const keywordWorkflows = matching.filter((w) =>
       workflowHasTriggerKeywords(w.definition),
     );
@@ -109,10 +113,14 @@ export class IncomingMessageProcessor {
     }
   }
 
-  private triggerMatches(workflow: Workflow, messageText: string): boolean {
+  private triggerMatches(workflow: Workflow, messageText: string, messageChannel: string): boolean {
     const definition = (workflow.definition as { nodes?: any[] }) ?? {};
     const trigger = (definition.nodes ?? []).find((n) => n.type === 'trigger');
     const data = trigger?.data ?? {};
+
+    if (!triggerChannelMatches(data, messageChannel)) {
+      return false;
+    }
 
     const raw = data.keywords ?? '';
     const keywords = (Array.isArray(raw) ? raw : String(raw).split(','))
