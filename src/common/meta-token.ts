@@ -33,3 +33,17 @@ export function metaAccessTokenHint(message: string | undefined): string | undef
   }
   return message;
 }
+
+export function metaPageIdHint(message: string | undefined): string | undefined {
+  if (!message) {
+    return message;
+  }
+  const lower = message.toLowerCase();
+  if (lower.includes('nonexisting field (instagram_business_account)')) {
+    return (
+      'Wrong ID type: use your Facebook Page ID (not Instagram account ID, User ID, or App ID). ' +
+      'In Graph API Explorer, select your Page → copy its numeric Page ID. Or leave Page ID blank and Test again — we can resolve it from your Page token.'
+    );
+  }
+  return message;
+}

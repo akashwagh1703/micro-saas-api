@@ -1,9 +1,13 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import axios from 'axios';
+import axios, { AxiosRequestConfig } from 'axios';
 import * as crypto from 'crypto';
 import { withMetaApiRetry } from '../../common/meta-api-retry';
-import { metaAccessTokenHint, normalizeMetaAccessToken } from '../../common/meta-token';
+import {
+  metaAccessTokenHint,
+  metaPageIdHint,
+  normalizeMetaAccessToken,
+} from '../../common/meta-token';
 
 export interface InstagramApiResult {
   success: boolean;
@@ -19,6 +23,12 @@ export interface InstagramApiResult {
   };
 }
 
+interface GraphPagePayload {
+  id?: string;
+  name?: string;
+  instagram_business_account?: { id?: string };
+}
+
 /** Meta Graph API client for Instagram Messaging (Page token + linked IG business account). */
 @Injectable()
 export class InstagramApiService {
@@ -30,10 +40,69 @@ export class InstagramApiService {
     this.base = `https://graph.facebook.com/${version}`;
   }
 
+  private graphGet<T = any>(path: string, accessToken: string, params?: Record<string, string>) {
+    const config: AxiosRequestConfig = {
+      params,
+      headers: { Authorization: `Bearer ${accessToken}` },
+      timeout: 15000,
+      validateStatus: () => true,
+    };
+    return axios.get<T>(`${this.base}/${path}`, config);
+  }
+
+  private async resolveLinkedPage(
+    accessToken: string,
+    pageId: string,
+  ): Promise<{ page: GraphPagePayload | null; error?: string }> {
+    const meResponse = await this.graphGet<GraphPagePayload>('me', accessToken, {
+      fields: 'id,name,instagram_business_account',
+    });
+
+    if (meResponse.status >= 200 && meResponse.status < 300 && meResponse.data?.instagram_business_account?.id) {
+      return { page: meResponse.data };
+    }
+
+    if (pageId) {
+      const pageResponse = await this.graphGet<GraphPagePayload>(pageId, accessToken, {
+        fields: 'id,name,instagram_business_account',
+      });
+
+      if (pageResponse.status >= 200 && pageResponse.status < 300) {
+        return { page: pageResponse.data };
+      }
+
+      const graphError = (pageResponse.data as { error?: { message?: string } })?.error?.message;
+      if (graphError?.toLowerCase().includes('nonexisting field (instagram_business_account)')) {
+        const igProbe = await this.graphGet(pageId, accessToken, { fields: 'username,name' });
+        if (igProbe.status >= 200 && igProbe.status < 300 && igProbe.data?.username) {
+          return {
+            page: null,
+            error:
+              'You entered an Instagram account ID. WhatsFlow needs the Facebook Page ID linked to that Instagram account.',
+          };
+        }
+      }
+
+      return {
+        page: null,
+        error: metaPageIdHint(graphError) ?? metaAccessTokenHint(graphError) ?? 'Could not load Facebook Page',
+      };
+    }
+
+    const graphError = (meResponse.data as { error?: { message?: string } })?.error?.message;
+    return {
+      page: null,
+      error:
+        metaPageIdHint(graphError) ??
+        metaAccessTokenHint(graphError) ??
+        'Could not resolve Facebook Page from token. Paste your Facebook Page ID (not Instagram ID).',
+    };
+  }
+
   async testConnection(accessToken: string, pageId: string): Promise<InstagramApiResult> {
     accessToken = normalizeMetaAccessToken(accessToken);
-    if (!accessToken || !pageId) {
-      return { success: false, message: 'Missing Page access token or Page ID' };
+    if (!accessToken) {
+      return { success: false, message: 'Missing Page access token' };
     }
 
     if (!/^[A-Za-z0-9|._-]+$/.test(accessToken)) {
@@ -44,21 +113,12 @@ export class InstagramApiService {
     }
 
     try {
-      const pageResponse = await axios.get(`${this.base}/${pageId}`, {
-        params: { fields: 'name,instagram_business_account' },
-        headers: { Authorization: `Bearer ${accessToken}` },
-        timeout: 15000,
-        validateStatus: () => true,
-      });
-
-      if (pageResponse.status < 200 || pageResponse.status >= 300) {
-        return {
-          success: false,
-          message: metaAccessTokenHint(pageResponse.data?.error?.message) ?? 'Could not load Facebook Page',
-        };
+      const resolved = await this.resolveLinkedPage(accessToken, pageId);
+      if (!resolved.page) {
+        return { success: false, message: resolved.error ?? 'Could not load Facebook Page' };
       }
 
-      const igBusinessId = pageResponse.data?.instagram_business_account?.id;
+      const igBusinessId = resolved.page.instagram_business_account?.id;
       if (!igBusinessId) {
         return {
           success: false,
@@ -67,12 +127,8 @@ export class InstagramApiService {
         };
       }
 
-      const igResponse = await axios.get(`${this.base}/${igBusinessId}`, {
-        params: { fields: 'username,name' },
-        headers: { Authorization: `Bearer ${accessToken}` },
-        timeout: 15000,
-        validateStatus: () => true,
-      });
+      const resolvedPageId = String(resolved.page.id ?? pageId);
+      const igResponse = await this.graphGet(igBusinessId, accessToken, { fields: 'username,name' });
 
       if (igResponse.status < 200 || igResponse.status >= 300) {
         return {
@@ -85,11 +141,11 @@ export class InstagramApiService {
         success: true,
         message: 'Instagram connected successfully',
         data: {
-          page_id: pageId,
-          page_name: pageResponse.data?.name ?? null,
+          page_id: resolvedPageId,
+          page_name: resolved.page.name,
           instagram_user_id: String(igBusinessId),
-          username: igResponse.data?.username ?? null,
-          display_name: igResponse.data?.name ?? null,
+          username: igResponse.data?.username ?? undefined,
+          display_name: igResponse.data?.name ?? undefined,
         },
       };
     } catch (e: any) {
@@ -107,23 +163,30 @@ export class InstagramApiService {
     }
 
     try {
-      const response = await axios.get(`${this.base}/${scopedUserId}`, {
-        params: { fields: 'name,username' },
-        headers: { Authorization: `Bearer ${accessToken}` },
-        timeout: 10000,
-        validateStatus: () => true,
-      });
-
+      const response = await withMetaApiRetry(() =>
+        this.graphGet(scopedUserId, accessToken, { fields: 'name,username' }),
+      );
       if (response.status < 200 || response.status >= 300) {
         return null;
       }
-
       return {
-        name: response.data?.name ?? undefined,
-        username: response.data?.username ?? undefined,
+        name: response.data?.name,
+        username: response.data?.username,
       };
     } catch {
       return null;
+    }
+  }
+
+  verifyWebhookSignature(payload: string, signature: string | undefined, appSecret: string): boolean {
+    if (!signature || !appSecret) {
+      return false;
+    }
+    const expected = 'sha256=' + crypto.createHmac('sha256', appSecret).update(payload).digest('hex');
+    try {
+      return crypto.timingSafeEqual(Buffer.from(expected), Buffer.from(signature));
+    } catch {
+      return false;
     }
   }
 
@@ -150,30 +213,27 @@ export class InstagramApiService {
 
     for (const url of endpoints) {
       try {
-        const { status, data } = await withMetaApiRetry(async () => {
-          const response = await axios.post(url, body, {
-            headers: {
-              Authorization: `Bearer ${accessToken}`,
-              'Content-Type': 'application/json',
-            },
-            timeout: 20000,
-            validateStatus: () => true,
-          });
-          return { status: response.status, data: response.data };
+        const response = await axios.post(url, body, {
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+            'Content-Type': 'application/json',
+          },
+          timeout: 20000,
+          validateStatus: () => true,
         });
 
-        if (status >= 200 && status < 300) {
+        if (response.status >= 200 && response.status < 300) {
           return {
             success: true,
             data: {
-              message_id: data?.message_id ?? data?.id ?? null,
-              recipient_id: data?.recipient_id ?? recipientScopedId,
+              message_id: response.data?.message_id ?? response.data?.id ?? undefined,
+              recipient_id: response.data?.recipient_id ?? recipientScopedId,
             },
           };
         }
 
-        lastError = data?.error?.message ?? 'Instagram send failed';
-        this.logger.warn(`Instagram send via ${url}: ${lastError} (HTTP ${status})`);
+        lastError = response.data?.error?.message ?? 'Instagram send failed';
+        this.logger.warn(`Instagram send via ${url}: ${lastError}`);
       } catch (e: any) {
         lastError = e.message;
         this.logger.error(`Instagram send failed: ${e.message}`);
@@ -181,17 +241,5 @@ export class InstagramApiService {
     }
 
     return { success: false, message: lastError };
-  }
-
-  verifyWebhookSignature(payload: string, signature: string | undefined, appSecret: string): boolean {
-    if (!signature || !appSecret) {
-      return false;
-    }
-    const expected = 'sha256=' + crypto.createHmac('sha256', appSecret).update(payload).digest('hex');
-    try {
-      return crypto.timingSafeEqual(Buffer.from(expected), Buffer.from(signature));
-    } catch {
-      return false;
-    }
   }
 }
