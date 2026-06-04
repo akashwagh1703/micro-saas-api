@@ -3,11 +3,12 @@ import { SettingsModule } from '../settings/settings.module';
 import { BillingModule } from '../billing/billing.module';
 import { WorkflowsModule } from '../workflows/workflows.module';
 import { InboxModule } from '../inbox/inbox.module';
+import { CareerModule } from '../career/career.module';
 import { IncomingMessageProcessor } from './incoming-message.processor';
 import { QueueWorker } from './queue.worker';
 
 @Module({
-  imports: [SettingsModule, BillingModule, WorkflowsModule, InboxModule],
+  imports: [SettingsModule, BillingModule, WorkflowsModule, InboxModule, CareerModule],
   providers: [IncomingMessageProcessor, QueueWorker],
 })
 export class JobsModule {}

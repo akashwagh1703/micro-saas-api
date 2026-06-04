@@ -35,6 +35,7 @@ export const BUSINESS_CATEGORIES = [
   'insurance',
   'ca_accountant',
   'support',
+  'career_ai',
   'other',
 ] as const;
 

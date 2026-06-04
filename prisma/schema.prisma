@@ -42,6 +42,13 @@ model User {
   activities          Activity[]
   tokens              PersonalAccessToken[]
   leads               Lead[]
+  careerProfiles      CareerProfile[]
+  careerResumes       CareerResume[]
+  careerJobs          CareerJob[]
+  careerJobMatches    CareerJobMatch[]
+  careerApplications  CareerApplication[]
+  careerCoverLetters  CareerCoverLetter[]
+  careerNotifications CareerNotification[]
 
   @@map("users")
 }
@@ -124,6 +131,7 @@ model Contact {
   conversation       Conversation?
   messages           Message[]
   workflowExecutions WorkflowExecution[]
+  careerProfile      CareerProfile?
 
   @@unique([userId, phone])
   @@unique([userId, instagramUserId])
@@ -307,4 +315,196 @@ model Lead {
   @@index([userId, status, createdAt])
   @@index([userId, channel, createdAt])
   @@map("leads")
+}
+
+// --- CareerAI Bot (business type: career_ai) ---
+
+model CareerProfile {
+  id                 Int       @id @default(autoincrement())
+  userId             Int       @map("user_id")
+  contactId          Int       @unique @map("contact_id")
+  fullName           String?   @map("full_name")
+  email              String?
+  phone              String?
+  experience         Json?
+  skills             Json?
+  education          Json?
+  certifications     Json?
+  projects           Json?
+  languages          Json?
+  currentLocation    String?   @map("current_location")
+  preferredLocations Json?     @map("preferred_locations")
+  currentSalary      String?   @map("current_salary")
+  expectedSalary     String?   @map("expected_salary")
+  noticePeriod       String?   @map("notice_period")
+  preferredJobTypes  Json?     @map("preferred_job_types")
+  preferredRoles     Json?     @map("preferred_roles")
+  workPreference     String?   @map("work_preference") @db.VarChar(20)
+  onboardingStep     String    @default("welcome") @map("onboarding_step") @db.VarChar(40)
+  onboardingData     Json?     @map("onboarding_data")
+  isComplete         Boolean   @default(false) @map("is_complete")
+  masterResumeId     Int?      @map("master_resume_id")
+  createdAt          DateTime? @default(now()) @map("created_at")
+  updatedAt          DateTime? @updatedAt @map("updated_at")
+
+  user           User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  contact        Contact              @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  resumes        CareerResume[]
+  jobMatches     CareerJobMatch[]
+  applications   CareerApplication[]
+  coverLetters   CareerCoverLetter[]
+  notifications  CareerNotification[]
+
+  @@index([userId, isComplete])
+  @@map("career_profiles")
+}
+
+model CareerResume {
+  id            Int       @id @default(autoincrement())
+  userId        Int       @map("user_id")
+  profileId     Int       @map("profile_id")
+  contactId     Int       @map("contact_id")
+  type          String    @default("upload") @db.VarChar(20)
+  fileName      String?   @map("file_name")
+  mimeType      String?   @map("mime_type")
+  filePath      String?   @map("file_path")
+  extractedText String?   @map("extracted_text") @db.Text
+  isMaster      Boolean   @default(false) @map("is_master")
+  createdAt     DateTime? @default(now()) @map("created_at")
+  updatedAt     DateTime? @updatedAt @map("updated_at")
+
+  user     User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  profile  CareerProfile         @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  versions CareerResumeVersion[]
+
+  @@index([userId, profileId])
+  @@map("career_resumes")
+}
+
+model CareerResumeVersion {
+  id              Int       @id @default(autoincrement())
+  userId          Int       @map("user_id")
+  resumeId        Int       @map("resume_id")
+  jobId           Int?      @map("job_id")
+  title           String?
+  content         String?   @db.Text
+  filePath        String?   @map("file_path")
+  filePathPdf     String?   @map("file_path_pdf")
+  filePathDocx    String?   @map("file_path_docx")
+  createdAt       DateTime? @default(now()) @map("created_at")
+
+  resume CareerResume @relation(fields: [resumeId], references: [id], onDelete: Cascade)
+  job    CareerJob?   @relation(fields: [jobId], references: [id], onDelete: SetNull)
+
+  @@index([resumeId, createdAt])
+  @@map("career_resume_versions")
+}
+
+model CareerJob {
+  id            Int       @id @default(autoincrement())
+  userId        Int       @map("user_id")
+  title         String
+  company       String
+  location      String?
+  salaryMin     Int?      @map("salary_min")
+  salaryMax     Int?      @map("salary_max")
+  salaryText    String?   @map("salary_text")
+  jobType       String?   @map("job_type") @db.VarChar(30)
+  description   String?   @db.Text
+  requiredSkills Json?    @map("required_skills")
+  minExperience Int?      @map("min_experience")
+  source        String?   @db.VarChar(50)
+  externalId    String?   @map("external_id")
+  isActive      Boolean   @default(true) @map("is_active")
+  createdAt     DateTime? @default(now()) @map("created_at")
+  updatedAt     DateTime? @updatedAt @map("updated_at")
+
+  user         User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  matches      CareerJobMatch[]
+  applications CareerApplication[]
+  versions     CareerResumeVersion[]
+  coverLetters CareerCoverLetter[]
+
+  @@index([userId, isActive])
+  @@index([userId, title])
+  @@map("career_jobs")
+}
+
+model CareerJobMatch {
+  id             Int       @id @default(autoincrement())
+  userId         Int       @map("user_id")
+  profileId      Int       @map("profile_id")
+  contactId      Int       @map("contact_id")
+  jobId          Int       @map("job_id")
+  score          Float
+  matchFactors   Json?     @map("match_factors")
+  missingSkills  Json?     @map("missing_skills")
+  createdAt      DateTime? @default(now()) @map("created_at")
+
+  user    User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  profile CareerProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  job     CareerJob     @relation(fields: [jobId], references: [id], onDelete: Cascade)
+
+  @@unique([profileId, jobId])
+  @@index([userId, profileId, score])
+  @@map("career_job_matches")
+}
+
+model CareerApplication {
+  id         Int       @id @default(autoincrement())
+  userId     Int       @map("user_id")
+  profileId  Int       @map("profile_id")
+  contactId  Int       @map("contact_id")
+  jobId      Int       @map("job_id")
+  status     String    @default("saved") @db.VarChar(20)
+  timeline   Json?
+  notes      String?
+  createdAt  DateTime? @default(now()) @map("created_at")
+  updatedAt  DateTime? @updatedAt @map("updated_at")
+
+  user    User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  profile CareerProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  job     CareerJob     @relation(fields: [jobId], references: [id], onDelete: Cascade)
+
+  @@unique([profileId, jobId])
+  @@index([userId, status])
+  @@map("career_applications")
+}
+
+model CareerCoverLetter {
+  id           Int       @id @default(autoincrement())
+  userId       Int       @map("user_id")
+  profileId    Int       @map("profile_id")
+  jobId        Int?      @map("job_id")
+  content      String    @db.Text
+  filePathPdf  String?   @map("file_path_pdf")
+  filePathDocx String?   @map("file_path_docx")
+  createdAt    DateTime? @default(now()) @map("created_at")
+
+  user    User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  profile CareerProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  job     CareerJob?    @relation(fields: [jobId], references: [id], onDelete: SetNull)
+
+  @@index([userId, profileId])
+  @@map("career_cover_letters")
+}
+
+model CareerNotification {
+  id          Int       @id @default(autoincrement())
+  userId      Int       @map("user_id")
+  profileId   Int       @map("profile_id")
+  contactId   Int       @map("contact_id")
+  type        String    @db.VarChar(30)
+  status      String    @default("pending") @db.VarChar(20)
+  payload     Json?
+  scheduledAt DateTime? @map("scheduled_at")
+  sentAt      DateTime? @map("sent_at")
+  createdAt   DateTime? @default(now()) @map("created_at")
+
+  user    User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  profile CareerProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+
+  @@index([userId, type, status])
+  @@index([scheduledAt, status])
+  @@map("career_notifications")
 }

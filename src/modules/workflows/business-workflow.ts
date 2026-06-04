@@ -16,6 +16,7 @@ export const BUSINESS_LABELS: Record<string, string> = {
   insurance: 'Insurance Agent',
   ca_accountant: 'CA / Accountant',
   support: 'Customer Support Team',
+  career_ai: 'CareerAI Bot',
   other: 'Business',
 };
 
@@ -39,6 +40,8 @@ const BUSINESS_CONTEXT: Record<string, string> = {
   insurance: 'an insurance agent helping clients with policies, claims, and renewals',
   ca_accountant: 'a CA/accountant helping clients with taxes, filings, and financial queries',
   support: 'a customer support team resolving customer issues quickly and politely',
+  career_ai:
+    'an AI-powered career assistant helping job seekers find roles, tailor resumes, and track applications over WhatsApp',
   other: 'a business helping its customers over WhatsApp',
 };
 

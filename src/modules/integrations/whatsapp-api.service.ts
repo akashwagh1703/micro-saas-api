@@ -85,6 +85,55 @@ export class WhatsAppApiService {
     }
   }
 
+  async downloadMedia(
+    accessToken: string,
+    mediaId: string,
+  ): Promise<{ success: boolean; buffer?: Buffer; mimeType?: string; message?: string }> {
+    if (!accessToken || !mediaId) {
+      return { success: false, message: 'Missing token or media id' };
+    }
+
+    try {
+      const metaRes = await axios.get(`${this.base}/${mediaId}`, {
+        headers: { Authorization: `Bearer ${accessToken}` },
+        timeout: 15000,
+        validateStatus: () => true,
+      });
+
+      if (metaRes.status < 200 || metaRes.status >= 300) {
+        return {
+          success: false,
+          message: metaRes.data?.error?.message ?? 'Failed to resolve media URL',
+        };
+      }
+
+      const url = metaRes.data?.url;
+      if (!url) {
+        return { success: false, message: 'No media URL returned' };
+      }
+
+      const fileRes = await axios.get(url, {
+        headers: { Authorization: `Bearer ${accessToken}` },
+        responseType: 'arraybuffer',
+        timeout: 60000,
+        validateStatus: () => true,
+      });
+
+      if (fileRes.status < 200 || fileRes.status >= 300) {
+        return { success: false, message: 'Failed to download media file' };
+      }
+
+      return {
+        success: true,
+        buffer: Buffer.from(fileRes.data),
+        mimeType: metaRes.data?.mime_type,
+      };
+    } catch (e: any) {
+      this.logger.error(`WhatsApp media download failed: ${e.message}`);
+      return { success: false, message: e.message };
+    }
+  }
+
   verifyWebhookSignature(payload: string, signature: string | undefined, appSecret: string): boolean {
     if (!signature || !appSecret) {
       return false;

@@ -6,6 +6,7 @@ import { BillingService } from '../billing/billing.service';
 import { workflowHasTriggerKeywords } from '../workflows/business-workflow';
 import { triggerChannelMatches } from '../workflows/workflow-trigger-channel';
 import { JOB_DISPATCHER, JobDispatcher } from '../queue/job-dispatcher';
+import { CareerIncomingHandler } from '../career/career-incoming.handler';
 
 /** Ports ProcessIncomingWhatsAppMessage: matches workflows and fans out executions. */
 @Injectable()
@@ -14,6 +15,7 @@ export class IncomingMessageProcessor {
     private readonly prisma: PrismaService,
     private readonly settings: SettingsService,
     private readonly billing: BillingService,
+    private readonly careerIncoming: CareerIncomingHandler,
     @Inject(JOB_DISPATCHER) private readonly queue: JobDispatcher,
   ) {}
 
@@ -33,6 +35,10 @@ export class IncomingMessageProcessor {
 
     const metadata = (message.metadata as Record<string, any>) ?? {};
     if (metadata.from_bot) {
+      return;
+    }
+
+    if (await this.careerIncoming.tryHandle(messageId)) {
       return;
     }
 

@@ -73,7 +73,10 @@ export class WebhooksController {
       for (const waMessage of messages) {
         const from = waMessage.from ?? null;
         const waId = waMessage.id ?? null;
-        const text = extractWhatsAppInboundText(waMessage as Record<string, unknown>);
+        const waType = String(waMessage.type ?? 'text');
+        const text =
+          extractWhatsAppInboundText(waMessage as Record<string, unknown>) ??
+          (waType === 'document' ? '[Resume document]' : null);
         const contactName = entry?.contacts?.[0]?.profile?.name ?? null;
 
         if (!from || !text) {
