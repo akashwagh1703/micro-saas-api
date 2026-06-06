@@ -8,7 +8,7 @@ import { CAREER_COMMANDS } from '../career.constants';
 import { CareerProfileService } from './career-profile.service';
 import { CareerJobService } from './career-job.service';
 import { CareerMatchingService } from './career-matching.service';
-import { CareerAiService } from './career-ai.service';
+import { CareerAiService, ConvTurn } from './career-ai.service';
 import { CareerResumeParserService } from './career-resume-parser.service';
 import { CareerStorageService } from './career-storage.service';
 import { CareerApplicationService } from './career-application.service';
@@ -72,22 +72,38 @@ export class CareerBotService {
       return true;
     }
     if (this.matchesCommand(lower, CAREER_COMMANDS.IMPROVE_RESUME)) {
-      await this.reply(message, 'Share one section to improve (e.g. "experience" or "skills") and I will suggest edits.');
+      // Extract the section name the user mentioned after "improve resume".
+      const section = lower
+        .replace(/improve\s+resume/i, '')
+        .trim() || 'experience';
+      const suggestion = await this.careerAi.improveResume(
+        message.userId,
+        section,
+        this.profiles.profileSnapshot(profile),
+      );
+      await this.reply(message, suggestion);
       return true;
     }
     if (this.matchesCommand(lower, CAREER_COMMANDS.CAREER_ADVICE)) {
+      const history = await this.loadHistory(profile.id);
       const advice = await this.careerAi.careerAdvice(
         message.userId,
         text,
         this.profiles.profileSnapshot(profile),
+        history,
       );
       await this.reply(message, advice);
+      await this.appendHistory(profile.id, text, advice);
       return true;
     }
     if (this.matchesCommand(lower, CAREER_COMMANDS.PREPARE_INTERVIEW)) {
-      const role = profile.preferredRoles
-        ? (profile.preferredRoles as string[])[0]
-        : 'software developer';
+      // Use the first preferred role if set; otherwise fall back to the first
+      // word of the user's message after the command (e.g. "prepare interview manager").
+      const roles = profile.preferredRoles as string[] | null;
+      const role =
+        roles?.[0] ??
+        lower.replace(/prepare\s+interview|interview\s+prep|interview\s+tips/i, '').trim() ||
+        'professional';
       const prep = await this.careerAi.interviewPrep(
         message.userId,
         role,
@@ -489,8 +505,56 @@ export class CareerBotService {
 
     await this.reply(
       message,
-      `Cover letter for *${topMatch.job.title}*:\n\n${content.slice(0, 1500)}${content.length > 1500 ? '…' : ''}`,
+      `Cover letter for *${topMatch.job.title}*:\n\n${content}`,
     );
+  }
+
+  // ─── Conversation history helpers ───────────────────────────────────────────
+
+  /**
+   * Loads the last 20 conversation turns (10 exchanges) stored on the profile.
+   * Returns an empty array when no history exists yet.
+   */
+  private async loadHistory(profileId: number): Promise<ConvTurn[]> {
+    const profile = await this.prisma.careerProfile.findUnique({
+      where: { id: profileId },
+      select: { onboardingData: true },
+    });
+    const data = profile?.onboardingData as Record<string, unknown> | null;
+    const history = data?.conversation_history;
+    return Array.isArray(history) ? (history as ConvTurn[]) : [];
+  }
+
+  /**
+   * Appends one user + assistant turn to the history stored in onboardingData.
+   * Keeps the last 20 turns (10 exchanges) to limit DB column growth.
+   */
+  private async appendHistory(
+    profileId: number,
+    userMsg: string,
+    botMsg: string,
+  ): Promise<void> {
+    const existing = await this.loadHistory(profileId);
+    const updated: ConvTurn[] = [
+      ...existing,
+      { role: 'user', content: userMsg },
+      { role: 'assistant', content: botMsg },
+    ].slice(-20);
+
+    // History is stored inside the existing onboardingData JSON column to avoid
+    // a schema migration. We merge it with whatever is already in that column.
+    const profile = await this.prisma.careerProfile.findUnique({
+      where: { id: profileId },
+      select: { onboardingData: true },
+    });
+    const existing_data = (profile?.onboardingData as Record<string, unknown>) ?? {};
+
+    await this.prisma.careerProfile.update({
+      where: { id: profileId },
+      data: {
+        onboardingData: { ...existing_data, conversation_history: updated } as any,
+      },
+    });
   }
 
   // ─── Helpers ─────────────────────────────────────────────────────────────────
