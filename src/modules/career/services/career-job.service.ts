@@ -58,11 +58,23 @@ const SAMPLE_JOBS = [
 export class CareerJobService {
   constructor(private readonly prisma: PrismaService) {}
 
+  /**
+   * Seeds the 5 sample jobs only when there are no real (adzuna/admin) jobs yet.
+   * Once Adzuna fetches real data the seed is never re-inserted, preventing
+   * fake companies from appearing alongside real listings.
+   */
   async ensureSampleJobs(userId: number): Promise<number> {
-    const count = await this.prisma.careerJob.count({ where: { userId } });
-    if (count > 0) {
-      return count;
-    }
+    // If any non-seed real jobs exist, skip seeding entirely.
+    const realCount = await this.prisma.careerJob.count({
+      where: { userId, source: { not: 'seed' } },
+    });
+    if (realCount > 0) return realCount;
+
+    // If seed jobs already exist, nothing to do.
+    const seedCount = await this.prisma.careerJob.count({
+      where: { userId, source: 'seed' },
+    });
+    if (seedCount > 0) return seedCount;
 
     for (const job of SAMPLE_JOBS) {
       await this.prisma.careerJob.create({
@@ -87,11 +99,18 @@ export class CareerJobService {
   async listActive(userId: number) {
     return this.prisma.careerJob.findMany({
       where: { userId, isActive: true },
-      orderBy: { createdAt: 'desc' },
+      orderBy: [
+        // Real jobs (adzuna/admin) appear before seed jobs.
+        { source: 'asc' },
+        { createdAt: 'desc' },
+      ],
     });
   }
 
-  searchByKeyword(jobs: Awaited<ReturnType<CareerJobService['listActive']>>, keyword: string) {
+  searchByKeyword(
+    jobs: Awaited<ReturnType<CareerJobService['listActive']>>,
+    keyword: string,
+  ) {
     const k = keyword.toLowerCase();
     return jobs.filter(
       (j) =>

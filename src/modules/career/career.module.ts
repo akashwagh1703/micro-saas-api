@@ -8,6 +8,8 @@ import { CareerBotService } from './services/career-bot.service';
 import { CareerIncomingHandler } from './career-incoming.handler';
 import { CareerProfileService } from './services/career-profile.service';
 import { CareerJobService } from './services/career-job.service';
+import { CareerJobFetcherService } from './services/career-job-fetcher.service';
+import { CareerJobRefreshScheduler } from './career-job-refresh.scheduler';
 import { CareerMatchingService } from './services/career-matching.service';
 import { CareerAiService } from './services/career-ai.service';
 import { CareerResumeParserService } from './services/career-resume-parser.service';
@@ -24,6 +26,8 @@ import { CareerDigestScheduler } from './career-digest.scheduler';
     CareerIncomingHandler,
     CareerProfileService,
     CareerJobService,
+    CareerJobFetcherService,
+    CareerJobRefreshScheduler,
     CareerMatchingService,
     CareerAiService,
     CareerResumeParserService,

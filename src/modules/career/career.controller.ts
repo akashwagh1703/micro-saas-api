@@ -13,6 +13,8 @@ import { TokenAuthGuard } from '../../common/guards/token-auth.guard';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CareerJobService } from './services/career-job.service';
+import { CareerJobFetcherService } from './services/career-job-fetcher.service';
+import { CareerJobRefreshScheduler } from './career-job-refresh.scheduler';
 import { CareerDigestService } from './services/career-digest.service';
 import { CareerApplicationService } from './services/career-application.service';
 import { CAREER_APPLICATION_STATUSES } from './career.constants';
@@ -25,6 +27,15 @@ class UpdateApplicationStatusDto {
   @IsOptional()
   @IsString()
   notes?: string;
+}
+
+class FetchJobsDto {
+  @IsString()
+  keyword: string;
+
+  @IsOptional()
+  @IsString()
+  location?: string;
 }
 
 class CreateJobDto {
@@ -57,6 +68,8 @@ export class CareerController {
   constructor(
     private readonly prisma: PrismaService,
     private readonly jobs: CareerJobService,
+    private readonly fetcher: CareerJobFetcherService,
+    private readonly refreshScheduler: CareerJobRefreshScheduler,
     private readonly digest: CareerDigestService,
     private readonly applications: CareerApplicationService,
   ) {}
@@ -143,6 +156,32 @@ export class CareerController {
         source: 'admin',
       },
     });
+  }
+
+  @Post('jobs/fetch')
+  async fetchJobs(@CurrentUser('id') userId: number, @Body() dto: FetchJobsDto) {
+    if (!this.fetcher.isEnabled()) {
+      return {
+        message: 'Job fetcher not configured. Set ADZUNA_APP_ID and ADZUNA_APP_KEY in environment.',
+        count: 0,
+      };
+    }
+    const count = await this.fetcher.fetchAndStore(
+      userId,
+      dto.keyword,
+      dto.location ?? 'india',
+      3,
+    );
+    return { message: `Fetched and stored ${count} jobs for keyword "${dto.keyword}"`, count };
+  }
+
+  @Post('jobs/refresh')
+  async refreshJobs() {
+    if (!this.fetcher.isEnabled()) {
+      return { message: 'Job fetcher not configured.', expired: 0, fetched: 0 };
+    }
+    const result = await this.refreshScheduler.run();
+    return { message: 'Refresh complete', ...result };
   }
 
   @Post('jobs/seed')
