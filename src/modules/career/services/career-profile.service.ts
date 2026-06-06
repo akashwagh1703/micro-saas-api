@@ -31,7 +31,10 @@ export class CareerProfileService {
       data: {
         fullName: parsed.full_name ?? undefined,
         email: parsed.email ?? undefined,
-        phone: parsed.phone ?? undefined,
+        // FIX 4: Do NOT overwrite the phone number from the resume.
+        // The contact's phone (from WhatsApp) is already normalized and verified.
+        // Resume phone fields are often formatted differently (e.g. '+91-98765-43210')
+        // and overwriting causes mismatches in the matching engine.
         skills: (parsed.skills ?? []) as Prisma.InputJsonValue,
         experience: (parsed.experience ?? []) as Prisma.InputJsonValue,
         education: (parsed.education ?? []) as Prisma.InputJsonValue,
@@ -69,6 +72,11 @@ export class CareerProfileService {
       skills: profile.skills,
       experience: profile.experience,
       education: profile.education,
+      // FIX 5: certifications, projects and languages were missing from the snapshot.
+      // They are now included so AI resume/cover letter generation uses the full profile.
+      certifications: profile.certifications,
+      projects: profile.projects,
+      languages: profile.languages,
       current_location: profile.currentLocation,
       preferred_locations: profile.preferredLocations,
       current_salary: profile.currentSalary,

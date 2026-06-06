@@ -50,6 +50,32 @@ export class CareerBotService {
     const text = String(message.content).trim();
     const lower = text.toLowerCase();
 
+    // ── Digest opt-out / opt-in (checked before onboarding so users can always
+    //    unsubscribe even before their profile is complete) ──────────────────────
+    if (lower === 'stop digest' || lower === 'unsubscribe' || lower === 'stop') {
+      await this.prisma.careerProfile.update({
+        where: { id: profile.id },
+        data: { digestOptOut: true } as any,
+      });
+      await this.reply(
+        message,
+        'You have unsubscribed from daily job digests. ✅\n\nReply *START DIGEST* anytime to re-enable.',
+      );
+      return true;
+    }
+
+    if (lower === 'start digest') {
+      await this.prisma.careerProfile.update({
+        where: { id: profile.id },
+        data: { digestOptOut: false } as any,
+      });
+      await this.reply(
+        message,
+        'Daily job digests re-enabled! 🔔 You will receive matching jobs every morning.',
+      );
+      return true;
+    }
+
     if (!profile.isComplete) {
       await this.handleOnboarding(message, profile, text);
       return true;
@@ -215,6 +241,34 @@ export class CareerBotService {
       await this.profiles.updateOnboarding(profile.id, 'follow_up_location', {});
       await this.reply(message, "Let's continue. What is your current city/location?");
       return;
+    }
+
+    // PHASE 5 FIX 1: Skip questions whose answers were already extracted from the resume.
+    // If the profile field is already populated, silently advance to the next step
+    // and recurse so the next question (if also filled) is also skipped automatically.
+    if (this.isFieldAlreadyFilled(profile, step.field)) {
+      const advanced = await this.profiles.updateOnboarding(profile.id, step.next, {});
+      if (step.next === 'complete') {
+        await this.profiles.markComplete(profile.id);
+        const jobList = await this.jobs.listActive(message.userId);
+        const matches = this.matching.matchProfileToJobs(advanced, jobList);
+        await this.matching.persistMatches(message.userId, profile.id, message.contactId, matches);
+        await this.reply(
+          message,
+          `Your Career Profile is ready! ✅\n\nI found ${matches.length} matching jobs.\n\nReply *VIEW JOBS* or *FIND JOBS react* to explore.\n${this.helpText()}`,
+        );
+        return;
+      }
+      // Recurse with the updated profile to check the next step too.
+      await this.handleOnboarding(message, advanced, text);
+      return;
+    }
+
+    // PHASE 5 FIX 2: Validate the user's answer before saving.
+    const validationError = this.validateOnboardingAnswer(profile.onboardingStep, text);
+    if (validationError) {
+      await this.reply(message, validationError);
+      return; // Re-ask the same question by not advancing the step.
     }
 
     const data: Prisma.CareerProfileUpdateInput = {};
@@ -589,6 +643,55 @@ export class CareerBotService {
     for (const chunk of chunks) {
       await this.inbox.sendOutgoingMessage(message.userId, conversation.id, chunk);
     }
+  }
+
+  /**
+   * Returns true when the profile field that `step` would collect is already
+   * populated — meaning it was extracted from the resume and the question can
+   * be skipped without asking the user again.
+   */
+  private isFieldAlreadyFilled(
+    profile: CareerProfile,
+    field: keyof CareerProfile,
+  ): boolean {
+    const val = profile[field];
+    if (val === null || val === undefined || val === '') return false;
+    if (Array.isArray(val)) return val.length > 0;
+    return true;
+  }
+
+  /**
+   * Returns a user-facing error string when the answer fails basic validation,
+   * or null when the answer is acceptable.
+   * Only the fields where garbage input causes real downstream damage are checked.
+   */
+  private validateOnboardingAnswer(step: string, text: string): string | null {
+    const t = text.trim();
+    if (!t) return 'Please type a valid answer.';
+
+    if (step === 'follow_up_current_salary' || step === 'follow_up_expected_salary') {
+      const hasNumber    = /\d/.test(t);
+      const isNegotiable = /negotiable|open|discuss|fresher|no salary|nil/i.test(t);
+      if (!hasNumber && !isNegotiable) {
+        return 'Please enter a salary like *12 LPA*, *12-15 LPA*, or type *Negotiable* / *Fresher*.';
+      }
+    }
+
+    if (step === 'follow_up_notice_period') {
+      const valid = /\d|immediate|no\s*notice|zero|serving|n\/a|none/i.test(t);
+      if (!valid) {
+        return 'Please enter your notice period like *30 days*, *2 months*, or *Immediate*.';
+      }
+    }
+
+    if (step === 'follow_up_job_type') {
+      const valid = /remote|hybrid|onsite|on.?site|office|anywhere|wfh|work from home/i.test(t);
+      if (!valid) {
+        return 'Please reply *Remote*, *Hybrid*, or *Onsite*.';
+      }
+    }
+
+    return null;
   }
 
   /**

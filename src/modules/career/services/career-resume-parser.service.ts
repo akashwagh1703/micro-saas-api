@@ -42,7 +42,10 @@ export class CareerResumeParserService {
       // eslint-disable-next-line @typescript-eslint/no-require-imports
       const pdfParse = require('pdf-parse');
       const data = await pdfParse(buffer);
-      return String(data.text ?? '').trim();
+      const raw = String(data.text ?? '').trim();
+      // pdf-parse often produces multiple consecutive spaces/newlines from column
+      // layouts and tables. Normalise whitespace so the AI parser gets cleaner input.
+      return this.normalizeWhitespace(raw);
     } catch (e: any) {
       this.logger.warn(`PDF parse failed: ${e.message}`);
       return '';
@@ -54,10 +57,31 @@ export class CareerResumeParserService {
       // eslint-disable-next-line @typescript-eslint/no-require-imports
       const mammoth = require('mammoth');
       const result = await mammoth.extractRawText({ buffer });
-      return String(result.value ?? '').trim();
+      const raw = String(result.value ?? '').trim();
+      return this.normalizeWhitespace(raw);
     } catch (e: any) {
       this.logger.warn(`DOCX parse failed: ${e.message}`);
       return '';
     }
+  }
+
+  /**
+   * Collapses runs of whitespace that PDF/DOCX parsers produce from table cells
+   * and multi-column layouts. Reduces token usage and improves AI parse accuracy.
+   *
+   * Rules:
+   *  - Multiple consecutive spaces → single space
+   *  - More than 2 consecutive newlines → double newline (preserve paragraph breaks)
+   *  - Lines that are entirely whitespace → removed
+   */
+  private normalizeWhitespace(text: string): string {
+    return text
+      .replace(/[ \t]+/g, ' ')          // collapse horizontal whitespace
+      .replace(/\n{3,}/g, '\n\n')        // collapse excess blank lines
+      .split('\n')
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0)
+      .join('\n')
+      .trim();
   }
 }
