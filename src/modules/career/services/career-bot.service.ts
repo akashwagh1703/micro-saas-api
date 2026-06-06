@@ -4,7 +4,7 @@ import { PrismaService } from '../../../prisma/prisma.service';
 import { WhatsappService } from '../../whatsapp/whatsapp.service';
 import { WhatsAppApiService } from '../../integrations/whatsapp-api.service';
 import { InboxService } from '../../inbox/inbox.service';
-import { CAREER_COMMANDS } from '../career.constants';
+import { CAREER_COMMANDS, CAREER_MAX_INBOUND_CHARS } from '../career.constants';
 import { CareerProfileService } from './career-profile.service';
 import { CareerJobService } from './career-job.service';
 import { CareerMatchingService } from './career-matching.service';
@@ -47,15 +47,20 @@ export class CareerBotService {
       return true;
     }
 
-    const text = String(message.content).trim();
+    const text = this.sanitizeUserText(String(message.content));
     const lower = text.toLowerCase();
 
     // ── Digest opt-out / opt-in (checked before onboarding so users can always
     //    unsubscribe even before their profile is complete) ──────────────────────
-    if (lower === 'stop digest' || lower === 'unsubscribe' || lower === 'stop') {
+    if (
+      lower === 'stop digest' ||
+      lower === 'unsubscribe' ||
+      lower === 'stop' ||
+      lower === 'stop daily digest'
+    ) {
       await this.prisma.careerProfile.update({
         where: { id: profile.id },
-        data: { digestOptOut: true } as any,
+        data: { digestOptOut: true },
       });
       await this.reply(
         message,
@@ -64,10 +69,10 @@ export class CareerBotService {
       return true;
     }
 
-    if (lower === 'start digest') {
+    if (lower === 'start digest' || lower === 'subscribe digest') {
       await this.prisma.careerProfile.update({
         where: { id: profile.id },
-        data: { digestOptOut: false } as any,
+        data: { digestOptOut: false },
       });
       await this.reply(
         message,
@@ -102,21 +107,33 @@ export class CareerBotService {
       const section = lower
         .replace(/improve\s+resume/i, '')
         .trim() || 'experience';
-      const suggestion = await this.careerAi.improveResume(
+      const suggestion = await this.safeAiCall(
         message.userId,
-        section,
-        this.profiles.profileSnapshot(profile),
+        () =>
+          this.careerAi.improveResume(
+            message.userId,
+            section,
+            this.profiles.profileSnapshot(profile),
+          ),
+        'Could not generate suggestions right now. Please try again.',
+        'improve_resume',
       );
       await this.reply(message, suggestion);
       return true;
     }
     if (this.matchesCommand(lower, CAREER_COMMANDS.CAREER_ADVICE)) {
       const history = await this.loadHistory(profile.id);
-      const advice = await this.careerAi.careerAdvice(
+      const advice = await this.safeAiCall(
         message.userId,
-        text,
-        this.profiles.profileSnapshot(profile),
-        history,
+        () =>
+          this.careerAi.careerAdvice(
+            message.userId,
+            text,
+            this.profiles.profileSnapshot(profile),
+            history,
+          ),
+        'I could not generate advice right now. Please try again in a moment.',
+        'career_advice',
       );
       await this.reply(message, advice);
       await this.appendHistory(profile.id, text, advice);
@@ -128,12 +145,18 @@ export class CareerBotService {
       const roles = profile.preferredRoles as string[] | null;
       const role =
         roles?.[0] ??
-        lower.replace(/prepare\s+interview|interview\s+prep|interview\s+tips/i, '').trim() ||
-        'professional';
-      const prep = await this.careerAi.interviewPrep(
+        (lower.replace(/prepare\s+interview|interview\s+prep|interview\s+tips/i, '').trim() ||
+          'professional');
+      const prep = await this.safeAiCall(
         message.userId,
-        role,
-        this.profiles.profileSnapshot(profile),
+        () =>
+          this.careerAi.interviewPrep(
+            message.userId,
+            role,
+            this.profiles.profileSnapshot(profile),
+          ),
+        'Interview prep is unavailable right now. Please try again later.',
+        'interview_prep',
       );
       await this.reply(message, prep);
       return true;
@@ -368,7 +391,12 @@ export class CareerBotService {
     });
 
     const parsed = extracted
-      ? await this.careerAi.parseResume(message.userId, extracted)
+      ? await this.safeAiCall(
+          message.userId,
+          () => this.careerAi.parseResume(message.userId, extracted),
+          null,
+          'parse_resume',
+        )
       : null;
 
     if (parsed) {
@@ -467,13 +495,19 @@ export class CareerBotService {
 
     await this.reply(message, `Generating tailored resume for ${topMatch.job.title}…`);
 
-    const content = await this.careerAi.generateTailoredResume(
+    const content = await this.safeAiCall(
       message.userId,
-      this.profiles.profileSnapshot(profile),
-      topMatch.job,
+      () =>
+        this.careerAi.generateTailoredResume(
+          message.userId,
+          this.profiles.profileSnapshot(profile),
+          topMatch.job,
+        ),
+      null,
+      'generate_resume',
     );
     if (!content) {
-      await this.reply(message, 'Could not generate resume. Check AI settings.');
+      await this.reply(message, 'Could not generate resume. Check AI settings in your portal.');
       return;
     }
 
@@ -538,13 +572,19 @@ export class CareerBotService {
       return;
     }
 
-    const content = await this.careerAi.generateCoverLetter(
+    const content = await this.safeAiCall(
       message.userId,
-      this.profiles.profileSnapshot(profile),
-      topMatch.job,
+      () =>
+        this.careerAi.generateCoverLetter(
+          message.userId,
+          this.profiles.profileSnapshot(profile),
+          topMatch.job,
+        ),
+      null,
+      'generate_cover_letter',
     );
     if (!content) {
-      await this.reply(message, 'Could not generate cover letter.');
+      await this.reply(message, 'Could not generate cover letter. Check AI settings in your portal.');
       return;
     }
 
@@ -591,8 +631,8 @@ export class CareerBotService {
     const existing = await this.loadHistory(profileId);
     const updated: ConvTurn[] = [
       ...existing,
-      { role: 'user', content: userMsg },
-      { role: 'assistant', content: botMsg },
+      { role: 'user' as const, content: userMsg },
+      { role: 'assistant' as const, content: botMsg },
     ].slice(-20);
 
     // History is stored inside the existing onboardingData JSON column to avoid
@@ -709,6 +749,30 @@ export class CareerBotService {
     return phrases.some((p) => text === p || text.includes(p));
   }
 
+  /** Strips control characters and caps length before onboarding / command handling. */
+  private sanitizeUserText(raw: string): string {
+    return raw
+      .replace(/\0/g, '')
+      .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, '')
+      .trim()
+      .slice(0, CAREER_MAX_INBOUND_CHARS);
+  }
+
+  /** Catches thrown AI errors; logs context for production debugging. */
+  private async safeAiCall<T>(
+    userId: number,
+    fn: () => Promise<T>,
+    fallback: T,
+    context: string,
+  ): Promise<T> {
+    try {
+      return await fn();
+    } catch (e: any) {
+      this.logger.error(`AI call failed [${context}] user=${userId}: ${e.message}`);
+      return fallback;
+    }
+  }
+
   private helpText(): string {
     return [
       '*Commands:*',
@@ -720,6 +784,8 @@ export class CareerBotService {
       '• IMPROVE RESUME',
       '• CAREER ADVICE {question}',
       '• PREPARE INTERVIEW',
+      '• STOP DIGEST — unsubscribe from daily job alerts',
+      '• START DIGEST — re-enable daily alerts',
     ].join('\n');
   }
 }

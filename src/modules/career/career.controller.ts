@@ -229,21 +229,21 @@ export class CareerController {
   async notifications(@CurrentUser('id') userId: number) {
     return this.prisma.careerNotification.findMany({
       where: { userId },
+      include: {
+        profile: { include: { contact: true } },
+      },
       orderBy: { createdAt: 'desc' },
-      take: 50,
+      take: 100,
     });
   }
 
   @Post('digest/run')
   async runDigest(@CurrentUser('id') userId: number) {
-    const profiles = await this.prisma.careerProfile.findMany({
-      where: { userId, isComplete: true },
-      select: { id: true },
-    });
-    for (const p of profiles) {
-      await this.digest.sendDailyDigestForProfile(p.id);
-    }
-    return { sent: profiles.length };
+    const result = await this.digest.runDailyDigestForUser(userId);
+    return {
+      message: `Digest run complete — ${result.sent} sent, ${result.skipped} skipped, ${result.failed} failed`,
+      ...result,
+    };
   }
 
   @Post('setup')

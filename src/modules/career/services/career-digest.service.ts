@@ -1,9 +1,15 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { CareerMatchingService } from './career-matching.service';
 import { CareerJobService } from './career-job.service';
-import { CareerProfileService } from './career-profile.service';
 import { InboxService } from '../../inbox/inbox.service';
+
+export interface DigestBatchResult {
+  sent: number;
+  skipped: number;
+  failed: number;
+}
 
 @Injectable()
 export class CareerDigestService {
@@ -13,122 +19,180 @@ export class CareerDigestService {
     private readonly prisma: PrismaService,
     private readonly matching: CareerMatchingService,
     private readonly jobs: CareerJobService,
-    private readonly profiles: CareerProfileService,
     private readonly inbox: InboxService,
   ) {}
 
-  async sendDailyDigestForProfile(profileId: number): Promise<void> {
+  /**
+   * Sends the daily digest for one profile. Returns true only when a WhatsApp
+   * message was actually delivered.
+   */
+  async sendDailyDigestForProfile(profileId: number): Promise<boolean> {
     const profile = await this.prisma.careerProfile.findUnique({
       where: { id: profileId },
       include: { contact: true },
     });
 
-    if (!profile?.isComplete || !profile.contact) return;
+    if (!profile?.isComplete || !profile.contact) {
+      return false;
+    }
 
-    // FIX 1: Respect digest opt-out flag added in Phase 1.
-    if ((profile as any).digestOptOut === true) return;
+    if (profile.digestOptOut) {
+      this.logger.debug(`Digest skipped — profile ${profileId} opted out`);
+      return false;
+    }
 
-    const jobList = await this.jobs.listActive(profile.userId);
-    const matches = this.matching.matchProfileToJobs(profile, jobList);
-    await this.matching.persistMatches(
-      profile.userId,
-      profile.id,
-      profile.contactId,
-      matches,
-    );
-
-    if (matches.length === 0) return;
-
-    const top = matches.slice(0, 3);
-    const name = profile.fullName ?? profile.contact.name ?? 'there';
-
-    // FIX 5: Removed time-specific "Good Morning" — digest may run at any UTC
-    // hour and the candidate's local time is unknown.
-    const lines = [
-      `Hi ${name} 👋 Your daily job matches are ready!`,
-      '',
-      `*${matches.length} jobs* match your profile today.`,
-      '',
-      '*Top Matches:*',
-    ];
-
-    // FIX 6: Include location and salary so the user has actionable context.
-    top.forEach((m, i) => {
-      lines.push(
-        `${i + 1}. *${m.job.title}* @ ${m.job.company}`,
-        `   📍 ${m.job.location ?? '—'} | 💰 ${m.job.salaryText ?? '—'} | ${m.score}% match`,
+    try {
+      const jobList = await this.jobs.listActive(profile.userId);
+      const matches = this.matching.matchProfileToJobs(profile, jobList);
+      await this.matching.persistMatches(
+        profile.userId,
+        profile.id,
+        profile.contactId,
+        matches,
       );
+
+      if (matches.length === 0) {
+        await this.recordNotification(profile, 'skipped', {
+          reason: 'no_matches',
+          matchCount: 0,
+        });
+        return false;
+      }
+
+      const top = matches.slice(0, 3);
+      const name = profile.fullName ?? profile.contact.name ?? 'there';
+
+      const lines = [
+        `Hi ${name} 👋 Your daily job matches are ready!`,
+        '',
+        `*${matches.length} jobs* match your profile today.`,
+        '',
+        '*Top Matches:*',
+      ];
+
+      top.forEach((m, i) => {
+        lines.push(
+          `${i + 1}. *${m.job.title}* @ ${m.job.company}`,
+          `   📍 ${m.job.location ?? '—'} | 💰 ${m.job.salaryText ?? '—'} | ${m.score}% match`,
+        );
+      });
+
+      lines.push(
+        '',
+        'Reply:',
+        '• *VIEW JOBS* — see all matches',
+        '• *FIND JOBS {keyword}* — search by role',
+        '• *GENERATE RESUME* — tailor CV for top match',
+        '• *STOP DIGEST* — unsubscribe from daily updates',
+      );
+
+      const conversation = await this.prisma.conversation.findUnique({
+        where: { contactId: profile.contactId },
+      });
+      if (!conversation) {
+        await this.recordNotification(profile, 'failed', {
+          reason: 'no_conversation',
+          matchCount: matches.length,
+        });
+        return false;
+      }
+
+      const sendResult = await this.inbox.sendOutgoingMessage(
+        profile.userId,
+        conversation.id,
+        lines.join('\n'),
+      );
+
+      if (!sendResult.success) {
+        await this.recordNotification(profile, 'failed', {
+          reason: 'whatsapp_send_failed',
+          error: sendResult.error,
+          matchCount: matches.length,
+        });
+        return false;
+      }
+
+      await this.recordNotification(profile, 'sent', {
+        matchCount: matches.length,
+        topJobIds: top.map((t) => t.job.id),
+      });
+
+      return true;
+    } catch (e: any) {
+      this.logger.error(`Daily digest failed for profile ${profileId}: ${e.message}`);
+      await this.recordNotification(profile, 'failed', {
+        reason: 'exception',
+        error: e.message,
+      });
+      return false;
+    }
+  }
+
+  async runDailyDigestForUser(userId: number): Promise<DigestBatchResult> {
+    const profiles = await this.prisma.careerProfile.findMany({
+      where: { userId, isComplete: true, digestOptOut: false },
+      select: { id: true },
     });
 
-    lines.push(
-      '',
-      'Reply:',
-      '• *VIEW JOBS* — see all matches',
-      '• *FIND JOBS {keyword}* — search by role',
-      '• *GENERATE RESUME* — tailor CV for top match',
-      '• *STOP DIGEST* — unsubscribe from daily updates',
-    );
+    const result: DigestBatchResult = { sent: 0, skipped: 0, failed: 0 };
 
-    const conversation = await this.prisma.conversation.findUnique({
-      where: { contactId: profile.contactId },
+    for (const p of profiles) {
+      try {
+        const ok = await this.sendDailyDigestForProfile(p.id);
+        if (ok) {
+          result.sent++;
+        } else {
+          result.skipped++;
+        }
+      } catch {
+        result.failed++;
+      }
+    }
+
+    return result;
+  }
+
+  async runDailyDigestBatch(): Promise<DigestBatchResult> {
+    const settings = await this.prisma.userSetting.findMany({
+      where: { key: 'business_category', value: 'career_ai' },
+      select: { userId: true },
     });
-    if (!conversation) return;
 
-    await this.inbox.sendOutgoingMessage(profile.userId, conversation.id, lines.join('\n'));
+    const totals: DigestBatchResult = { sent: 0, skipped: 0, failed: 0 };
 
+    for (const { userId } of settings) {
+      try {
+        const r = await this.runDailyDigestForUser(userId);
+        totals.sent += r.sent;
+        totals.skipped += r.skipped;
+        totals.failed += r.failed;
+        this.logger.log(
+          `Digest userId=${userId}: sent=${r.sent} skipped=${r.skipped} failed=${r.failed}`,
+        );
+      } catch (e: any) {
+        this.logger.error(`Digest batch failed for userId=${userId}: ${e.message}`);
+        totals.failed++;
+      }
+    }
+
+    return totals;
+  }
+
+  private async recordNotification(
+    profile: { userId: number; id: number; contactId: number },
+    status: 'sent' | 'skipped' | 'failed',
+    payload: Record<string, unknown>,
+  ): Promise<void> {
     await this.prisma.careerNotification.create({
       data: {
         userId: profile.userId,
         profileId: profile.id,
         contactId: profile.contactId,
         type: 'daily_digest',
-        status: 'sent',
-        sentAt: new Date(),
-        payload: { matchCount: matches.length, topJobIds: top.map((t) => t.job.id) },
+        status,
+        sentAt: status === 'sent' ? new Date() : null,
+        payload: payload as Prisma.InputJsonValue,
       },
     });
-  }
-
-  /**
-   * FIX 2: Scoped to a single userId so each tenant's digest runs independently.
-   * The scheduler calls this once per tenant — not once for all tenants globally.
-   * This prevents one slow tenant from blocking all others and isolates failures.
-   */
-  async runDailyDigestForUser(userId: number): Promise<number> {
-    const profiles = await this.prisma.careerProfile.findMany({
-      where: { userId, isComplete: true },
-      select: { id: true },
-    });
-
-    let sent = 0;
-    for (const p of profiles) {
-      try {
-        await this.sendDailyDigestForProfile(p.id);
-        sent++;
-      } catch (e: any) {
-        this.logger.error(`Daily digest failed for profile ${p.id}: ${e.message}`);
-      }
-    }
-    return sent;
-  }
-
-  /**
-   * Global batch — kept for the portal's manual "Run digest" button.
-   * Iterates over all career_ai tenants and calls runDailyDigestForUser for each.
-   */
-  async runDailyDigestBatch(): Promise<void> {
-    const settings = await this.prisma.userSetting.findMany({
-      where: { key: 'business_category', value: 'career_ai' },
-      select: { userId: true },
-    });
-
-    for (const { userId } of settings) {
-      try {
-        const sent = await this.runDailyDigestForUser(userId);
-        this.logger.log(`Digest sent to ${sent} profile(s) for userId=${userId}`);
-      } catch (e: any) {
-        this.logger.error(`Digest batch failed for userId=${userId}: ${e.message}`);
-      }
-    }
   }
 }
