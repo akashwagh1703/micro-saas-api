@@ -14,6 +14,9 @@ import { CareerStorageService } from './career-storage.service';
 import { CareerApplicationService } from './career-application.service';
 import { CareerProfile } from '@prisma/client';
 
+// WhatsApp rejects messages over 4096 chars. We use 3800 to leave a safe buffer.
+const WA_MAX_CHARS = 3800;
+
 @Injectable()
 export class CareerBotService {
   private readonly logger = new Logger(CareerBotService.name);
@@ -107,12 +110,11 @@ export class CareerBotService {
       return true;
     }
 
-    await this.reply(
-      message,
-      `Hi! I'm CareerAI 🎯\n\n${this.helpText()}`,
-    );
+    await this.reply(message, `Hi! I'm CareerAI 🎯\n\n${this.helpText()}`);
     return true;
   }
+
+  // ─── Onboarding ──────────────────────────────────────────────────────────────
 
   private async handleOnboarding(
     message: Message & { contact: Contact },
@@ -133,36 +135,51 @@ export class CareerBotService {
       return;
     }
 
+    // FIX 3: parsing_resume had no handler — user was permanently stuck receiving
+    // "Processing your profile…" forever. Recover by advancing to the first question.
+    if (profile.onboardingStep === 'parsing_resume') {
+      await this.profiles.updateOnboarding(profile.id, 'follow_up_location', {});
+      await this.reply(
+        message,
+        "Let's continue setting up your profile.\n\nWhat is your current city/location? (e.g. Mumbai, Pune)",
+      );
+      return;
+    }
+
+    // FIX 2: The original steps map had questions and fields swapped.
+    // follow_up_location was asking "preferred location" but saving to currentLocation.
+    // follow_up_preferred_location was asking "current salary" but saving to preferredLocations.
+    // Both are now corrected so every question exactly matches the field it writes.
     const steps: Record<string, { next: string; field: keyof CareerProfile; question: string }> = {
       follow_up_location: {
         next: 'follow_up_preferred_location',
         field: 'currentLocation',
-        question: 'What is your preferred work location? (city or "Remote")',
+        question: 'What is your current city/location? (e.g. Mumbai, Pune)',
       },
       follow_up_preferred_location: {
         next: 'follow_up_current_salary',
         field: 'preferredLocations',
-        question: 'What is your current salary? (e.g. 8 LPA)',
+        question: 'Where would you prefer to work? (city or "Remote", comma-separated for multiple)',
       },
       follow_up_current_salary: {
         next: 'follow_up_expected_salary',
         field: 'currentSalary',
-        question: 'What is your expected salary?',
+        question: 'What is your current salary? (e.g. 8 LPA or "Fresher")',
       },
       follow_up_expected_salary: {
         next: 'follow_up_notice_period',
         field: 'expectedSalary',
-        question: 'What is your notice period? (e.g. 30 days, immediate)',
+        question: 'What is your expected salary? (e.g. 12 LPA or "Negotiable")',
       },
       follow_up_notice_period: {
         next: 'follow_up_job_type',
         field: 'noticePeriod',
-        question: 'Preferred job type? (Remote / Hybrid / Onsite)',
+        question: 'What is your notice period? (e.g. 30 days, 2 months, Immediate)',
       },
       follow_up_job_type: {
         next: 'follow_up_roles',
         field: 'workPreference',
-        question: 'Which roles are you looking for? (comma-separated, e.g. React Developer, Full Stack)',
+        question: 'Preferred work mode? Reply: *Remote*, *Hybrid*, or *Onsite*',
       },
       follow_up_roles: {
         next: 'complete',
@@ -172,8 +189,15 @@ export class CareerBotService {
     };
 
     const step = steps[profile.onboardingStep];
+
+    // FIX 4: The original fallback just said "Processing your profile…" with no
+    // state change, permanently trapping the user. Now we log it and recover.
     if (!step) {
-      await this.reply(message, 'Processing your profile…');
+      this.logger.warn(
+        `Unknown onboarding step "${profile.onboardingStep}" for profile ${profile.id} — recovering`,
+      );
+      await this.profiles.updateOnboarding(profile.id, 'follow_up_location', {});
+      await this.reply(message, "Let's continue. What is your current city/location?");
       return;
     }
 
@@ -206,6 +230,8 @@ export class CareerBotService {
     await this.reply(message, step.question);
   }
 
+  // ─── Resume document upload ──────────────────────────────────────────────────
+
   private async handleResumeDocument(
     message: Message & { contact: Contact },
     profile: CareerProfile,
@@ -226,10 +252,7 @@ export class CareerBotService {
       return;
     }
 
-    const downloaded = await this.whatsAppApi.downloadMedia(
-      creds.accessToken ?? '',
-      mediaId,
-    );
+    const downloaded = await this.whatsAppApi.downloadMedia(creds.accessToken ?? '', mediaId);
     if (!downloaded.success || !downloaded.buffer) {
       await this.reply(message, 'Failed to download resume. Please try again.');
       return;
@@ -237,6 +260,7 @@ export class CareerBotService {
 
     const mime = doc.mime_type ?? 'application/pdf';
     const fileName = doc.filename ?? 'resume.pdf';
+
     const filePath = await this.storage.saveBuffer(
       message.userId,
       'resumes',
@@ -245,6 +269,14 @@ export class CareerBotService {
     );
 
     const extracted = await this.resumeParser.extractText(downloaded.buffer, mime, fileName);
+
+    // FIX 6: Every upload previously created a new row with isMaster: true without
+    // clearing the previous master, leaving multiple rows all claiming to be master.
+    // Clear the flag on all existing resumes for this profile before creating the new one.
+    await this.prisma.careerResume.updateMany({
+      where: { profileId: profile.id, isMaster: true },
+      data: { isMaster: false },
+    });
 
     const resume = await this.prisma.careerResume.create({
       data: {
@@ -273,17 +305,21 @@ export class CareerBotService {
       const updated = await this.profiles.applyParsedResume(profile.id, parsed);
       await this.reply(
         message,
-        `Resume parsed! ✅\n\nHi ${updated.fullName ?? 'there'}, I extracted your skills and experience.\n\nWhat is your current location?`,
+        `Resume parsed! ✅\n\nHi ${updated.fullName ?? 'there'}, I extracted your skills and experience.\n\nWhat is your current city/location?`,
       );
       return;
     }
 
+    // AI parse failed or text was empty — advance to follow_up_location so the
+    // user can proceed through manual questions instead of getting stuck.
     await this.profiles.updateOnboarding(profile.id, 'follow_up_location', {});
     await this.reply(
       message,
-      'Resume saved. I could not auto-parse all fields.\n\nWhat is your current location?',
+      'Resume saved. I could not auto-parse all fields.\n\nWhat is your current city/location?',
     );
   }
+
+  // ─── Commands ────────────────────────────────────────────────────────────────
 
   private async cmdFindJobs(
     message: Message & { contact: Contact },
@@ -291,7 +327,11 @@ export class CareerBotService {
     text: string,
   ): Promise<void> {
     let jobList = await this.jobs.listActive(message.userId);
-    const keyword = text.replace(/find\s+jobs?/i, '').replace(/find\s+/i, '').trim();
+
+    // FIX 5: The original regex only stripped "find jobs" / "find job", so alternate
+    // command phrases like "search jobs react" or "view jobs python" left the full
+    // command phrase in the keyword, producing zero or wrong results.
+    const keyword = this.extractJobKeyword(text);
     if (keyword && keyword !== 'all' && keyword.length > 1) {
       jobList = this.jobs.searchByKeyword(jobList, keyword);
     }
@@ -453,14 +493,49 @@ export class CareerBotService {
     );
   }
 
+  // ─── Helpers ─────────────────────────────────────────────────────────────────
+
+  /**
+   * FIX 7: WhatsApp silently fails on messages over 4096 characters.
+   * The original reply() sent the full string regardless of length.
+   * This version splits at paragraph boundaries and sends multiple messages.
+   */
   private async reply(message: Message & { contact: Contact }, text: string): Promise<void> {
     const conversation = await this.prisma.conversation.findUnique({
       where: { contactId: message.contactId },
     });
-    if (!conversation) {
+    if (!conversation) return;
+
+    if (text.length <= WA_MAX_CHARS) {
+      await this.inbox.sendOutgoingMessage(message.userId, conversation.id, text);
       return;
     }
-    await this.inbox.sendOutgoingMessage(message.userId, conversation.id, text);
+
+    // Split at double-newline paragraph boundaries where possible.
+    const chunks: string[] = [];
+    let remaining = text;
+    while (remaining.length > WA_MAX_CHARS) {
+      const cut = remaining.lastIndexOf('\n\n', WA_MAX_CHARS);
+      const splitAt = cut > 0 ? cut : WA_MAX_CHARS;
+      chunks.push(remaining.slice(0, splitAt).trim());
+      remaining = remaining.slice(splitAt).trim();
+    }
+    if (remaining.length > 0) chunks.push(remaining);
+
+    for (const chunk of chunks) {
+      await this.inbox.sendOutgoingMessage(message.userId, conversation.id, chunk);
+    }
+  }
+
+  /**
+   * FIX 5: Strips all recognised command prefixes from the user's text so only
+   * the search keyword remains. The original regex only handled "find jobs" /
+   * "find job", leaving "search jobs react" with "search jobs" still in the keyword.
+   */
+  private extractJobKeyword(text: string): string {
+    return text
+      .replace(/^(find\s+jobs?|search\s+jobs?|job\s+search|view\s+jobs?|top\s+jobs?|daily\s+jobs?)/i, '')
+      .trim();
   }
 
   private matchesCommand(text: string, phrases: readonly string[]): boolean {

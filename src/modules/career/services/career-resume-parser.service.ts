@@ -6,6 +6,12 @@ export class CareerResumeParserService {
   private readonly logger = new Logger(CareerResumeParserService.name);
 
   async extractText(buffer: Buffer, mimeType: string, fileName: string): Promise<string> {
+    // Reject files over 10 MB — prevents DB column bloat from extractedText.
+    if (buffer.length > 10 * 1024 * 1024) {
+      this.logger.warn(`Resume rejected — too large: ${buffer.length} bytes (${fileName})`);
+      return '';
+    }
+
     const lower = (mimeType || fileName || '').toLowerCase();
 
     if (lower.includes('pdf') || fileName.toLowerCase().endsWith('.pdf')) {
@@ -20,7 +26,15 @@ export class CareerResumeParserService {
       return this.extractDocx(buffer);
     }
 
-    return buffer.toString('utf8').trim();
+    // Plain-text resume — cap at 20 000 chars to keep DB size sane.
+    if (lower.includes('text/plain') || fileName.toLowerCase().endsWith('.txt')) {
+      return buffer.toString('utf8').slice(0, 20000).trim();
+    }
+
+    // All other formats (DOC, RTF, images) cannot be read — log and return empty
+    // so the bot falls back to manual follow-up questions instead of storing garbage.
+    this.logger.warn(`Unsupported resume format — mimeType=${mimeType} fileName=${fileName}`);
+    return '';
   }
 
   private async extractPdf(buffer: Buffer): Promise<string> {
