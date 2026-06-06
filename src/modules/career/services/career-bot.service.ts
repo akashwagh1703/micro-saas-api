@@ -133,36 +133,48 @@ export class CareerBotService {
       return;
     }
 
+    // Recovery: profile got stuck at parsing_resume (AI timed out or extracted empty text).
+    // Move forward so the user is never permanently locked.
+    if (profile.onboardingStep === 'parsing_resume') {
+      await this.profiles.updateOnboarding(profile.id, 'follow_up_location', {});
+      await this.reply(
+        message,
+        'Let\'s continue setting up your profile.\n\nWhat is your current city/location? (e.g. Mumbai, Pune)',
+      );
+      return;
+    }
+
     const steps: Record<string, { next: string; field: keyof CareerProfile; question: string }> = {
+      // FIXED: each question now matches the field it saves into.
       follow_up_location: {
         next: 'follow_up_preferred_location',
         field: 'currentLocation',
-        question: 'What is your preferred work location? (city or "Remote")',
+        question: 'What is your current city/location? (e.g. Mumbai, Pune)',
       },
       follow_up_preferred_location: {
         next: 'follow_up_current_salary',
         field: 'preferredLocations',
-        question: 'What is your current salary? (e.g. 8 LPA)',
+        question: 'Where would you prefer to work? (city or "Remote", comma-separated if multiple)',
       },
       follow_up_current_salary: {
         next: 'follow_up_expected_salary',
         field: 'currentSalary',
-        question: 'What is your expected salary?',
+        question: 'What is your current salary? (e.g. 8 LPA or "Fresher")',
       },
       follow_up_expected_salary: {
         next: 'follow_up_notice_period',
         field: 'expectedSalary',
-        question: 'What is your notice period? (e.g. 30 days, immediate)',
+        question: 'What is your expected salary? (e.g. 12 LPA or "Negotiable")',
       },
       follow_up_notice_period: {
         next: 'follow_up_job_type',
         field: 'noticePeriod',
-        question: 'Preferred job type? (Remote / Hybrid / Onsite)',
+        question: 'What is your notice period? (e.g. 30 days, 2 months, Immediate)',
       },
       follow_up_job_type: {
         next: 'follow_up_roles',
         field: 'workPreference',
-        question: 'Which roles are you looking for? (comma-separated, e.g. React Developer, Full Stack)',
+        question: 'Preferred work mode? Reply: *Remote*, *Hybrid*, or *Onsite*',
       },
       follow_up_roles: {
         next: 'complete',
@@ -173,7 +185,10 @@ export class CareerBotService {
 
     const step = steps[profile.onboardingStep];
     if (!step) {
-      await this.reply(message, 'Processing your profile…');
+      // Unknown step — should not happen, but recover gracefully.
+      this.logger.warn(`Unknown onboarding step "${profile.onboardingStep}" for profile ${profile.id}`);
+      await this.profiles.updateOnboarding(profile.id, 'follow_up_location', {});
+      await this.reply(message, 'Let\'s continue. What is your current city/location?');
       return;
     }
 
@@ -246,6 +261,12 @@ export class CareerBotService {
 
     const extracted = await this.resumeParser.extractText(downloaded.buffer, mime, fileName);
 
+    // Clear the isMaster flag on any existing resumes before creating the new master.
+    await this.prisma.careerResume.updateMany({
+      where: { profileId: profile.id, isMaster: true },
+      data: { isMaster: false },
+    });
+
     const resume = await this.prisma.careerResume.create({
       data: {
         userId: message.userId,
@@ -291,7 +312,7 @@ export class CareerBotService {
     text: string,
   ): Promise<void> {
     let jobList = await this.jobs.listActive(message.userId);
-    const keyword = text.replace(/find\s+jobs?/i, '').replace(/find\s+/i, '').trim();
+    const keyword = this.extractJobKeyword(text);
     if (keyword && keyword !== 'all' && keyword.length > 1) {
       jobList = this.jobs.searchByKeyword(jobList, keyword);
     }
@@ -460,7 +481,34 @@ export class CareerBotService {
     if (!conversation) {
       return;
     }
-    await this.inbox.sendOutgoingMessage(message.userId, conversation.id, text);
+
+    const MAX = 3800;
+    if (text.length <= MAX) {
+      await this.inbox.sendOutgoingMessage(message.userId, conversation.id, text);
+      return;
+    }
+
+    // Split long messages at paragraph boundaries so WhatsApp never rejects them.
+    const chunks: string[] = [];
+    let remaining = text;
+    while (remaining.length > MAX) {
+      const cut = remaining.lastIndexOf('\n\n', MAX);
+      const splitAt = cut > 0 ? cut : MAX;
+      chunks.push(remaining.slice(0, splitAt).trim());
+      remaining = remaining.slice(splitAt).trim();
+    }
+    if (remaining.length > 0) chunks.push(remaining);
+
+    for (const chunk of chunks) {
+      await this.inbox.sendOutgoingMessage(message.userId, conversation.id, chunk);
+    }
+  }
+
+  // Strips all recognised command prefixes so only the search keyword remains.
+  private extractJobKeyword(text: string): string {
+    return text
+      .replace(/^(find\s+jobs?|search\s+jobs?|job\s+search|view\s+jobs?|top\s+jobs?|daily\s+jobs?)/i, '')
+      .trim();
   }
 
   private matchesCommand(text: string, phrases: readonly string[]): boolean {

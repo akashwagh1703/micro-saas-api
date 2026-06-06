@@ -6,6 +6,12 @@ export class CareerResumeParserService {
   private readonly logger = new Logger(CareerResumeParserService.name);
 
   async extractText(buffer: Buffer, mimeType: string, fileName: string): Promise<string> {
+    // Reject files larger than 10 MB to prevent DB bloat.
+    if (buffer.length > 10 * 1024 * 1024) {
+      this.logger.warn(`Resume rejected — too large: ${buffer.length} bytes`);
+      return '';
+    }
+
     const lower = (mimeType || fileName || '').toLowerCase();
 
     if (lower.includes('pdf') || fileName.toLowerCase().endsWith('.pdf')) {
@@ -20,7 +26,12 @@ export class CareerResumeParserService {
       return this.extractDocx(buffer);
     }
 
-    return buffer.toString('utf8').trim();
+    if (fileName.toLowerCase().endsWith('.txt') || lower.includes('text/plain')) {
+      return buffer.toString('utf8').slice(0, 20000).trim();
+    }
+
+    this.logger.warn(`Unsupported resume format: mimeType=${mimeType} fileName=${fileName}`);
+    return '';
   }
 
   private async extractPdf(buffer: Buffer): Promise<string> {

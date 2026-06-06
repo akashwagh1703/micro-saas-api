@@ -344,6 +344,7 @@ model CareerProfile {
   onboardingData     Json?     @map("onboarding_data")
   isComplete         Boolean   @default(false) @map("is_complete")
   masterResumeId     Int?      @map("master_resume_id")
+  digestOptOut       Boolean   @default(false) @map("digest_opt_out")
   createdAt          DateTime? @default(now()) @map("created_at")
   updatedAt          DateTime? @updatedAt @map("updated_at")
 

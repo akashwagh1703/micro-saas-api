@@ -116,7 +116,14 @@ export class CareerMatchingService {
 
   private estimateExperienceYears(experience: unknown): number {
     if (!Array.isArray(experience) || experience.length === 0) return 0;
-    return Math.min(experience.length * 2, 15);
+    let total = 0;
+    for (const entry of experience) {
+      // Use the 'years' or 'duration' field the AI extracts; fall back to 1 per entry.
+      const raw = String((entry as any)?.years ?? (entry as any)?.duration ?? '');
+      const n = parseFloat(raw.replace(/[^\d.]/g, ''));
+      total += isNaN(n) ? 1 : Math.min(n, 20);
+    }
+    return Math.min(total > 0 ? total : experience.length, 35);
   }
 
   private capitalize(s: string): string {
