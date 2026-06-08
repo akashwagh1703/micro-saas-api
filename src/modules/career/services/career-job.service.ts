@@ -11,6 +11,7 @@ const SAMPLE_JOBS = [
     description: 'Build modern React apps. Requires React, TypeScript, REST APIs.',
     requiredSkills: ['react', 'javascript', 'typescript', 'rest'],
     minExperience: 2,
+    experienceMax: 6,
   },
   {
     title: 'Full Stack Developer',
@@ -21,6 +22,7 @@ const SAMPLE_JOBS = [
     description: 'Laravel + React full stack role. Team lead opportunities.',
     requiredSkills: ['laravel', 'react', 'mysql', 'php'],
     minExperience: 3,
+    experienceMax: 8,
   },
   {
     title: 'Frontend Engineer',
@@ -31,6 +33,7 @@ const SAMPLE_JOBS = [
     description: 'UI engineering with React and design systems.',
     requiredSkills: ['react', 'css', 'javascript'],
     minExperience: 2,
+    experienceMax: 5,
   },
   {
     title: 'Node.js Backend Developer',
@@ -41,6 +44,7 @@ const SAMPLE_JOBS = [
     description: 'NestJS/Node microservices, PostgreSQL, Redis.',
     requiredSkills: ['nodejs', 'nestjs', 'postgresql', 'redis'],
     minExperience: 3,
+    experienceMax: 7,
   },
   {
     title: 'DevOps Engineer',
@@ -51,6 +55,7 @@ const SAMPLE_JOBS = [
     description: 'AWS, Docker, CI/CD pipelines.',
     requiredSkills: ['aws', 'docker', 'kubernetes', 'ci/cd'],
     minExperience: 4,
+    experienceMax: 10,
   },
 ];
 
@@ -88,6 +93,7 @@ export class CareerJobService {
           description: job.description,
           requiredSkills: job.requiredSkills,
           minExperience: job.minExperience,
+          experienceMax: job.experienceMax,
           source: 'seed',
         },
       });

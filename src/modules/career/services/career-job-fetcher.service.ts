@@ -132,6 +132,8 @@ export class CareerJobFetcherService {
     const city      = job.location?.area?.[1] ?? job.location?.display_name ?? null;
     const salaryMin = job.salary_min ? Math.round(job.salary_min) : null;
     const salaryMax = job.salary_max ? Math.round(job.salary_max) : null;
+    const expRange  = this.parseExperienceRange(job.description ?? '');
+    const tags      = this.buildTags(job);
 
     // Prisma upsert requires the @@unique([userId, externalId]) constraint added in migration.
     // We guard with a try/catch in the caller to skip duplicates if the constraint
@@ -153,6 +155,9 @@ export class CareerJobFetcherService {
         jobType:       this.normalizeContractType(job.contract_type),
         description:   (job.description ?? '').slice(0, 3000),
         requiredSkills: skills,
+        minExperience: expRange.min ?? null,
+        experienceMax: expRange.max ?? null,
+        tags,
         applyUrl:      job.redirect_url,
         postedAt:      job.created ? new Date(job.created) : null,
         expiresAt:     this.thirtyDaysFromNow(),
@@ -168,6 +173,9 @@ export class CareerJobFetcherService {
         salaryText:    this.formatSalary(salaryMin, salaryMax),
         description:   (job.description ?? '').slice(0, 3000),
         requiredSkills: skills,
+        minExperience: expRange.min ?? undefined,
+        experienceMax: expRange.max ?? undefined,
+        tags,
         expiresAt:     this.thirtyDaysFromNow(),
         isActive:      true,
       },
@@ -177,6 +185,35 @@ export class CareerJobFetcherService {
   private extractSkills(description: string): string[] {
     const lower = description.toLowerCase();
     return CareerJobFetcherService.SKILL_LIST.filter((s) => lower.includes(s));
+  }
+
+  private parseExperienceRange(description: string): { min?: number; max?: number } {
+    const range = description.match(/(\d+)\s*[-–to]+\s*(\d+)\s*(?:\+?\s*)?(?:years?|yrs?|y\.?o\.?e\.?)/i);
+    if (range) {
+      return {
+        min: parseInt(range[1], 10),
+        max: parseInt(range[2], 10),
+      };
+    }
+
+    const minimum = description.match(/(?:minimum|min\.?|at least)\s*(\d+)\s*(?:\+?\s*)?(?:years?|yrs?)/i);
+    if (minimum) {
+      return { min: parseInt(minimum[1], 10) };
+    }
+
+    const plus = description.match(/(\d+)\+\s*(?:years?|yrs?)/i);
+    if (plus) {
+      return { min: parseInt(plus[1], 10) };
+    }
+
+    return {};
+  }
+
+  private buildTags(job: AdzunaJob): string[] {
+    const tags: string[] = [];
+    if (job.category?.label) tags.push(job.category.label);
+    if (job.contract_type) tags.push(job.contract_type);
+    return tags;
   }
 
   private formatSalary(min: number | null, max: number | null): string | null {

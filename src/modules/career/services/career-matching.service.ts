@@ -58,12 +58,16 @@ export class CareerMatchingService {
 
         // ── 2. Experience (20 pts) ───────────────────────────────────────────
         const minExp = job.minExperience ?? 0;
-        if (profileExpYears >= minExp) {
+        const maxExp = job.experienceMax ?? 99;
+        if (profileExpYears >= minExp && profileExpYears <= maxExp) {
           score += W_EXPERIENCE;
-          matched.push(`✓ ${profileExpYears}y exp (min ${minExp}y)`);
+          matched.push(`✓ ${profileExpYears}y exp (needs ${minExp}–${maxExp}y)`);
+        } else if (profileExpYears >= minExp) {
+          score += W_EXPERIENCE;
+          matched.push(`✓ Experience meets minimum (${minExp}y+)`);
         } else if (minExp > 0) {
           // Partial credit proportional to how close the candidate is.
-          const partial = (profileExpYears / minExp) * W_EXPERIENCE * 0.6;
+          const partial = (profileExpYears / minExp) * W_EXPERIENCE * 0.5;
           score += partial;
           missing.push(`${minExp}+ years experience`);
         }
@@ -91,7 +95,7 @@ export class CareerMatchingService {
         }
 
         // ── 4. Location (15 pts) ─────────────────────────────────────────────
-        const jobCity   = ((job as any).city ?? job.location ?? '').toLowerCase();
+        const jobCity   = (job.city ?? job.location ?? '').toLowerCase();
         const jobType   = (job.jobType ?? '').toLowerCase();
         const isRemote  = jobType.includes('remote') || jobCity.includes('remote');
 

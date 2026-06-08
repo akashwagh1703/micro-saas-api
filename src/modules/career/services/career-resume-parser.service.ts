@@ -1,21 +1,29 @@
 import { Injectable, Logger } from '@nestjs/common';
 
+export type ResumeExtractError = 'too_large' | 'unsupported_format';
+
+export interface ResumeExtractResult {
+  text: string;
+  error?: ResumeExtractError;
+}
+
 /** Extracts plain text from PDF/DOCX resume uploads. */
 @Injectable()
 export class CareerResumeParserService {
   private readonly logger = new Logger(CareerResumeParserService.name);
 
-  async extractText(buffer: Buffer, mimeType: string, fileName: string): Promise<string> {
+  async extractText(buffer: Buffer, mimeType: string, fileName: string): Promise<ResumeExtractResult> {
     // Reject files over 10 MB — prevents DB column bloat from extractedText.
     if (buffer.length > 10 * 1024 * 1024) {
       this.logger.warn(`Resume rejected — too large: ${buffer.length} bytes (${fileName})`);
-      return '';
+      return { text: '', error: 'too_large' };
     }
 
     const lower = (mimeType || fileName || '').toLowerCase();
 
     if (lower.includes('pdf') || fileName.toLowerCase().endsWith('.pdf')) {
-      return this.extractPdf(buffer);
+      const text = await this.extractPdf(buffer);
+      return { text };
     }
 
     if (
@@ -23,18 +31,19 @@ export class CareerResumeParserService {
       lower.includes('docx') ||
       fileName.toLowerCase().endsWith('.docx')
     ) {
-      return this.extractDocx(buffer);
+      const text = await this.extractDocx(buffer);
+      return { text };
     }
 
     // Plain-text resume — cap at 20 000 chars to keep DB size sane.
     if (lower.includes('text/plain') || fileName.toLowerCase().endsWith('.txt')) {
-      return buffer.toString('utf8').slice(0, 20000).trim();
+      return { text: buffer.toString('utf8').slice(0, 20000).trim() };
     }
 
     // All other formats (DOC, RTF, images) cannot be read — log and return empty
-    // so the bot falls back to manual follow-up questions instead of storing garbage.
+    // so the bot can reply with a clear format error instead of storing garbage.
     this.logger.warn(`Unsupported resume format — mimeType=${mimeType} fileName=${fileName}`);
-    return '';
+    return { text: '', error: 'unsupported_format' };
   }
 
   private async extractPdf(buffer: Buffer): Promise<string> {

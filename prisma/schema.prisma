@@ -414,6 +414,8 @@ model CareerJob {
   description   String?   @db.Text
   requiredSkills Json?    @map("required_skills")
   minExperience Int?      @map("min_experience")
+  experienceMax Int?      @map("experience_max")
+  tags          Json?
   source        String?   @db.VarChar(50)
   externalId    String?   @map("external_id")
   isActive      Boolean   @default(true) @map("is_active")

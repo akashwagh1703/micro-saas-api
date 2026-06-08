@@ -272,14 +272,7 @@ export class CareerBotService {
     if (this.isFieldAlreadyFilled(profile, step.field)) {
       const advanced = await this.profiles.updateOnboarding(profile.id, step.next, {});
       if (step.next === 'complete') {
-        await this.profiles.markComplete(profile.id);
-        const jobList = await this.jobs.listActive(message.userId);
-        const matches = this.matching.matchProfileToJobs(advanced, jobList);
-        await this.matching.persistMatches(message.userId, profile.id, message.contactId, matches);
-        await this.reply(
-          message,
-          `Your Career Profile is ready! ✅\n\nI found ${matches.length} matching jobs.\n\nReply *VIEW JOBS* or *FIND JOBS react* to explore.\n${this.helpText()}`,
-        );
+        await this.finishOnboarding(message, advanced);
         return;
       }
       // Recurse with the updated profile to check the next step too.
@@ -304,23 +297,31 @@ export class CareerBotService {
     const updated = await this.profiles.updateOnboarding(profile.id, step.next, data);
 
     if (step.next === 'complete') {
-      await this.profiles.markComplete(profile.id);
-      const jobList = await this.jobs.listActive(message.userId);
-      const matches = this.matching.matchProfileToJobs(updated, jobList);
-      await this.matching.persistMatches(
-        message.userId,
-        profile.id,
-        message.contactId,
-        matches,
-      );
-      await this.reply(
-        message,
-        `Your Career Profile is ready! ✅\n\nI found ${matches.length} matching jobs.\n\nReply *VIEW JOBS* or *FIND JOBS react* to explore.\n${this.helpText()}`,
-      );
+      await this.finishOnboarding(message, updated);
       return;
     }
 
     await this.reply(message, step.question);
+  }
+
+  /** Marks onboarding complete, runs initial job matching, and sends the welcome summary. */
+  private async finishOnboarding(
+    message: Message & { contact: Contact },
+    profile: CareerProfile,
+  ): Promise<void> {
+    await this.profiles.markComplete(profile.id);
+    const jobList = await this.jobs.listActive(message.userId);
+    const matches = this.matching.matchProfileToJobs(profile, jobList);
+    await this.matching.persistMatches(
+      message.userId,
+      profile.id,
+      message.contactId,
+      matches,
+    );
+    await this.reply(
+      message,
+      `Your Career Profile is ready! ✅\n\nI found ${matches.length} matching jobs.\n\nReply *VIEW JOBS* or *FIND JOBS react* to explore.\n${this.helpText()}`,
+    );
   }
 
   // ─── Resume document upload ──────────────────────────────────────────────────
@@ -354,14 +355,34 @@ export class CareerBotService {
     const mime = doc.mime_type ?? 'application/pdf';
     const fileName = doc.filename ?? 'resume.pdf';
 
+    const { text: extracted, error: extractError } = await this.resumeParser.extractText(
+      downloaded.buffer,
+      mime,
+      fileName,
+    );
+
+    if (extractError === 'too_large') {
+      await this.reply(
+        message,
+        'That file is too large (max 10 MB). Please upload a smaller *PDF* or *DOCX* resume.',
+      );
+      return;
+    }
+
+    if (extractError === 'unsupported_format') {
+      await this.reply(
+        message,
+        'That file format is not supported. Please upload your resume as a *PDF* or *DOCX* attachment.',
+      );
+      return;
+    }
+
     const filePath = await this.storage.saveBuffer(
       message.userId,
       'resumes',
       fileName,
       downloaded.buffer,
     );
-
-    const extracted = await this.resumeParser.extractText(downloaded.buffer, mime, fileName);
 
     // FIX 6: Every upload previously created a new row with isMaster: true without
     // clearing the previous master, leaving multiple rows all claiming to be master.
