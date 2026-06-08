@@ -5,6 +5,7 @@ import { CareerJobSource, JobSourceStatus, NormalizedJobListing } from './job-so
 import { CareerJobUpsertService } from './career-job-upsert.service';
 import {
   formatSalaryInr,
+  formatUpsertError,
   normalizeContractType,
   parseExperienceRange,
 } from './job-source.utils';
@@ -87,8 +88,8 @@ export class AdzunaJobSource implements CareerJobSource {
           try {
             await this.upsert.upsert(userId, this.id, this.normalize(job));
             stored++;
-          } catch (e: any) {
-            this.logger.warn(`Skipped Adzuna job ${job.id}: ${e.message}`);
+          } catch (e: unknown) {
+            this.logger.warn(`Skipped Adzuna job ${job.id}: ${formatUpsertError(e)}`);
           }
         }
       } catch (e: any) {
@@ -110,10 +111,10 @@ export class AdzunaJobSource implements CareerJobSource {
     if (job.contract_type) tags.push(job.contract_type);
 
     return {
-      externalId: job.id,
-      title: job.title,
-      company: job.company.display_name,
-      location: job.location.display_name,
+      externalId: String(job.id),
+      title: job.title?.trim() || 'Untitled role',
+      company: job.company?.display_name?.trim() || 'Unknown company',
+      location: job.location?.display_name ?? null,
       city: job.location?.area?.[1] ?? job.location?.display_name ?? null,
       description,
       salaryMin,

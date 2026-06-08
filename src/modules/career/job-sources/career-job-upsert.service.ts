@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { NormalizedJobListing } from './job-source.types';
 import {
+  clipField,
   extractSkillsFromDescription,
   formatSalaryInr,
   normalizeContractType,
@@ -14,6 +15,11 @@ export class CareerJobUpsertService {
   constructor(private readonly prisma: PrismaService) {}
 
   async upsert(userId: number, source: string, job: NormalizedJobListing): Promise<void> {
+    const externalId = String(job.externalId ?? '').trim();
+    if (!externalId) {
+      throw new Error('Missing externalId');
+    }
+
     const description = (job.description ?? '').slice(0, 3000);
     const skills = job.requiredSkills?.length
       ? job.requiredSkills
@@ -22,49 +28,46 @@ export class CareerJobUpsertService {
     const salaryMin = job.salaryMin ?? null;
     const salaryMax = job.salaryMax ?? null;
 
-    await this.prisma.careerJob.upsert({
-      where: {
-        userId_externalId: { userId, externalId: job.externalId },
-      },
-      create: {
+    const shared = {
+      title: job.title?.trim() || 'Untitled role',
+      company: job.company?.trim() || 'Unknown company',
+      location: job.location ?? null,
+      city: clipField(job.city, 80),
+      salaryMin,
+      salaryMax,
+      salaryText: job.salaryText ?? formatSalaryInr(salaryMin, salaryMax),
+      jobType: clipField(normalizeContractType(job.jobType), 30),
+      description,
+      requiredSkills: skills,
+      minExperience: job.minExperience ?? expRange.min ?? null,
+      experienceMax: job.experienceMax ?? expRange.max ?? null,
+      tags: job.tags ?? [],
+      applyUrl: job.applyUrl ?? null,
+      postedAt: job.postedAt ?? null,
+      expiresAt: thirtyDaysFromNow(),
+      industry: clipField(job.industry, 60),
+      isActive: true,
+    };
+
+    const existing = await this.prisma.careerJob.findFirst({
+      where: { userId, externalId },
+      select: { id: true },
+    });
+
+    if (existing) {
+      await this.prisma.careerJob.update({
+        where: { id: existing.id },
+        data: shared,
+      });
+      return;
+    }
+
+    await this.prisma.careerJob.create({
+      data: {
+        ...shared,
         userId,
-        title: job.title,
-        company: job.company,
-        location: job.location,
-        city: job.city,
-        salaryMin,
-        salaryMax,
-        salaryText: job.salaryText ?? formatSalaryInr(salaryMin, salaryMax),
-        jobType: normalizeContractType(job.jobType),
-        description,
-        requiredSkills: skills,
-        minExperience: job.minExperience ?? expRange.min ?? null,
-        experienceMax: job.experienceMax ?? expRange.max ?? null,
-        tags: job.tags ?? [],
-        applyUrl: job.applyUrl,
-        postedAt: job.postedAt,
-        expiresAt: thirtyDaysFromNow(),
-        industry: job.industry,
         source,
-        externalId: job.externalId,
-        isActive: true,
-      },
-      update: {
-        title: job.title,
-        company: job.company,
-        location: job.location,
-        city: job.city,
-        salaryMin,
-        salaryMax,
-        salaryText: job.salaryText ?? formatSalaryInr(salaryMin, salaryMax),
-        description,
-        requiredSkills: skills,
-        minExperience: job.minExperience ?? expRange.min ?? undefined,
-        experienceMax: job.experienceMax ?? expRange.max ?? undefined,
-        tags: job.tags ?? [],
-        applyUrl: job.applyUrl,
-        expiresAt: thirtyDaysFromNow(),
-        isActive: true,
+        externalId,
       },
     });
   }

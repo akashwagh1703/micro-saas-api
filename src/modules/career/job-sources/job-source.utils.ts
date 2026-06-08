@@ -57,5 +57,20 @@ export function thirtyDaysFromNow(): Date {
   return d;
 }
 
+/** Truncate to fit PostgreSQL varchar limits on career_jobs. */
+export function clipField(value: string | null | undefined, maxLen: number): string | null {
+  if (!value) return null;
+  return value.length > maxLen ? value.slice(0, maxLen) : value;
+}
+
+export function formatUpsertError(error: unknown): string {
+  if (error instanceof Error) {
+    const meta =
+      'meta' in error && error.meta ? ` meta=${JSON.stringify(error.meta)}` : '';
+    return `${error.message || error.name}${meta}`.trim();
+  }
+  return String(error);
+}
+
 /** External job sources whose listings expire on refresh cycles. */
 export const EXTERNAL_JOB_SOURCES = ['adzuna', 'naukri', 'linkedin'] as const;
