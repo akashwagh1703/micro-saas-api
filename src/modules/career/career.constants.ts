@@ -14,6 +14,7 @@ export const CAREER_MAX_INBOUND_CHARS = 4000;
 export const CAREER_APPLICATION_STATUSES = [
   'saved',
   'applied',
+  'auto_apply_queued',
   'interview',
   'rejected',
   'offer',
@@ -49,11 +50,39 @@ export const CAREER_COMMANDS = {
   START_DIGEST: ['start digest', 'subscribe digest'],
   HELP: ['help', 'commands', 'menu'],
   UPLOAD_RESUME: ['upload resume', 'update resume', 'new resume'],
+  RESET_PROFILE: ['reset profile', 'start over', 'restart profile', 'start again'],
+  DELETE_MY_DATA: ['delete my data', 'erase my data', 'delete profile', 'remove my data'],
+  ENABLE_AUTO_APPLY: ['enable auto apply', 'auto apply on', 'turn on auto apply'],
+  DISABLE_AUTO_APPLY: ['disable auto apply', 'auto apply off', 'turn off auto apply'],
+  AUTO_APPLY_STATUS: ['auto apply status'],
+  SALARY_BENCHMARK: ['salary benchmark', 'salary check', 'market salary', 'salary range'],
+  SCHEDULE_INTERVIEW: ['schedule interview', 'book interview', 'interview slot'],
 } as const;
+
+/** WhatsApp reply button ids → titles (max 20 chars). */
+export const CAREER_WORK_MODE_BUTTONS = [
+  { id: 'work_remote', title: 'Remote' },
+  { id: 'work_hybrid', title: 'Hybrid' },
+  { id: 'work_onsite', title: 'Onsite' },
+] as const;
+
+export function buildJobActionButtons(count: number): Array<{ id: string; title: string }> {
+  const buttons: Array<{ id: string; title: string }> = [];
+  for (let i = 1; i <= Math.min(count, 3); i++) {
+    buttons.push({ id: `apply_${i}`, title: `Apply #${i}` });
+  }
+  if (buttons.length < 3 && count >= 1) {
+    buttons.push({ id: 'resume_1', title: 'Resume #1' });
+  }
+  return buttons.slice(0, 3);
+}
 
 export const CAREER_RESUME_MIME = [
   'application/pdf',
   'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  'image/jpeg',
+  'image/png',
+  'image/webp',
 ];
 
 export const CAREER_FUTURE_MODULES = [

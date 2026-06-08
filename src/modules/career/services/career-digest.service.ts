@@ -4,6 +4,7 @@ import { PrismaService } from '../../../prisma/prisma.service';
 import { CareerMatchingService } from './career-matching.service';
 import { CareerJobService } from './career-job.service';
 import { InboxService } from '../../inbox/inbox.service';
+import { buildJobActionButtons, CAREER_BOT_MESSAGE_SOURCE } from '../career.constants';
 
 export interface DigestBatchResult {
   sent: number;
@@ -128,6 +129,17 @@ export class CareerDigestService {
           matchCount: matches.length,
         });
         return false;
+      }
+
+      const jobButtons = buildJobActionButtons(top.length);
+      if (jobButtons.length > 0) {
+        await this.inbox.sendInteractiveButtons(
+          profile.userId,
+          conversation.id,
+          'Quick actions for today\'s top matches:',
+          jobButtons,
+          { source: CAREER_BOT_MESSAGE_SOURCE },
+        );
       }
 
       await this.recordNotification(profile, 'sent', {

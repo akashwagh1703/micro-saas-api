@@ -49,6 +49,7 @@ model User {
   careerApplications  CareerApplication[]
   careerCoverLetters  CareerCoverLetter[]
   careerNotifications CareerNotification[]
+  careerAuditLogs     CareerAuditLog[]
 
   @@map("users")
 }
@@ -345,6 +346,9 @@ model CareerProfile {
   isComplete         Boolean   @default(false) @map("is_complete")
   masterResumeId     Int?      @map("master_resume_id")
   digestOptOut       Boolean   @default(false) @map("digest_opt_out")
+  autoApplyConsent   Boolean   @default(false) @map("auto_apply_consent")
+  autoApplyConsentAt DateTime? @map("auto_apply_consent_at")
+  interviewPreferences Json?   @map("interview_preferences")
   createdAt          DateTime? @default(now()) @map("created_at")
   updatedAt          DateTime? @updatedAt @map("updated_at")
 
@@ -516,4 +520,22 @@ model CareerNotification {
   @@index([userId, type, status])
   @@index([scheduledAt, status])
   @@map("career_notifications")
+}
+
+model CareerAuditLog {
+  id            Int       @id @default(autoincrement())
+  userId        Int       @map("user_id")
+  profileId     Int?      @map("profile_id")
+  applicationId Int?      @map("application_id")
+  action        String    @db.VarChar(60)
+  actorType     String    @map("actor_type") @db.VarChar(20)
+  actorLabel    String?   @map("actor_label") @db.VarChar(120)
+  details       Json?
+  createdAt     DateTime? @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@index([userId, action])
+  @@map("career_audit_logs")
 }

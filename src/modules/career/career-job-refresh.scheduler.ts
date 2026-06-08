@@ -1,4 +1,5 @@
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CareerJobFetcherService } from './services/career-job-fetcher.service';
 
@@ -31,11 +32,17 @@ export class CareerJobRefreshScheduler implements OnModuleInit {
   private readonly logger = new Logger(CareerJobRefreshScheduler.name);
 
   constructor(
+    private readonly config: ConfigService,
     private readonly prisma: PrismaService,
     private readonly fetcher: CareerJobFetcherService,
   ) {}
 
   onModuleInit(): void {
+    if ((this.config.get<string>('QUEUE_DRIVER') ?? 'pgboss') === 'pgboss') {
+      this.logger.log('Job refresh uses pg-boss schedule (CareerPgBossScheduler)');
+      return;
+    }
+
     if (!this.fetcher.isEnabled()) {
       this.logger.log('Job refresh scheduler inactive — Adzuna credentials not set');
       return;

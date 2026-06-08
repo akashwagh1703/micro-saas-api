@@ -2,12 +2,17 @@ import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { QueueService } from '../queue/queue.service';
 import {
+  QUEUE_CAREER_DIGEST,
+  QUEUE_CAREER_JOB_REFRESH,
+  QUEUE_CAREER_TASK,
   QUEUE_EXECUTE_WORKFLOW,
   QUEUE_PROCESS_INCOMING,
   QUEUE_SEND_MESSAGE,
   SendMessageJob,
+  CareerTaskJob,
 } from '../queue/queue.constants';
 import { IncomingMessageProcessor } from './incoming-message.processor';
+import { CareerTaskProcessor } from './career-task.processor';
 import { WorkflowExecutionService } from '../workflows/workflow-execution.service';
 import { InboxService } from '../inbox/inbox.service';
 
@@ -22,6 +27,7 @@ export class QueueWorker implements OnModuleInit {
     private readonly incoming: IncomingMessageProcessor,
     private readonly execution: WorkflowExecutionService,
     private readonly inbox: InboxService,
+    private readonly careerTasks: CareerTaskProcessor,
   ) {}
 
   async onModuleInit(): Promise<void> {
@@ -60,6 +66,10 @@ export class QueueWorker implements OnModuleInit {
         );
         throw e;
       }
+    });
+
+    await this.queue.work<CareerTaskJob>(QUEUE_CAREER_TASK, async (data) => {
+      await this.careerTasks.handle(data);
     });
 
     this.logger.log('Queue workers registered.');

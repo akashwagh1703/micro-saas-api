@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   NotFoundException,
   Param,
@@ -20,8 +21,11 @@ import { CareerJobRefreshScheduler } from './career-job-refresh.scheduler';
 import { CareerDigestService } from './services/career-digest.service';
 import { CareerApplicationService } from './services/career-application.service';
 import { CareerStorageService } from './services/career-storage.service';
+import { CareerAiUsageService } from './services/career-ai-usage.service';
+import { CareerAuditService } from './services/career-audit.service';
+import { CareerPrivacyService } from './services/career-privacy.service';
 import { CAREER_APPLICATION_STATUSES } from './career.constants';
-import { IsIn, IsOptional, IsString } from 'class-validator';
+import { IsArray, IsIn, IsOptional, IsString } from 'class-validator';
 
 class UpdateApplicationStatusDto {
   @IsIn(CAREER_APPLICATION_STATUSES as unknown as string[])
@@ -65,6 +69,50 @@ class CreateJobDto {
   description?: string;
 }
 
+class UpdateCareerProfileDto {
+  @IsOptional()
+  @IsString()
+  full_name?: string;
+
+  @IsOptional()
+  @IsString()
+  email?: string;
+
+  @IsOptional()
+  @IsString()
+  current_location?: string;
+
+  @IsOptional()
+  @IsArray()
+  preferred_locations?: string[];
+
+  @IsOptional()
+  @IsString()
+  current_salary?: string;
+
+  @IsOptional()
+  @IsString()
+  expected_salary?: string;
+
+  @IsOptional()
+  @IsString()
+  notice_period?: string;
+
+  @IsOptional()
+  @IsString()
+  work_preference?: string;
+
+  @IsOptional()
+  @IsArray()
+  preferred_roles?: string[];
+
+  @IsOptional()
+  auto_apply_consent?: boolean;
+
+  @IsOptional()
+  interview_preferences?: Record<string, unknown>;
+}
+
 @Controller('career')
 @UseGuards(TokenAuthGuard)
 export class CareerController {
@@ -76,7 +124,15 @@ export class CareerController {
     private readonly digest: CareerDigestService,
     private readonly applications: CareerApplicationService,
     private readonly storage: CareerStorageService,
+    private readonly aiUsage: CareerAiUsageService,
+    private readonly audit: CareerAuditService,
+    private readonly privacy: CareerPrivacyService,
   ) {}
+
+  @Get('storage/status')
+  async storageStatus() {
+    return this.storage.getStorageStatus();
+  }
 
   @Get('analytics')
   async analytics(@CurrentUser('id') userId: number) {
@@ -108,7 +164,23 @@ export class CareerController {
       applications,
       notifications,
       applications_by_status: byStatus,
+      ai_usage: await this.aiUsage.getMonthlyStats(userId),
     };
+  }
+
+  @Get('ai-usage')
+  async aiUsageStats(@CurrentUser('id') userId: number) {
+    return this.aiUsage.getMonthlyStats(userId);
+  }
+
+  @Get('audit-log')
+  async auditLog(@CurrentUser('id') userId: number, @Query('page') page = '1') {
+    return this.audit.listForUser(userId, parseInt(page, 10) || 1);
+  }
+
+  @Get('job-sources')
+  listJobSources() {
+    return { sources: this.fetcher.listSources() };
   }
 
   @Get('profiles')
@@ -134,10 +206,85 @@ export class CareerController {
       where: { id, userId },
       include: {
         contact: true,
-        resumes: { orderBy: { createdAt: 'desc' }, take: 5 },
+        resumes: {
+          orderBy: { createdAt: 'desc' },
+          take: 5,
+          include: {
+            versions: { orderBy: { createdAt: 'desc' }, take: 10, include: { job: true } },
+          },
+        },
         jobMatches: { include: { job: true }, orderBy: { score: 'desc' }, take: 20 },
         applications: { include: { job: true } },
+        coverLetters: { orderBy: { createdAt: 'desc' }, take: 10, include: { job: true } },
       },
+    });
+  }
+
+  @Patch('profiles/:id')
+  async updateProfile(
+    @CurrentUser('id') userId: number,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: UpdateCareerProfileDto,
+  ) {
+    const existing = await this.prisma.careerProfile.findFirst({ where: { id, userId } });
+    if (!existing) {
+      throw new NotFoundException('Profile not found');
+    }
+
+    return this.prisma.careerProfile.update({
+      where: { id },
+      data: {
+        fullName: dto.full_name,
+        email: dto.email,
+        currentLocation: dto.current_location,
+        preferredLocations: dto.preferred_locations as any,
+        currentSalary: dto.current_salary,
+        expectedSalary: dto.expected_salary,
+        noticePeriod: dto.notice_period,
+        workPreference: dto.work_preference,
+        preferredRoles: dto.preferred_roles as any,
+        ...(dto.auto_apply_consent !== undefined
+          ? {
+              autoApplyConsent: dto.auto_apply_consent,
+              autoApplyConsentAt: dto.auto_apply_consent ? new Date() : null,
+            }
+          : {}),
+        ...(dto.interview_preferences !== undefined
+          ? { interviewPreferences: dto.interview_preferences as any }
+          : {}),
+      },
+    });
+  }
+
+  @Delete('profiles/:id')
+  async deleteProfile(
+    @CurrentUser('id') userId: number,
+    @CurrentUser('email') userEmail: string,
+    @Param('id', ParseIntPipe) id: number,
+  ) {
+    const result = await this.privacy.deleteProfile(userId, id, {
+      type: 'operator',
+      label: userEmail,
+    });
+    if (!result) {
+      throw new NotFoundException('Profile not found');
+    }
+    return result;
+  }
+
+  @Get('cover-letters')
+  async listCoverLetters(
+    @CurrentUser('id') userId: number,
+    @Query('profile_id') profileId?: string,
+  ) {
+    return this.prisma.careerCoverLetter.findMany({
+      where: {
+        userId,
+        ...(profileId ? { profileId: parseInt(profileId, 10) } : {}),
+      },
+      include: { job: true, profile: { include: { contact: true } } },
+      orderBy: { createdAt: 'desc' },
+      take: 50,
     });
   }
 
@@ -163,11 +310,16 @@ export class CareerController {
   }
 
   @Post('jobs/fetch')
-  async fetchJobs(@CurrentUser('id') userId: number, @Body() dto: FetchJobsDto) {
+  async fetchJobs(
+    @CurrentUser('id') userId: number,
+    @Body() dto: FetchJobsDto,
+    @Query('source') source?: string,
+  ) {
     if (!this.fetcher.isEnabled()) {
       return {
-        message: 'Job fetcher not configured. Set ADZUNA_APP_ID and ADZUNA_APP_KEY in environment.',
+        message: 'No job sources configured. Set ADZUNA_APP_ID/KEY or Naukri/LinkedIn API URLs.',
         count: 0,
+        sources: this.fetcher.listSources(),
       };
     }
     const count = await this.fetcher.fetchAndStore(
@@ -175,8 +327,13 @@ export class CareerController {
       dto.keyword,
       dto.location ?? 'india',
       3,
+      source,
     );
-    return { message: `Fetched and stored ${count} jobs for keyword "${dto.keyword}"`, count };
+    return {
+      message: `Fetched and stored ${count} jobs for keyword "${dto.keyword}"`,
+      count,
+      sources: this.fetcher.listSources(),
+    };
   }
 
   @Post('jobs/refresh')
@@ -206,6 +363,7 @@ export class CareerController {
   @Patch('applications/:id/status')
   async updateApplication(
     @CurrentUser('id') userId: number,
+    @CurrentUser('email') userEmail: string,
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: UpdateApplicationStatusDto,
   ) {
@@ -213,7 +371,10 @@ export class CareerController {
     if (!app) {
       return { error: 'Not found' };
     }
-    return this.applications.updateStatus(id, dto.status as any, dto.notes);
+    return this.applications.updateStatus(id, dto.status as any, dto.notes, {
+      userId,
+      label: userEmail,
+    });
   }
 
   @Get('matches')

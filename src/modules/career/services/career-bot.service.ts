@@ -1,10 +1,10 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Inject } from '@nestjs/common';
 import { Contact, Message, Prisma } from '@prisma/client';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { WhatsappService } from '../../whatsapp/whatsapp.service';
 import { WhatsAppApiService } from '../../integrations/whatsapp-api.service';
 import { InboxService } from '../../inbox/inbox.service';
-import { CAREER_COMMANDS, CAREER_MAX_INBOUND_CHARS, CAREER_BOT_MESSAGE_SOURCE } from '../career.constants';
+import { CAREER_COMMANDS, CAREER_MAX_INBOUND_CHARS, CAREER_BOT_MESSAGE_SOURCE, CAREER_WORK_MODE_BUTTONS, buildJobActionButtons } from '../career.constants';
 import { CareerProfileService } from './career-profile.service';
 import { CareerJobService } from './career-job.service';
 import { CareerMatchingService, JobMatchResult } from './career-matching.service';
@@ -12,7 +12,9 @@ import { CareerAiService, ConvTurn } from './career-ai.service';
 import { CareerResumeParserService } from './career-resume-parser.service';
 import { CareerStorageService } from './career-storage.service';
 import { CareerApplicationService } from './career-application.service';
+import { CareerPrivacyService } from './career-privacy.service';
 import { CareerProfile } from '@prisma/client';
+import { JOB_DISPATCHER, JobDispatcher } from '../../queue/job-dispatcher';
 
 // WhatsApp rejects messages over 4096 chars. We use 3800 to leave a safe buffer.
 const WA_MAX_CHARS = 3800;
@@ -38,17 +40,22 @@ export class CareerBotService {
     private readonly resumeParser: CareerResumeParserService,
     private readonly storage: CareerStorageService,
     private readonly applications: CareerApplicationService,
+    private readonly privacy: CareerPrivacyService,
+    @Inject(JOB_DISPATCHER) private readonly dispatcher: JobDispatcher,
   ) {}
 
   async handleIncomingMessage(message: Message & { contact: Contact }): Promise<boolean> {
     const raw = (message.metadata as { raw?: Record<string, unknown> })?.raw;
-    const isDocument = raw && String((raw as any).type) === 'document';
+    const msgType = raw ? String((raw as { type?: string }).type ?? '') : '';
 
     const profile = await this.profiles.getOrCreate(message.userId, message.contact);
     await this.jobs.ensureSampleJobs(message.userId);
 
-    if (isDocument && this.shouldAcceptResumeUpload(profile)) {
-      await this.handleResumeDocument(message, profile);
+    const isResumeMedia =
+      (msgType === 'document' || msgType === 'image') && this.shouldAcceptResumeUpload(profile);
+
+    if (isResumeMedia) {
+      await this.handleResumeMedia(message, profile);
       return true;
     }
 
@@ -81,6 +88,16 @@ export class CareerBotService {
       return true;
     }
 
+    if (this.matchesCommand(lower, CAREER_COMMANDS.RESET_PROFILE)) {
+      await this.cmdResetProfile(message, profile);
+      return true;
+    }
+
+    if (this.matchesCommand(lower, CAREER_COMMANDS.DELETE_MY_DATA)) {
+      await this.cmdDeleteMyData(message, profile);
+      return true;
+    }
+
     if (!profile.isComplete) {
       await this.handleOnboarding(message, profile, text);
       return true;
@@ -90,7 +107,7 @@ export class CareerBotService {
       await this.setReuploadPending(profile.id, true);
       await this.reply(
         message,
-        'Please upload your updated resume as a *PDF* or *DOCX* attachment.',
+        'Please upload your updated resume as a *PDF*, *DOCX*, or a clear *photo* (JPEG/PNG).',
       );
       return true;
     }
@@ -182,6 +199,33 @@ export class CareerBotService {
       await this.reply(message, prep);
       return true;
     }
+    if (this.matchesCommand(lower, CAREER_COMMANDS.SALARY_BENCHMARK)) {
+      const benchmark = await this.safeAiCall(
+        message.userId,
+        () =>
+          this.careerAi.salaryBenchmark(message.userId, this.profiles.profileSnapshot(profile)),
+        'Salary benchmark unavailable right now. Try again later.',
+        'salary_benchmark',
+      );
+      await this.reply(message, benchmark);
+      return true;
+    }
+    if (this.matchesCommand(lower, CAREER_COMMANDS.SCHEDULE_INTERVIEW)) {
+      await this.cmdScheduleInterview(message, profile, text);
+      return true;
+    }
+    if (this.matchesCommand(lower, CAREER_COMMANDS.ENABLE_AUTO_APPLY)) {
+      await this.cmdSetAutoApply(message, profile, true);
+      return true;
+    }
+    if (this.matchesCommand(lower, CAREER_COMMANDS.DISABLE_AUTO_APPLY)) {
+      await this.cmdSetAutoApply(message, profile, false);
+      return true;
+    }
+    if (this.matchesCommand(lower, CAREER_COMMANDS.AUTO_APPLY_STATUS)) {
+      await this.cmdAutoApplyStatus(message, profile);
+      return true;
+    }
     if (this.matchesCommand(lower, CAREER_COMMANDS.VIEW_JOBS) || this.matchesCommand(lower, CAREER_COMMANDS.HELP)) {
       if (this.matchesCommand(lower, CAREER_COMMANDS.HELP)) {
         await this.reply(message, this.helpText());
@@ -233,80 +277,51 @@ export class CareerBotService {
     }
 
     // FIX 2: The original steps map had questions and fields swapped.
-    // follow_up_location was asking "preferred location" but saving to currentLocation.
-    // follow_up_preferred_location was asking "current salary" but saving to preferredLocations.
-    // Both are now corrected so every question exactly matches the field it writes.
-    const steps: Record<string, { next: string; field: keyof CareerProfile; question: string }> = {
-      follow_up_location: {
-        next: 'follow_up_preferred_location',
-        field: 'currentLocation',
-        question: 'What is your current city/location? (e.g. Mumbai, Pune)',
-      },
-      follow_up_preferred_location: {
-        next: 'follow_up_current_salary',
-        field: 'preferredLocations',
-        question: 'Where would you prefer to work? (city or "Remote", comma-separated for multiple)',
-      },
-      follow_up_current_salary: {
-        next: 'follow_up_expected_salary',
-        field: 'currentSalary',
-        question: 'What is your current salary? (e.g. 8 LPA or "Fresher")',
-      },
-      follow_up_expected_salary: {
-        next: 'follow_up_notice_period',
-        field: 'expectedSalary',
-        question: 'What is your expected salary? (e.g. 12 LPA or "Negotiable")',
-      },
-      follow_up_notice_period: {
-        next: 'follow_up_job_type',
-        field: 'noticePeriod',
-        question: 'What is your notice period? (e.g. 30 days, 2 months, Immediate)',
-      },
-      follow_up_job_type: {
-        next: 'follow_up_roles',
-        field: 'workPreference',
-        question: 'Preferred work mode? Reply: *Remote*, *Hybrid*, or *Onsite*',
-      },
-      follow_up_roles: {
-        next: 'complete',
-        field: 'preferredRoles',
-        question:
-          'What roles are you targeting? (comma-separated, e.g. React Developer, Full Stack Engineer)',
-      },
-    };
+    const steps = this.getOnboardingSteps();
 
-    const step = steps[profile.onboardingStep];
+    // Skip questions already answered from resume AI parse — then prompt the next empty step.
+    let current = profile;
+    let currentStepKey = profile.onboardingStep;
+    while (true) {
+      const currentStep = steps[currentStepKey];
+      if (!currentStep) {
+        break;
+      }
+      if (!this.isFieldAlreadyFilled(current, currentStep.field)) {
+        break;
+      }
+      current = await this.profiles.updateOnboarding(current.id, currentStep.next, {});
+      if (currentStep.next === 'complete') {
+        await this.finishOnboarding(message, current);
+        return;
+      }
+      currentStepKey = currentStep.next;
+    }
 
-    // FIX 4: The original fallback just said "Processing your profile…" with no
-    // state change, permanently trapping the user. Now we log it and recover.
+    const step = steps[current.onboardingStep];
     if (!step) {
       this.logger.warn(
-        `Unknown onboarding step "${profile.onboardingStep}" for profile ${profile.id} — recovering`,
+        `Unknown onboarding step "${current.onboardingStep}" for profile ${current.id} — recovering`,
       );
-      await this.profiles.updateOnboarding(profile.id, 'follow_up_location', {});
+      await this.profiles.updateOnboarding(current.id, 'follow_up_location', {});
       await this.reply(message, "Let's continue. What is your current city/location?");
       return;
     }
 
-    // PHASE 5 FIX 1: Skip questions whose answers were already extracted from the resume.
-    // If the profile field is already populated, silently advance to the next step
-    // and recurse so the next question (if also filled) is also skipped automatically.
-    if (this.isFieldAlreadyFilled(profile, step.field)) {
-      const advanced = await this.profiles.updateOnboarding(profile.id, step.next, {});
-      if (step.next === 'complete') {
-        await this.finishOnboarding(message, advanced);
-        return;
-      }
-      // Recurse with the updated profile to check the next step too.
-      await this.handleOnboarding(message, advanced, text);
+    if (current.onboardingStep !== profile.onboardingStep) {
+      await this.promptOnboardingStep(message, current.onboardingStep);
       return;
     }
 
     // PHASE 5 FIX 2: Validate the user's answer before saving.
-    const validationError = this.validateOnboardingAnswer(profile.onboardingStep, text);
+    const validationError = this.validateOnboardingAnswer(current.onboardingStep, text);
     if (validationError) {
-      await this.reply(message, validationError);
-      return; // Re-ask the same question by not advancing the step.
+      if (current.onboardingStep === 'follow_up_job_type') {
+        await this.replyWorkModePrompt(message, validationError);
+      } else {
+        await this.reply(message, validationError);
+      }
+      return;
     }
 
     const data: Prisma.CareerProfileUpdateInput = {};
@@ -316,7 +331,7 @@ export class CareerBotService {
       data[step.field] = text;
     }
 
-    const updated = await this.profiles.updateOnboarding(profile.id, step.next, data);
+    const updated = await this.profiles.updateOnboarding(current.id, step.next, data);
 
     if (step.next === 'complete') {
       await this.finishOnboarding(message, updated);
@@ -324,7 +339,9 @@ export class CareerBotService {
     }
 
     const nextStep = steps[step.next];
-    if (nextStep?.question) {
+    if (step.next === 'follow_up_job_type') {
+      await this.replyWorkModePrompt(message);
+    } else if (nextStep?.question) {
       await this.reply(message, nextStep.question);
     }
   }
@@ -345,25 +362,66 @@ export class CareerBotService {
     );
     await this.reply(
       message,
-      `Your Career Profile is ready! ✅\n\nI found ${matches.length} matching jobs.\n\nReply *VIEW JOBS* to see them, or *FIND JOBS react* to search.\n${this.helpText()}`,
+      `Your Career Profile is ready! ✅\n\nI found ${matches.length} matching jobs.\n\nReply *VIEW JOBS* to see them, or *FIND JOBS python* to search by keyword.\n${this.helpText()}`,
     );
   }
 
   // ─── Resume document upload ──────────────────────────────────────────────────
 
-  private async handleResumeDocument(
+  private async handleResumeMedia(
     message: Message & { contact: Contact },
     profile: CareerProfile,
   ): Promise<void> {
     const reupload = await this.isReuploadPending(profile.id);
 
+    const raw = (message.metadata as { raw?: any })?.raw;
+    const media = this.getResumeMedia(raw);
+    if (!media?.id) {
+      await this.reply(
+        message,
+        'Could not read the file. Please upload a *PDF*, *DOCX*, or a clear *photo* of your resume.',
+      );
+      return;
+    }
+
     await this.reply(message, 'Thanks! Reading your resume… ⏳');
 
+    await this.dispatcher.enqueueCareerTask({
+      type: 'parse_resume',
+      messageId: message.id,
+      profileId: profile.id,
+      userId: message.userId,
+      reupload,
+    });
+  }
+
+  /** Background worker: download, parse, and reply for resume uploads. */
+  async runParseResumeTask(messageId: number, reupload: boolean): Promise<void> {
+    const message = await this.loadIncomingMessage(messageId);
+    if (!message) {
+      return;
+    }
+    const profileRecord = await this.prisma.careerProfile.findFirst({
+      where: { contactId: message.contactId, userId: message.userId },
+    });
+    if (!profileRecord) {
+      return;
+    }
+    await this.processResumeUpload(message, profileRecord, reupload);
+  }
+
+  private async processResumeUpload(
+    message: Message & { contact: Contact },
+    profile: CareerProfile,
+    reupload: boolean,
+  ): Promise<void> {
     const raw = (message.metadata as { raw?: any })?.raw;
-    const doc = raw?.document;
-    const mediaId = doc?.id;
-    if (!mediaId) {
-      await this.reply(message, 'Could not read the file. Please upload PDF or DOCX again.');
+    const media = this.getResumeMedia(raw);
+    if (!media?.id) {
+      await this.reply(
+        message,
+        'Could not read the file. Please upload a *PDF*, *DOCX*, or a clear *photo* of your resume.',
+      );
       return;
     }
 
@@ -373,16 +431,16 @@ export class CareerBotService {
       return;
     }
 
-    const downloaded = await this.whatsAppApi.downloadMedia(creds.accessToken ?? '', mediaId);
+    const downloaded = await this.whatsAppApi.downloadMedia(creds.accessToken ?? '', media.id);
     if (!downloaded.success || !downloaded.buffer) {
       await this.reply(message, 'Failed to download resume. Please try again.');
       return;
     }
 
-    const mime = doc.mime_type ?? 'application/pdf';
-    const fileName = doc.filename ?? 'resume.pdf';
+    const mime = media.mime ?? 'application/pdf';
+    const fileName = media.fileName ?? 'resume.pdf';
 
-    const { text: extracted, error: extractError } = await this.resumeParser.extractText(
+    const { text: extracted, error: extractError, ocrUsed } = await this.resumeParser.extractText(
       downloaded.buffer,
       mime,
       fileName,
@@ -391,7 +449,7 @@ export class CareerBotService {
     if (extractError === 'too_large') {
       await this.reply(
         message,
-        'That file is too large (max 10 MB). Please upload a smaller *PDF* or *DOCX* resume.',
+        'That file is too large (max 10 MB). Please upload a smaller *PDF*, *DOCX*, or image.',
       );
       return;
     }
@@ -399,7 +457,23 @@ export class CareerBotService {
     if (extractError === 'unsupported_format') {
       await this.reply(
         message,
-        'That file format is not supported. Please upload your resume as a *PDF* or *DOCX* attachment.',
+        'That file format is not supported. Upload *PDF*, *DOCX*, or a clear *JPEG/PNG photo* of your resume.',
+      );
+      return;
+    }
+
+    if (extractError === 'scanned_pdf') {
+      await this.reply(
+        message,
+        'This PDF looks scanned (no readable text). Please send a *clear photo* of each page as JPEG/PNG, or a text-based PDF.',
+      );
+      return;
+    }
+
+    if (extractError === 'ocr_failed') {
+      await this.reply(
+        message,
+        'Could not read text from that image. Try a clearer, well-lit photo of your resume.',
       );
       return;
     }
@@ -453,10 +527,18 @@ export class CareerBotService {
     if (reupload && profile.isComplete) {
       await this.clearReuploadPending(profile.id);
       if (parsed) {
-        await this.profiles.applyParsedResume(profile.id, parsed);
+        const updated = await this.profiles.applyParsedResumeUpdate(profile.id, parsed);
+        const jobList = await this.jobs.listActive(message.userId);
+        const matches = this.matching.matchProfileToJobs(updated, jobList);
+        await this.matching.persistMatches(
+          message.userId,
+          updated.id,
+          message.contactId,
+          matches,
+        );
         await this.reply(
           message,
-          'Resume updated! ✅ Your skills and experience have been refreshed from the new file.',
+          `Resume updated! ✅ Profile refreshed — ${matches.length} matching jobs.\n\nReply *VIEW JOBS* to see them.`,
         );
       } else {
         await this.reply(
@@ -469,11 +551,18 @@ export class CareerBotService {
 
     if (parsed) {
       const updated = await this.profiles.applyParsedResume(profile.id, parsed);
-      await this.profiles.updateOnboarding(profile.id, 'follow_up_location', {});
-      await this.reply(
-        message,
-        `Resume parsed! ✅\n\nHi ${updated.fullName ?? 'there'}, I extracted your skills and experience.\n\nWhat is your current city/location?`,
-      );
+      if (updated.onboardingStep === 'complete') {
+        await this.finishOnboarding(message, updated);
+        return;
+      }
+      const intro = `Resume parsed! ✅\n\nHi ${updated.fullName ?? 'there'},`;
+      if (updated.onboardingStep === 'follow_up_job_type') {
+        await this.reply(message, `${intro} one quick question:`);
+        await this.replyWorkModePrompt(message);
+        return;
+      }
+      const question = this.getOnboardingSteps()[updated.onboardingStep]?.question;
+      await this.reply(message, question ? `${intro}\n\n${question}` : intro);
       return;
     }
 
@@ -528,6 +617,7 @@ export class CareerBotService {
       'Reply *APPLY 1* to save & get apply link, or *RESUME 2* to tailor your CV for job #2.',
     );
     await this.reply(message, lines.join('\n'));
+    await this.sendJobActionButtons(message, top.length);
   }
 
   private formatJobListing(m: JobMatchResult, index: number): string[] {
@@ -563,17 +653,28 @@ export class CareerBotService {
       return;
     }
 
+    const autoApply = profile.autoApplyConsent === true;
+
     await this.applications.markApplied(
       message.userId,
       profile.id,
       message.contactId,
       job.id,
+      autoApply,
     );
 
     const lines = [
-      `*${job.title}* @ ${job.company} — saved as applied ✅`,
+      autoApply
+        ? `*${job.title}* @ ${job.company} — queued for assisted apply ✅`
+        : `*${job.title}* @ ${job.company} — saved as applied ✅`,
       `📍 ${job.location ?? '—'} | 💰 ${job.salaryText ?? '—'}`,
     ];
+    if (autoApply) {
+      lines.push(
+        '',
+        'Your operator will assist with submission using your tailored resume. Reply *DISABLE AUTO APPLY* to opt out.',
+      );
+    }
     if (job.applyUrl) {
       lines.push('', `Apply here:\n${job.applyUrl}`);
     } else {
@@ -626,6 +727,58 @@ export class CareerBotService {
     const jobNum = index1Based ?? (await this.jobIndexInSession(profile.id, job.id)) ?? 1;
 
     await this.reply(message, `Generating tailored resume for *${job.title}* @ ${job.company}… ⏳`);
+
+    await this.dispatcher.enqueueCareerTask({
+      type: 'generate_resume',
+      messageId: message.id,
+      profileId: profile.id,
+      userId: message.userId,
+      jobIndex: jobNum,
+    });
+  }
+
+  async runGenerateResumeTask(
+    messageId: number,
+    profileId: number,
+    jobIndex?: number,
+  ): Promise<void> {
+    const message = await this.loadIncomingMessage(messageId);
+    if (!message) {
+      return;
+    }
+    const profile = await this.prisma.careerProfile.findFirst({
+      where: { id: profileId, userId: message.userId },
+    });
+    if (!profile) {
+      return;
+    }
+    await this.processGenerateResume(message, profile, jobIndex);
+  }
+
+  private async processGenerateResume(
+    message: Message & { contact: Contact },
+    profile: CareerProfile,
+    index1Based?: number,
+  ): Promise<void> {
+    let job = index1Based
+      ? await this.resolveJobByIndex(profile, message.userId, index1Based)
+      : await this.resolveJobByIndex(profile, message.userId, 1);
+
+    if (!job) {
+      const topMatch = await this.prisma.careerJobMatch.findFirst({
+        where: { profileId: profile.id },
+        orderBy: { score: 'desc' },
+        include: { job: true },
+      });
+      job = topMatch?.job ?? null;
+    }
+
+    if (!job) {
+      await this.reply(message, 'No job matches yet. Reply *FIND JOBS* or *VIEW JOBS* first.');
+      return;
+    }
+
+    const jobNum = index1Based ?? (await this.jobIndexInSession(profile.id, job.id)) ?? 1;
 
     const content = await this.safeAiCall(
       message.userId,
@@ -710,6 +863,41 @@ export class CareerBotService {
       return;
     }
 
+    await this.reply(
+      message,
+      `Generating cover letter for *${topMatch.job.title}* @ ${topMatch.job.company}… ⏳`,
+    );
+
+    await this.dispatcher.enqueueCareerTask({
+      type: 'generate_cover_letter',
+      messageId: message.id,
+      profileId: profile.id,
+      userId: message.userId,
+    });
+  }
+
+  async runGenerateCoverLetterTask(messageId: number, profileId: number): Promise<void> {
+    const message = await this.loadIncomingMessage(messageId);
+    if (!message) {
+      return;
+    }
+    const profile = await this.prisma.careerProfile.findFirst({
+      where: { id: profileId, userId: message.userId },
+    });
+    if (!profile) {
+      return;
+    }
+
+    const topMatch = await this.prisma.careerJobMatch.findFirst({
+      where: { profileId: profile.id },
+      orderBy: { score: 'desc' },
+      include: { job: true },
+    });
+    if (!topMatch?.job) {
+      await this.reply(message, 'No job matches yet. Reply FIND JOBS first.');
+      return;
+    }
+
     const content = await this.safeAiCall(
       message.userId,
       () =>
@@ -739,6 +927,15 @@ export class CareerBotService {
       message,
       `Cover letter for *${topMatch.job.title}*:\n\n${content}`,
     );
+  }
+
+  private async loadIncomingMessage(
+    messageId: number,
+  ): Promise<(Message & { contact: Contact }) | null> {
+    return this.prisma.message.findUnique({
+      where: { id: messageId },
+      include: { contact: true },
+    });
   }
 
   // ─── Conversation history helpers ───────────────────────────────────────────
@@ -923,17 +1120,250 @@ export class CareerBotService {
 
   private helpText(): string {
     return [
-      '*Commands:*',
-      '• VIEW JOBS / FIND JOBS {keyword}',
-      '• APPLY 1 — save job & get apply link',
-      '• RESUME 2 — tailor CV for job #2',
-      '• GENERATE COVER LETTER',
-      '• UPLOAD RESUME — update your CV',
-      '• SHOW APPLICATIONS',
-      '• CAREER ADVICE {question}',
-      '• PREPARE INTERVIEW',
-      '• STOP DIGEST / START DIGEST',
+      '*Try these:*',
+      '• *VIEW JOBS* — see your top matches',
+      '• *APPLY 2* — save job #2 & get apply link',
+      '• *RESUME 1* — tailored CV for job #1',
+      '',
+      '*More:*',
+      '• *FIND JOBS python* — search by keyword',
+      '• *UPLOAD RESUME* — new PDF/DOCX or photo',
+      '• *SALARY BENCHMARK* — market salary range for your role',
+      '• *SCHEDULE INTERVIEW {when}* — save preferred slot',
+      '• *ENABLE AUTO APPLY* — queue applications for operator assist',
+      '• *SHOW APPLICATIONS* — track applications',
+      '• *RESET PROFILE* — start onboarding again',
+      '• *DELETE MY DATA* — permanently erase your CareerAI profile',
+      '• *STOP DIGEST* / *START DIGEST*',
     ].join('\n');
+  }
+
+  private async cmdResetProfile(
+    message: Message & { contact: Contact },
+    profile: CareerProfile,
+  ): Promise<void> {
+    await this.profiles.resetProfile(profile.id, message.contact);
+    await this.profiles.updateOnboarding(profile.id, 'awaiting_resume', {});
+    await this.reply(
+      message,
+      'Profile reset. Let\'s start fresh! 🔄\n\nPlease upload your latest resume (PDF or DOCX).',
+    );
+  }
+
+  private async cmdDeleteMyData(
+    message: Message & { contact: Contact },
+    profile: CareerProfile,
+  ): Promise<void> {
+    const phone = message.contact.phone ?? profile.phone ?? 'unknown';
+    const result = await this.privacy.deleteProfile(message.userId, profile.id, {
+      type: 'job_seeker',
+      label: phone,
+    });
+
+    if (!result) {
+      await this.reply(message, 'No profile data found to delete.');
+      return;
+    }
+
+    await this.reply(
+      message,
+      'Your CareerAI profile, resumes, applications, and generated documents have been permanently deleted. ✅\n\nYou can message again anytime to start a new profile.',
+    );
+  }
+
+  private getResumeMedia(raw: Record<string, unknown> | undefined): {
+    id?: string;
+    mime?: string;
+    fileName?: string;
+  } | null {
+    if (!raw) return null;
+    const doc = raw.document as { id?: string; mime_type?: string; filename?: string } | undefined;
+    if (doc?.id) {
+      return { id: doc.id, mime: doc.mime_type, fileName: doc.filename };
+    }
+    const img = raw.image as { id?: string; mime_type?: string } | undefined;
+    if (img?.id) {
+      return { id: img.id, mime: img.mime_type ?? 'image/jpeg', fileName: 'resume.jpg' };
+    }
+    return null;
+  }
+
+  private async cmdSetAutoApply(
+    message: Message & { contact: Contact },
+    profile: CareerProfile,
+    enabled: boolean,
+  ): Promise<void> {
+    await this.prisma.careerProfile.update({
+      where: { id: profile.id },
+      data: {
+        autoApplyConsent: enabled,
+        autoApplyConsentAt: enabled ? new Date() : null,
+      },
+    });
+
+    if (enabled) {
+      await this.reply(
+        message,
+        'Assisted auto-apply enabled ✅\n\nWhen you reply *APPLY 1*, *APPLY 2*, etc., your application is queued for your career operator to submit on your behalf.\n\nReply *DISABLE AUTO APPLY* anytime to opt out.',
+      );
+    } else {
+      await this.reply(message, 'Auto-apply disabled. Applications will be saved for you to apply manually.');
+    }
+  }
+
+  private async cmdAutoApplyStatus(
+    message: Message & { contact: Contact },
+    profile: CareerProfile,
+  ): Promise<void> {
+    const on = profile.autoApplyConsent === true;
+    await this.reply(
+      message,
+      on
+        ? 'Assisted auto-apply is *ON* ✅\n\nReply *APPLY N* to queue a job. Reply *DISABLE AUTO APPLY* to turn off.'
+        : 'Assisted auto-apply is *OFF*.\n\nReply *ENABLE AUTO APPLY* to queue applications with your operator.',
+    );
+  }
+
+  private async cmdScheduleInterview(
+    message: Message & { contact: Contact },
+    profile: CareerProfile,
+    text: string,
+  ): Promise<void> {
+    const slot = text
+      .replace(/schedule\s+interview|book\s+interview|interview\s+slot/gi, '')
+      .trim();
+
+    if (!slot || slot.length < 3) {
+      await this.reply(
+        message,
+        'Tell me your preferred slot, e.g.\n*SCHEDULE INTERVIEW Monday 3pm* or *Tuesday 10 AM IST*',
+      );
+      return;
+    }
+
+    const preferences = {
+      requested_slot: slot,
+      requested_at: new Date().toISOString(),
+      channel: 'whatsapp',
+    };
+
+    await this.prisma.careerProfile.update({
+      where: { id: profile.id },
+      data: { interviewPreferences: preferences as Prisma.InputJsonValue },
+    });
+
+    await this.reply(
+      message,
+      `Interview preference saved ✅\n\n*${slot}*\n\nYour career operator will follow up to confirm scheduling.`,
+    );
+  }
+
+  private getOnboardingSteps(): Record<
+    string,
+    { next: string; field: keyof CareerProfile; question: string }
+  > {
+    return {
+      follow_up_location: {
+        next: 'follow_up_preferred_location',
+        field: 'currentLocation',
+        question: 'What is your current city/location? (e.g. Mumbai, Pune)',
+      },
+      follow_up_preferred_location: {
+        next: 'follow_up_current_salary',
+        field: 'preferredLocations',
+        question:
+          'Where would you prefer to work? (city or "Remote", comma-separated for multiple)',
+      },
+      follow_up_current_salary: {
+        next: 'follow_up_expected_salary',
+        field: 'currentSalary',
+        question: 'What is your current salary? (e.g. 8 LPA or "Fresher")',
+      },
+      follow_up_expected_salary: {
+        next: 'follow_up_notice_period',
+        field: 'expectedSalary',
+        question: 'What is your expected salary? (e.g. 12 LPA or "Negotiable")',
+      },
+      follow_up_notice_period: {
+        next: 'follow_up_job_type',
+        field: 'noticePeriod',
+        question: 'What is your notice period? (e.g. 30 days, 2 months, Immediate)',
+      },
+      follow_up_job_type: {
+        next: 'follow_up_roles',
+        field: 'workPreference',
+        question: 'Preferred work mode? Tap a button or type Remote / Hybrid / Onsite',
+      },
+      follow_up_roles: {
+        next: 'complete',
+        field: 'preferredRoles',
+        question:
+          'What roles are you targeting? (comma-separated, e.g. React Developer, Full Stack Engineer)',
+      },
+    };
+  }
+
+  private async promptOnboardingStep(
+    message: Message & { contact: Contact },
+    stepKey: string,
+  ): Promise<void> {
+    if (stepKey === 'follow_up_job_type') {
+      await this.replyWorkModePrompt(message);
+      return;
+    }
+    const question = this.getOnboardingSteps()[stepKey]?.question;
+    if (question) {
+      await this.reply(message, question);
+    }
+  }
+
+  private async replyWorkModePrompt(
+    message: Message & { contact: Contact },
+    prefix?: string,
+  ): Promise<void> {
+    const body = [
+      prefix,
+      'Preferred work mode? Tap a button below or type *Remote*, *Hybrid*, or *Onsite*.',
+    ]
+      .filter(Boolean)
+      .join('\n\n');
+    await this.replyButtons(message, body, [...CAREER_WORK_MODE_BUTTONS]);
+  }
+
+  private async sendJobActionButtons(
+    message: Message & { contact: Contact },
+    jobCount: number,
+  ): Promise<void> {
+    const buttons = buildJobActionButtons(jobCount);
+    if (buttons.length === 0) {
+      return;
+    }
+    await this.replyButtons(message, 'Quick actions for these jobs:', buttons);
+  }
+
+  private async replyButtons(
+    message: Message & { contact: Contact },
+    bodyText: string,
+    buttons: Array<{ id: string; title: string }>,
+  ): Promise<void> {
+    const conversation = await this.prisma.conversation.findUnique({
+      where: { contactId: message.contactId },
+    });
+    if (!conversation) {
+      return;
+    }
+
+    const result = await this.inbox.sendInteractiveButtons(
+      message.userId,
+      conversation.id,
+      bodyText,
+      buttons,
+      { source: CAREER_BOT_MESSAGE_SOURCE },
+    );
+
+    if (!result.success) {
+      await this.reply(message, bodyText);
+    }
   }
 
   private shouldAcceptResumeUpload(profile: CareerProfile): boolean {

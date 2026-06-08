@@ -10,7 +10,7 @@ import {
 import { ActivityLogger } from '../../common/activity-logger.service';
 import { WhatsappService } from '../whatsapp/whatsapp.service';
 import { InstagramService } from '../instagram/instagram.service';
-import { WhatsAppApiService } from '../integrations/whatsapp-api.service';
+import { WhatsAppApiService, WhatsAppReplyButton } from '../integrations/whatsapp-api.service';
 import { InstagramApiService } from '../integrations/instagram-api.service';
 
 export interface SendResult {
@@ -187,6 +187,53 @@ export class InboxService {
     }
 
     return this.sendWhatsAppMessage(userId, conversation, content, options);
+  }
+
+  async sendInteractiveButtons(
+    userId: number,
+    conversationId: number,
+    bodyText: string,
+    buttons: WhatsAppReplyButton[],
+    options?: { source?: string },
+  ): Promise<SendResult> {
+    const conversation = await this.prisma.conversation.findFirst({
+      where: { userId, id: conversationId },
+      include: { contact: true },
+    });
+    if (!conversation) {
+      throw new NotFoundException();
+    }
+
+    if (conversation.channel !== CHANNEL_WHATSAPP) {
+      return this.sendOutgoingMessage(userId, conversationId, bodyText, options);
+    }
+
+    const creds = await this.whatsapp.credentials(userId);
+    if (!creds?.account.isConnected) {
+      return { success: false, message: null, error: 'WhatsApp not connected' };
+    }
+
+    const label = [
+      bodyText.trim(),
+      ...buttons.map((b) => `[${b.title}]`),
+    ]
+      .filter(Boolean)
+      .join('\n');
+
+    const result = await this.whatsAppApi.sendReplyButtons(
+      creds.accessToken ?? '',
+      creds.phoneNumberId ?? '',
+      conversation.contact.phone ?? '',
+      bodyText,
+      buttons,
+    );
+
+    return this.persistOutgoingMessage(conversation, label, {
+      success: result.success,
+      waMessageId: result.data?.messages?.[0]?.id ?? null,
+      metadata: this.mergeOutgoingMetadata(result, options?.source),
+      error: result.message ?? null,
+    });
   }
 
   private async sendWhatsAppMessage(

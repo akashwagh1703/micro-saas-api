@@ -1,16 +1,23 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import * as fs from 'fs';
 import * as path from 'path';
 
 export type StorageBackend = 'object' | 'local';
 
+export interface StorageStatus {
+  backend: StorageBackend;
+  bucket?: string;
+  ok: boolean;
+  error?: string;
+}
+
 /**
  * Resume and generated document storage via MinIO (S3-compatible API).
  * Set MINIO_* env vars to enable; otherwise falls back to local disk.
  */
 @Injectable()
-export class CareerStorageService {
+export class CareerStorageService implements OnModuleInit {
   private readonly logger = new Logger(CareerStorageService.name);
   private readonly backend: StorageBackend;
   private readonly localRoot: string;
@@ -73,6 +80,58 @@ export class CareerStorageService {
     }
   }
 
+  async onModuleInit(): Promise<void> {
+    if (this.backend !== 'object') {
+      return;
+    }
+    await this.ensureBucket();
+  }
+
+  /** Verifies MinIO/S3 connectivity — used by portal health check. */
+  async getStorageStatus(): Promise<StorageStatus> {
+    if (this.backend === 'local') {
+      return { backend: 'local', ok: true };
+    }
+
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const { HeadBucketCommand } = require('@aws-sdk/client-s3');
+      await this.s3.send(new HeadBucketCommand({ Bucket: this.bucket }));
+      return { backend: 'object', bucket: this.bucket, ok: true };
+    } catch (e: any) {
+      return {
+        backend: 'object',
+        bucket: this.bucket,
+        ok: false,
+        error: e.message,
+      };
+    }
+  }
+
+  private async ensureBucket(): Promise<void> {
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const { HeadBucketCommand, CreateBucketCommand } = require('@aws-sdk/client-s3');
+      try {
+        await this.s3.send(new HeadBucketCommand({ Bucket: this.bucket }));
+      } catch (e: any) {
+        const status = e.$metadata?.httpStatusCode;
+        const missing = e.name === 'NotFound' || status === 404 || status === 403;
+        if (!missing) {
+          throw e;
+        }
+        await this.s3.send(new CreateBucketCommand({ Bucket: this.bucket }));
+        this.logger.log(`Created MinIO bucket "${this.bucket}"`);
+      }
+      this.logger.log(`MinIO bucket "${this.bucket}" is ready`);
+    } catch (e: any) {
+      this.logger.error(
+        `MinIO startup check failed: ${e.message}. ` +
+          'Use MINIO_ENDPOINT with the S3 API port (9000), not the console port (9001).',
+      );
+    }
+  }
+
   /** True when files are stored in MinIO (not local disk). */
   isS3(): boolean {
     return this.backend === 'object';
@@ -124,6 +183,30 @@ export class CareerStorageService {
 
   async saveText(userId: number, subfolder: string, fileName: string, text: string): Promise<string> {
     return this.saveBuffer(userId, subfolder, fileName, Buffer.from(text, 'utf8'));
+  }
+
+  async deleteFile(storagePath: string): Promise<void> {
+    if (!storagePath?.trim()) {
+      return;
+    }
+    try {
+      if (storagePath.startsWith('s3://')) {
+        const withoutScheme = storagePath.replace('s3://', '');
+        const slash = withoutScheme.indexOf('/');
+        const bucket = withoutScheme.slice(0, slash);
+        const key = withoutScheme.slice(slash + 1);
+        // eslint-disable-next-line @typescript-eslint/no-require-imports
+        const { DeleteObjectCommand } = require('@aws-sdk/client-s3');
+        await this.s3.send(new DeleteObjectCommand({ Bucket: bucket, Key: key }));
+        return;
+      }
+
+      if (fs.existsSync(storagePath)) {
+        await fs.promises.unlink(storagePath);
+      }
+    } catch (e: any) {
+      this.logger.warn(`deleteFile failed for ${storagePath}: ${e.message}`);
+    }
   }
 
   async readBuffer(storagePath: string): Promise<Buffer | null> {

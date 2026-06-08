@@ -4,8 +4,9 @@ import * as cron from 'node-cron';
 import { CareerDigestService } from './services/career-digest.service';
 
 /**
- * Daily CareerAI WhatsApp digest — runs at CAREER_DIGEST_HOUR_UTC (UTC) via node-cron.
- * Cron survives process restarts and fires at a fixed wall-clock time each day.
+ * Daily CareerAI WhatsApp digest.
+ * Uses CAREER_DIGEST_TIMEZONE + CAREER_DIGEST_HOUR (local wall clock).
+ * Falls back to CAREER_DIGEST_HOUR_UTC in UTC when timezone is not set.
  */
 @Injectable()
 export class CareerDigestScheduler implements OnModuleInit, OnModuleDestroy {
@@ -18,19 +19,37 @@ export class CareerDigestScheduler implements OnModuleInit, OnModuleDestroy {
   ) {}
 
   onModuleInit(): void {
+    if ((this.config.get<string>('QUEUE_DRIVER') ?? 'pgboss') === 'pgboss') {
+      this.logger.log('Career digest uses pg-boss schedule (CareerPgBossScheduler)');
+      return;
+    }
+
     if (this.config.get<string>('CAREER_DIGEST_ENABLED') === 'false') {
       this.logger.log('Career daily digest scheduler disabled (CAREER_DIGEST_ENABLED=false)');
       return;
     }
 
-    const hourRaw = this.config.get<string>('CAREER_DIGEST_HOUR_UTC') ?? '8';
-    const hourUtc = parseInt(hourRaw, 10);
-    if (Number.isNaN(hourUtc) || hourUtc < 0 || hourUtc > 23) {
-      this.logger.error(`Invalid CAREER_DIGEST_HOUR_UTC="${hourRaw}" — must be 0–23`);
+    const timezone = this.config.get<string>('CAREER_DIGEST_TIMEZONE')?.trim() || '';
+    const hourLocalRaw = this.config.get<string>('CAREER_DIGEST_HOUR');
+    const hourUtcRaw = this.config.get<string>('CAREER_DIGEST_HOUR_UTC') ?? '8';
+
+    let hour: number;
+    let tz: string;
+
+    if (timezone && hourLocalRaw !== undefined && hourLocalRaw !== '') {
+      hour = parseInt(hourLocalRaw, 10);
+      tz = timezone;
+    } else {
+      hour = parseInt(hourUtcRaw, 10);
+      tz = 'UTC';
+    }
+
+    if (Number.isNaN(hour) || hour < 0 || hour > 23) {
+      this.logger.error(`Invalid digest hour — local="${hourLocalRaw}" utc="${hourUtcRaw}"`);
       return;
     }
 
-    const expression = `0 ${hourUtc} * * *`;
+    const expression = `0 ${hour} * * *`;
     if (!cron.validate(expression)) {
       this.logger.error(`Invalid cron expression: ${expression}`);
       return;
@@ -41,10 +60,12 @@ export class CareerDigestScheduler implements OnModuleInit, OnModuleDestroy {
       () => {
         void this.runBatch();
       },
-      { timezone: 'UTC' },
+      { timezone: tz },
     );
 
-    this.logger.log(`Career digest scheduled at ${hourUtc}:00 UTC daily (cron: ${expression})`);
+    this.logger.log(
+      `Career digest scheduled daily at ${hour}:00 (${tz}) — cron: ${expression}`,
+    );
   }
 
   onModuleDestroy(): void {

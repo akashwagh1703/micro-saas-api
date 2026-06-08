@@ -4,6 +4,11 @@ import axios from 'axios';
 import * as crypto from 'crypto';
 import { withMetaApiRetry } from '../../common/meta-api-retry';
 
+export interface WhatsAppReplyButton {
+  id: string;
+  title: string;
+}
+
 export interface WhatsAppApiResult {
   success: boolean;
   message?: string;
@@ -43,6 +48,61 @@ export class WhatsAppApiService {
       };
     } catch (e: any) {
       this.logger.error(`WhatsApp test connection failed: ${e.message}`);
+      return { success: false, message: e.message };
+    }
+  }
+
+  async sendReplyButtons(
+    accessToken: string,
+    phoneNumberId: string,
+    to: string,
+    bodyText: string,
+    buttons: WhatsAppReplyButton[],
+  ): Promise<WhatsAppApiResult> {
+    const phone = (to ?? '').replace(/\D/g, '');
+    const trimmed = bodyText.trim().slice(0, 1024);
+    const actionButtons = buttons.slice(0, 3).map((b) => ({
+      type: 'reply' as const,
+      reply: {
+        id: b.id.slice(0, 256),
+        title: b.title.trim().slice(0, 20),
+      },
+    }));
+
+    if (actionButtons.length === 0) {
+      return this.sendTextMessage(accessToken, phoneNumberId, to, trimmed);
+    }
+
+    try {
+      const { status, data } = await withMetaApiRetry(async () => {
+        const response = await axios.post(
+          `${this.base}/${phoneNumberId}/messages`,
+          {
+            messaging_product: 'whatsapp',
+            to: phone,
+            type: 'interactive',
+            interactive: {
+              type: 'button',
+              body: { text: trimmed || 'Choose an option:' },
+              action: { buttons: actionButtons },
+            },
+          },
+          {
+            headers: { Authorization: `Bearer ${accessToken}` },
+            timeout: 20000,
+            validateStatus: () => true,
+          },
+        );
+        return { status: response.status, data: response.data };
+      });
+
+      if (status >= 200 && status < 300) {
+        return { success: true, data };
+      }
+
+      return { success: false, message: data?.error?.message ?? 'Send failed' };
+    } catch (e: any) {
+      this.logger.error(`WhatsApp interactive send failed: ${e.message}`);
       return { success: false, message: e.message };
     }
   }

@@ -4,6 +4,8 @@ import PgBoss from 'pg-boss';
 import { JobDispatcher } from './job-dispatcher';
 import {
   ALL_QUEUES,
+  CareerTaskJob,
+  QUEUE_CAREER_TASK,
   QUEUE_EXECUTE_WORKFLOW,
   QUEUE_PROCESS_INCOMING,
   QUEUE_SEND_MESSAGE,
@@ -81,5 +83,21 @@ export class QueueService implements JobDispatcher, OnModuleInit, OnModuleDestro
   async enqueueSendMessage(payload: SendMessageJob): Promise<void> {
     await this.ready;
     await this.boss.send(QUEUE_SEND_MESSAGE, payload, { retryLimit: 3 });
+  }
+
+  async enqueueCareerTask(payload: CareerTaskJob): Promise<void> {
+    await this.ready;
+    await this.boss.send(QUEUE_CAREER_TASK, payload, { retryLimit: 2 });
+  }
+
+  /** Register a cron schedule (stored in PostgreSQL — safe with multiple API instances). */
+  async scheduleCron(
+    queue: string,
+    cron: string,
+    data: object = {},
+    options?: { tz?: string },
+  ): Promise<void> {
+    await this.ready;
+    await this.boss.schedule(queue, cron, data, options ?? {});
   }
 }

@@ -1,4 +1,4 @@
-import { SendMessageJob } from './queue.constants';
+import { SendMessageJob, CareerTaskJob } from './queue.constants';
 
 /**
  * Abstraction over background work. Two implementations exist:
@@ -13,6 +13,7 @@ export interface JobDispatcher {
   enqueueProcessIncoming(messageId: number): Promise<void>;
   enqueueExecuteWorkflow(executionId: number): Promise<void>;
   enqueueSendMessage(payload: SendMessageJob): Promise<void>;
+  enqueueCareerTask(payload: CareerTaskJob): Promise<void>;
 }
 
 export const JOB_DISPATCHER = Symbol('JOB_DISPATCHER');

@@ -17,6 +17,16 @@ import { CareerStorageService } from './services/career-storage.service';
 import { CareerApplicationService } from './services/career-application.service';
 import { CareerDigestService } from './services/career-digest.service';
 import { CareerDigestScheduler } from './career-digest.scheduler';
+import { CareerPgBossScheduler } from './career-pgboss.scheduler';
+import { CareerAiUsageService } from './services/career-ai-usage.service';
+import { CareerAuditService } from './services/career-audit.service';
+import { CareerPrivacyService } from './services/career-privacy.service';
+import { CareerRetentionScheduler } from './career-retention.scheduler';
+import { AdzunaJobSource } from './job-sources/adzuna.job-source';
+import { NaukriJobSource } from './job-sources/naukri.job-source';
+import { LinkedInJobSource } from './job-sources/linkedin.job-source';
+import { CareerJobSourceRegistry } from './job-sources/career-job-source.registry';
+import { CareerJobUpsertService } from './job-sources/career-job-upsert.service';
 
 @Module({
   imports: [IntegrationsModule, InboxModule, WhatsappModule, SettingsModule],
@@ -35,6 +45,16 @@ import { CareerDigestScheduler } from './career-digest.scheduler';
     CareerApplicationService,
     CareerDigestService,
     CareerDigestScheduler,
+    CareerPgBossScheduler,
+    CareerAiUsageService,
+    CareerAuditService,
+    CareerPrivacyService,
+    CareerRetentionScheduler,
+    CareerJobUpsertService,
+    AdzunaJobSource,
+    NaukriJobSource,
+    LinkedInJobSource,
+    CareerJobSourceRegistry,
   ],
   exports: [CareerIncomingHandler, CareerDigestService, CareerBotService],
 })
