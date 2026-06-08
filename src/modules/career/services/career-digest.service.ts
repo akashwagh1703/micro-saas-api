@@ -41,6 +41,21 @@ export class CareerDigestService {
       return false;
     }
 
+    const startOfTodayUtc = new Date();
+    startOfTodayUtc.setUTCHours(0, 0, 0, 0);
+    const alreadySentToday = await this.prisma.careerNotification.findFirst({
+      where: {
+        profileId,
+        type: 'daily_digest',
+        status: 'sent',
+        sentAt: { gte: startOfTodayUtc },
+      },
+    });
+    if (alreadySentToday) {
+      this.logger.debug(`Digest skipped — profile ${profileId} already sent today`);
+      return false;
+    }
+
     try {
       const jobList = await this.jobs.listActive(profile.userId);
       const matches = this.matching.matchProfileToJobs(profile, jobList);
@@ -77,12 +92,15 @@ export class CareerDigestService {
         );
       });
 
+      await this.saveJobSession(profile.id, profile.onboardingData, top.map((t) => t.job.id));
+
       lines.push(
         '',
         'Reply:',
+        '• *APPLY 1* — save & get apply link',
+        '• *RESUME 1* — tailor CV for a job',
         '• *VIEW JOBS* — see all matches',
         '• *FIND JOBS {keyword}* — search by role',
-        '• *GENERATE RESUME* — tailor CV for top match',
         '• *STOP DIGEST* — unsubscribe from daily updates',
       );
 
@@ -192,6 +210,23 @@ export class CareerDigestService {
         status,
         sentAt: status === 'sent' ? new Date() : null,
         payload: payload as Prisma.InputJsonValue,
+      },
+    });
+  }
+
+  private async saveJobSession(
+    profileId: number,
+    existingData: unknown,
+    jobIds: number[],
+  ): Promise<void> {
+    const existing = (existingData as Record<string, unknown>) ?? {};
+    await this.prisma.careerProfile.update({
+      where: { id: profileId },
+      data: {
+        onboardingData: {
+          ...existing,
+          job_session: { jobIds, listedAt: new Date().toISOString() },
+        } as Prisma.InputJsonValue,
       },
     });
   }

@@ -178,7 +178,7 @@ export class BillingService {
   async assertPlatformAccess(userId: number): Promise<void> {
     if (await this.hasPlatformAccess(userId)) return;
     throw new ForbiddenException({
-      message: 'Your free trial has ended. Subscribe to continue using WhatsFlow.',
+      message: 'Your free trial has ended. Subscribe to continue using AutoWave.',
       code: 'subscription_required',
     });
   }

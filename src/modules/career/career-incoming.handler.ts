@@ -2,7 +2,12 @@ import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../../prisma/prisma.service';
 import { SettingsService } from '../settings/settings.service';
-import { CAREER_AI_BUSINESS, CAREER_RATE_LIMIT_DEFAULT } from './career.constants';
+import { InboxService } from '../inbox/inbox.service';
+import {
+  CAREER_AI_BUSINESS,
+  CAREER_BOT_MESSAGE_SOURCE,
+  CAREER_RATE_LIMIT_DEFAULT,
+} from './career.constants';
 import { CareerBotService } from './services/career-bot.service';
 
 /** Routes WhatsApp messages to CareerAI Bot when tenant business type is career_ai. */
@@ -14,6 +19,7 @@ export class CareerIncomingHandler {
   constructor(
     private readonly prisma: PrismaService,
     private readonly settings: SettingsService,
+    private readonly inbox: InboxService,
     private readonly bot: CareerBotService,
     config: ConfigService,
   ) {
@@ -41,15 +47,16 @@ export class CareerIncomingHandler {
     if (await this.isRateLimited(message.userId, message.contactId)) {
       this.logger.warn(
         `Rate limit hit for tenant=${message.userId} contact=${message.contactId} ` +
-          `(max ${this.rateLimitPerMinute} replies/min)`,
+          `(max ${this.rateLimitPerMinute} bot replies/min)`,
       );
+      await this.sendRateLimitNotice(message.userId, message.contactId);
       return true;
     }
 
     return this.bot.handleIncomingMessage(message);
   }
 
-  /** Throttle when the bot has already sent too many replies to this contact in the last minute. */
+  /** Count only CareerAI bot replies — not human agent messages from the inbox. */
   private async isRateLimited(userId: number, contactId: number): Promise<boolean> {
     const oneMinuteAgo = new Date(Date.now() - 60_000);
     const count = await this.prisma.message.count({
@@ -58,8 +65,42 @@ export class CareerIncomingHandler {
         contactId,
         direction: 'outgoing',
         createdAt: { gte: oneMinuteAgo },
+        metadata: {
+          path: ['source'],
+          equals: CAREER_BOT_MESSAGE_SOURCE,
+        },
       },
     });
     return count >= this.rateLimitPerMinute;
+  }
+
+  private async sendRateLimitNotice(userId: number, contactId: number): Promise<void> {
+    const oneMinuteAgo = new Date(Date.now() - 60_000);
+    const recentNotice = await this.prisma.message.count({
+      where: {
+        userId,
+        contactId,
+        direction: 'outgoing',
+        createdAt: { gte: oneMinuteAgo },
+        content: { contains: 'Please wait a moment' },
+      },
+    });
+    if (recentNotice > 0) {
+      return;
+    }
+
+    const conversation = await this.prisma.conversation.findUnique({
+      where: { contactId },
+    });
+    if (!conversation) {
+      return;
+    }
+
+    await this.inbox.sendOutgoingMessage(
+      userId,
+      conversation.id,
+      'Please wait a moment before sending more messages. ⏳',
+      { source: CAREER_BOT_MESSAGE_SOURCE },
+    );
   }
 }

@@ -172,6 +172,7 @@ export class InboxService {
     userId: number,
     conversationId: number,
     content: string,
+    options?: { source?: string },
   ): Promise<SendResult> {
     const conversation = await this.prisma.conversation.findFirst({
       where: { userId, id: conversationId },
@@ -185,13 +186,14 @@ export class InboxService {
       return this.sendInstagramMessage(userId, conversation, content);
     }
 
-    return this.sendWhatsAppMessage(userId, conversation, content);
+    return this.sendWhatsAppMessage(userId, conversation, content, options);
   }
 
   private async sendWhatsAppMessage(
     userId: number,
     conversation: ConversationWithContact,
     content: string,
+    options?: { source?: string },
   ): Promise<SendResult> {
     const creds = await this.whatsapp.credentials(userId);
     if (!creds?.account.isConnected) {
@@ -208,9 +210,18 @@ export class InboxService {
     return this.persistOutgoingMessage(conversation, content, {
       success: result.success,
       waMessageId: result.data?.messages?.[0]?.id ?? null,
-      metadata: result,
+      metadata: this.mergeOutgoingMetadata(result, options?.source),
       error: result.message ?? null,
     });
+  }
+
+  private mergeOutgoingMetadata(apiResult: unknown, source?: string): Record<string, unknown> {
+    const base =
+      apiResult && typeof apiResult === 'object' ? { ...(apiResult as Record<string, unknown>) } : {};
+    if (source) {
+      base.source = source;
+    }
+    return base;
   }
 
   private async sendInstagramMessage(

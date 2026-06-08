@@ -2,11 +2,13 @@ import {
   Body,
   Controller,
   Get,
+  NotFoundException,
   Param,
   ParseIntPipe,
   Patch,
   Post,
   Query,
+  StreamableFile,
   UseGuards,
 } from '@nestjs/common';
 import { TokenAuthGuard } from '../../common/guards/token-auth.guard';
@@ -17,6 +19,7 @@ import { CareerJobFetcherService } from './services/career-job-fetcher.service';
 import { CareerJobRefreshScheduler } from './career-job-refresh.scheduler';
 import { CareerDigestService } from './services/career-digest.service';
 import { CareerApplicationService } from './services/career-application.service';
+import { CareerStorageService } from './services/career-storage.service';
 import { CAREER_APPLICATION_STATUSES } from './career.constants';
 import { IsIn, IsOptional, IsString } from 'class-validator';
 
@@ -72,6 +75,7 @@ export class CareerController {
     private readonly refreshScheduler: CareerJobRefreshScheduler,
     private readonly digest: CareerDigestService,
     private readonly applications: CareerApplicationService,
+    private readonly storage: CareerStorageService,
   ) {}
 
   @Get('analytics')
@@ -176,12 +180,12 @@ export class CareerController {
   }
 
   @Post('jobs/refresh')
-  async refreshJobs() {
+  async refreshJobs(@CurrentUser('id') userId: number) {
     if (!this.fetcher.isEnabled()) {
       return { message: 'Job fetcher not configured.', expired: 0, fetched: 0 };
     }
-    const result = await this.refreshScheduler.run();
-    return { message: 'Refresh complete', ...result };
+    const result = await this.refreshScheduler.runForUser(userId);
+    return { message: 'Refresh complete for your account', ...result };
   }
 
   @Post('jobs/seed')
@@ -263,5 +267,51 @@ export class CareerController {
         'career_coach',
       ],
     };
+  }
+
+  @Get('resumes/:id/download')
+  async downloadResume(
+    @CurrentUser('id') userId: number,
+    @Param('id', ParseIntPipe) id: number,
+  ): Promise<StreamableFile> {
+    const resume = await this.prisma.careerResume.findFirst({ where: { id, userId } });
+    if (!resume?.filePath) {
+      throw new NotFoundException('Resume file not found');
+    }
+
+    const buffer = await this.storage.readBuffer(resume.filePath);
+    if (!buffer) {
+      throw new NotFoundException('Resume file unavailable');
+    }
+
+    const fileName = resume.fileName ?? `resume-${id}.pdf`;
+    return new StreamableFile(buffer, {
+      type: resume.mimeType ?? 'application/octet-stream',
+      disposition: `attachment; filename="${fileName.replace(/"/g, '')}"`,
+    });
+  }
+
+  @Get('resume-versions/:id/download')
+  async downloadResumeVersion(
+    @CurrentUser('id') userId: number,
+    @Param('id', ParseIntPipe) id: number,
+  ): Promise<StreamableFile> {
+    const version = await this.prisma.careerResumeVersion.findFirst({
+      where: { id, userId },
+    });
+    if (!version?.filePath) {
+      throw new NotFoundException('Generated resume not found');
+    }
+
+    const buffer = await this.storage.readBuffer(version.filePath);
+    if (!buffer) {
+      throw new NotFoundException('Generated resume file unavailable');
+    }
+
+    const fileName = version.title ? `${version.title}.txt` : `resume-version-${id}.txt`;
+    return new StreamableFile(buffer, {
+      type: 'text/plain; charset=utf-8',
+      disposition: `attachment; filename="${fileName.replace(/"/g, '')}"`,
+    });
   }
 }

@@ -130,7 +130,7 @@ RULES:
 - collect_input data: { "label": "...", "field": "snake_case_name", "question": "..." }
 - ai data: { "label": "...", "provider": "openrouter", "model": "openai/gpt-4o-mini", "prompt": "...", "temperature": 0.6, "max_tokens": 250, "fallback_message": "..." }
 - send_message data: { "label": "...", "message": "..." } — use {{contact_name}}, {{message}}, {{ai_response}}, and collect_input field names as {{field}}
-- save_lead data: { "label": "Save Lead" } — saves contact + collected answers to WhatsFlow leads
+- save_lead data: { "label": "Save Lead" } — saves contact + collected answers to AutoWave leads
 - api data (optional for external CRM): { "label": "...", "url": "...", "method": "POST", "headers": {"Content-Type":"application/json"}, "body": {...}, "timeout": 15, "retries": 2, "use_fallback": true }
 - condition data: { "label": "...", "field": "message", "operator": "contains", "value": "keyword" } — only if needed; use sourceHandle "true" on edges from condition
 - edges: { "id": "e1", "source": "node-id", "target": "node-id", "sourceHandle": null } (sourceHandle "true"/"false" only for condition branches)

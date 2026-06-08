@@ -166,7 +166,7 @@ const welcomeAutoReply: WorkflowTemplate = {
         label: 'Welcome Message',
         summary: 'Sends greeting text',
         message:
-          "Hello {{contact_name}}! 👋\n\nThanks for reaching out. We're here to help. Reply with your question and our team will assist you shortly.\n\n— WhatsFlow Team",
+          "Hello {{contact_name}}! 👋\n\nThanks for reaching out. We're here to help. Reply with your question and our team will assist you shortly.\n\n— AutoWave Team",
       },
     },
   ]),
@@ -259,7 +259,7 @@ const leadCaptureApi: WorkflowTemplate = {
   slug: 'lead-capture-api',
   name: '📋 Lead Capture',
   description:
-    'Save customer details as a lead in WhatsFlow, then confirm on WhatsApp. View leads in the Leads page.',
+    'Save customer details as a lead in AutoWave, then confirm on WhatsApp. View leads in the Leads page.',
   category: 'common',
   trigger_type: 'message_received',
   definition: linearFlow([
@@ -275,7 +275,7 @@ const leadCaptureApi: WorkflowTemplate = {
       y: 200,
       data: {
         label: 'Save Lead',
-        summary: 'Saves lead to WhatsFlow Leads',
+        summary: 'Saves lead to AutoWave Leads',
         notes: 'WhatsApp lead capture',
         collected_fields: [],
         api: buildSaveLeadApiPlaceholder([], 'WhatsApp lead capture'),

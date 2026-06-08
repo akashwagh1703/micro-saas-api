@@ -52,7 +52,25 @@ export class CareerJobRefreshScheduler implements OnModuleInit {
     );
   }
 
-  /** Public so the portal can trigger a manual run via POST /career/jobs/refresh. */
+  /** Refresh Adzuna jobs for a single tenant (portal manual refresh). */
+  async runForUser(userId: number): Promise<{ expired: number; fetched: number }> {
+    this.logger.log(`Job refresh starting for userId=${userId}…`);
+    const expired = await this.fetcher.expireStaleJobs(30);
+
+    let fetched = 0;
+    for (const keyword of REFRESH_KEYWORDS) {
+      try {
+        fetched += await this.fetcher.fetchAndStore(userId, keyword, 'india', 1);
+      } catch (e: any) {
+        this.logger.warn(`Refresh failed userId=${userId} keyword="${keyword}": ${e.message}`);
+      }
+    }
+
+    this.logger.log(`Job refresh complete userId=${userId} — expired=${expired} fetched=${fetched}`);
+    return { expired, fetched };
+  }
+
+  /** Scheduled refresh for all career_ai tenants. */
   async run(): Promise<{ expired: number; fetched: number }> {
     this.logger.log('Job refresh cycle starting…');
 

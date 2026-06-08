@@ -35,6 +35,37 @@ export class CareerApplicationService {
     });
   }
 
+  async markApplied(
+    userId: number,
+    profileId: number,
+    contactId: number,
+    jobId: number,
+  ) {
+    const existing = await this.prisma.careerApplication.findUnique({
+      where: { profileId_jobId: { profileId, jobId } },
+    });
+
+    const timeline = Array.isArray(existing?.timeline) ? [...(existing.timeline as object[])] : [];
+    timeline.push({ status: 'applied', at: new Date().toISOString() });
+
+    return this.prisma.careerApplication.upsert({
+      where: { profileId_jobId: { profileId, jobId } },
+      create: {
+        userId,
+        profileId,
+        contactId,
+        jobId,
+        status: 'applied',
+        timeline,
+      },
+      update: {
+        status: 'applied',
+        timeline,
+      },
+      include: { job: true },
+    });
+  }
+
   async updateStatus(applicationId: number, status: CareerApplicationStatus, note?: string) {
     const app = await this.prisma.careerApplication.findUnique({ where: { id: applicationId } });
     if (!app) return null;

@@ -87,7 +87,7 @@ function leadCaptureTail(
       y: yStart,
       data: {
         label: 'Save Lead',
-        summary: 'Saves lead to WhatsFlow Leads',
+        summary: 'Saves lead to AutoWave Leads',
         notes,
         collected_fields: collectedFields,
         api: buildSaveLeadApiPlaceholder(collectedFields, notes, channel),

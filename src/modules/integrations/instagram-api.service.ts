@@ -78,7 +78,7 @@ export class InstagramApiService {
           return {
             page: null,
             error:
-              'You entered an Instagram account ID. WhatsFlow needs the Facebook Page ID linked to that Instagram account.',
+              'You entered an Instagram account ID. AutoWave needs the Facebook Page ID linked to that Instagram account.',
           };
         }
       }

@@ -4,10 +4,10 @@ import { PrismaService } from '../../../prisma/prisma.service';
 import { WhatsappService } from '../../whatsapp/whatsapp.service';
 import { WhatsAppApiService } from '../../integrations/whatsapp-api.service';
 import { InboxService } from '../../inbox/inbox.service';
-import { CAREER_COMMANDS, CAREER_MAX_INBOUND_CHARS } from '../career.constants';
+import { CAREER_COMMANDS, CAREER_MAX_INBOUND_CHARS, CAREER_BOT_MESSAGE_SOURCE } from '../career.constants';
 import { CareerProfileService } from './career-profile.service';
 import { CareerJobService } from './career-job.service';
-import { CareerMatchingService } from './career-matching.service';
+import { CareerMatchingService, JobMatchResult } from './career-matching.service';
 import { CareerAiService, ConvTurn } from './career-ai.service';
 import { CareerResumeParserService } from './career-resume-parser.service';
 import { CareerStorageService } from './career-storage.service';
@@ -16,6 +16,11 @@ import { CareerProfile } from '@prisma/client';
 
 // WhatsApp rejects messages over 4096 chars. We use 3800 to leave a safe buffer.
 const WA_MAX_CHARS = 3800;
+
+interface JobSession {
+  jobIds: number[];
+  listedAt: string;
+}
 
 @Injectable()
 export class CareerBotService {
@@ -42,7 +47,7 @@ export class CareerBotService {
     const profile = await this.profiles.getOrCreate(message.userId, message.contact);
     await this.jobs.ensureSampleJobs(message.userId);
 
-    if (isDocument && ['welcome', 'awaiting_resume'].includes(profile.onboardingStep)) {
+    if (isDocument && this.shouldAcceptResumeUpload(profile)) {
       await this.handleResumeDocument(message, profile);
       return true;
     }
@@ -52,12 +57,7 @@ export class CareerBotService {
 
     // ── Digest opt-out / opt-in (checked before onboarding so users can always
     //    unsubscribe even before their profile is complete) ──────────────────────
-    if (
-      lower === 'stop digest' ||
-      lower === 'unsubscribe' ||
-      lower === 'stop' ||
-      lower === 'stop daily digest'
-    ) {
+    if (this.matchesCommand(lower, CAREER_COMMANDS.STOP_DIGEST)) {
       await this.prisma.careerProfile.update({
         where: { id: profile.id },
         data: { digestOptOut: true },
@@ -83,6 +83,27 @@ export class CareerBotService {
 
     if (!profile.isComplete) {
       await this.handleOnboarding(message, profile, text);
+      return true;
+    }
+
+    if (this.matchesCommand(lower, CAREER_COMMANDS.UPLOAD_RESUME)) {
+      await this.setReuploadPending(profile.id, true);
+      await this.reply(
+        message,
+        'Please upload your updated resume as a *PDF* or *DOCX* attachment.',
+      );
+      return true;
+    }
+
+    const applyIndex = this.parseApplyIndex(lower);
+    if (applyIndex !== null) {
+      await this.cmdApply(message, profile, applyIndex);
+      return true;
+    }
+
+    const resumeIndex = this.parseResumeIndex(lower);
+    if (resumeIndex !== null) {
+      await this.cmdGenerateResume(message, profile, resumeIndex);
       return true;
     }
 
@@ -170,7 +191,7 @@ export class CareerBotService {
       return true;
     }
 
-    if (lower.startsWith('find ') || lower.includes(' jobs')) {
+    if (lower.startsWith('find ') || /^search\s+jobs?\s+/i.test(lower)) {
       await this.cmdFindJobs(message, profile, text);
       return true;
     }
@@ -249,7 +270,8 @@ export class CareerBotService {
       follow_up_roles: {
         next: 'complete',
         field: 'preferredRoles',
-        question: '',
+        question:
+          'What roles are you targeting? (comma-separated, e.g. React Developer, Full Stack Engineer)',
       },
     };
 
@@ -301,7 +323,10 @@ export class CareerBotService {
       return;
     }
 
-    await this.reply(message, step.question);
+    const nextStep = steps[step.next];
+    if (nextStep?.question) {
+      await this.reply(message, nextStep.question);
+    }
   }
 
   /** Marks onboarding complete, runs initial job matching, and sends the welcome summary. */
@@ -320,7 +345,7 @@ export class CareerBotService {
     );
     await this.reply(
       message,
-      `Your Career Profile is ready! ✅\n\nI found ${matches.length} matching jobs.\n\nReply *VIEW JOBS* or *FIND JOBS react* to explore.\n${this.helpText()}`,
+      `Your Career Profile is ready! ✅\n\nI found ${matches.length} matching jobs.\n\nReply *VIEW JOBS* to see them, or *FIND JOBS react* to search.\n${this.helpText()}`,
     );
   }
 
@@ -330,6 +355,8 @@ export class CareerBotService {
     message: Message & { contact: Contact },
     profile: CareerProfile,
   ): Promise<void> {
+    const reupload = await this.isReuploadPending(profile.id);
+
     await this.reply(message, 'Thanks! Reading your resume… ⏳');
 
     const raw = (message.metadata as { raw?: any })?.raw;
@@ -408,7 +435,10 @@ export class CareerBotService {
 
     await this.prisma.careerProfile.update({
       where: { id: profile.id },
-      data: { masterResumeId: resume.id, onboardingStep: 'parsing_resume' },
+      data: {
+        masterResumeId: resume.id,
+        ...(reupload && profile.isComplete ? {} : { onboardingStep: 'parsing_resume' }),
+      },
     });
 
     const parsed = extracted
@@ -420,8 +450,26 @@ export class CareerBotService {
         )
       : null;
 
+    if (reupload && profile.isComplete) {
+      await this.clearReuploadPending(profile.id);
+      if (parsed) {
+        await this.profiles.applyParsedResume(profile.id, parsed);
+        await this.reply(
+          message,
+          'Resume updated! ✅ Your skills and experience have been refreshed from the new file.',
+        );
+      } else {
+        await this.reply(
+          message,
+          'Resume saved, but I could not auto-parse it. Please try a text-based PDF or DOCX.',
+        );
+      }
+      return;
+    }
+
     if (parsed) {
       const updated = await this.profiles.applyParsedResume(profile.id, parsed);
+      await this.profiles.updateOnboarding(profile.id, 'follow_up_location', {});
       await this.reply(
         message,
         `Resume parsed! ✅\n\nHi ${updated.fullName ?? 'there'}, I extracted your skills and experience.\n\nWhat is your current city/location?`,
@@ -468,18 +516,70 @@ export class CareerBotService {
       return;
     }
 
+    const top = matches.slice(0, 10);
+    await this.saveJobSession(profile.id, top.map((m) => m.job.id));
+
     const lines = [`Found ${matches.length} matching jobs:\n`];
-    matches.slice(0, 10).forEach((m, i) => {
-      lines.push(
-        `${i + 1}. *${m.job.title}* @ ${m.job.company}`,
-        `   📍 ${m.job.location ?? '—'} | 💰 ${m.job.salaryText ?? '—'}`,
-        `   Match: ${m.score}%`,
-        m.matchFactors.slice(0, 2).join('\n   '),
-        m.missingSkills.length ? `   Missing: ✗ ${m.missingSkills.slice(0, 2).join(', ')}` : '',
-        '',
-      );
+    top.forEach((m, i) => {
+      lines.push(...this.formatJobListing(m, i));
     });
-    lines.push('Reply GENERATE RESUME or GENERATE COVER LETTER for a role.');
+    lines.push(
+      '',
+      'Reply *APPLY 1* to save & get apply link, or *RESUME 2* to tailor your CV for job #2.',
+    );
+    await this.reply(message, lines.join('\n'));
+  }
+
+  private formatJobListing(m: JobMatchResult, index: number): string[] {
+    const lines = [
+      `${index + 1}. *${m.job.title}* @ ${m.job.company}`,
+      `   📍 ${m.job.location ?? '—'} | 💰 ${m.job.salaryText ?? '—'}`,
+      `   Match: ${m.score}%`,
+    ];
+    if (m.matchFactors.length > 0) {
+      lines.push(`   ${m.matchFactors.slice(0, 2).join('\n   ')}`);
+    }
+    if (m.missingSkills.length > 0) {
+      lines.push(`   Missing: ✗ ${m.missingSkills.slice(0, 2).join(', ')}`);
+    }
+    if (m.job.applyUrl) {
+      lines.push(`   🔗 ${m.job.applyUrl}`);
+    }
+    lines.push('');
+    return lines;
+  }
+
+  private async cmdApply(
+    message: Message & { contact: Contact },
+    profile: CareerProfile,
+    index1Based: number,
+  ): Promise<void> {
+    const job = await this.resolveJobByIndex(profile, message.userId, index1Based);
+    if (!job) {
+      await this.reply(
+        message,
+        `Job #${index1Based} not found. Reply *VIEW JOBS* or *FIND JOBS* first to refresh the list.`,
+      );
+      return;
+    }
+
+    await this.applications.markApplied(
+      message.userId,
+      profile.id,
+      message.contactId,
+      job.id,
+    );
+
+    const lines = [
+      `*${job.title}* @ ${job.company} — saved as applied ✅`,
+      `📍 ${job.location ?? '—'} | 💰 ${job.salaryText ?? '—'}`,
+    ];
+    if (job.applyUrl) {
+      lines.push('', `Apply here:\n${job.applyUrl}`);
+    } else {
+      lines.push('', 'Search the company career page to submit your application.');
+    }
+    lines.push('', `Reply *RESUME ${index1Based}* to generate a tailored CV for this role.`);
     await this.reply(message, lines.join('\n'));
   }
 
@@ -503,18 +603,29 @@ export class CareerBotService {
   private async cmdGenerateResume(
     message: Message & { contact: Contact },
     profile: CareerProfile,
+    index1Based?: number,
   ): Promise<void> {
-    const topMatch = await this.prisma.careerJobMatch.findFirst({
-      where: { profileId: profile.id },
-      orderBy: { score: 'desc' },
-      include: { job: true },
-    });
-    if (!topMatch?.job) {
-      await this.reply(message, 'No job matches yet. Reply FIND JOBS first.');
+    let job = index1Based
+      ? await this.resolveJobByIndex(profile, message.userId, index1Based)
+      : await this.resolveJobByIndex(profile, message.userId, 1);
+
+    if (!job) {
+      const topMatch = await this.prisma.careerJobMatch.findFirst({
+        where: { profileId: profile.id },
+        orderBy: { score: 'desc' },
+        include: { job: true },
+      });
+      job = topMatch?.job ?? null;
+    }
+
+    if (!job) {
+      await this.reply(message, 'No job matches yet. Reply *FIND JOBS* or *VIEW JOBS* first.');
       return;
     }
 
-    await this.reply(message, `Generating tailored resume for ${topMatch.job.title}…`);
+    const jobNum = index1Based ?? (await this.jobIndexInSession(profile.id, job.id)) ?? 1;
+
+    await this.reply(message, `Generating tailored resume for *${job.title}* @ ${job.company}… ⏳`);
 
     const content = await this.safeAiCall(
       message.userId,
@@ -522,7 +633,7 @@ export class CareerBotService {
         this.careerAi.generateTailoredResume(
           message.userId,
           this.profiles.profileSnapshot(profile),
-          topMatch.job,
+          job!,
         ),
       null,
       'generate_resume',
@@ -536,22 +647,24 @@ export class CareerBotService {
       ? await this.prisma.careerResume.findUnique({ where: { id: profile.masterResumeId } })
       : null;
 
-    const resumeId = master?.id ?? (
-      await this.prisma.careerResume.create({
-        data: {
-          userId: message.userId,
-          profileId: profile.id,
-          contactId: message.contactId,
-          type: 'master',
-          isMaster: true,
-        },
-      })
-    ).id;
+    const resumeId =
+      master?.id ??
+      (
+        await this.prisma.careerResume.create({
+          data: {
+            userId: message.userId,
+            profileId: profile.id,
+            contactId: message.contactId,
+            type: 'master',
+            isMaster: true,
+          },
+        })
+      ).id;
 
     const filePath = await this.storage.saveText(
       message.userId,
       'generated',
-      `resume_${topMatch.job.id}.txt`,
+      `resume_${job.id}.txt`,
       content,
     );
 
@@ -559,8 +672,8 @@ export class CareerBotService {
       data: {
         userId: message.userId,
         resumeId,
-        jobId: topMatch.job.id,
-        title: `${topMatch.job.title} — tailored`,
+        jobId: job.id,
+        title: `${job.title} — tailored`,
         content,
         filePath,
       },
@@ -570,12 +683,16 @@ export class CareerBotService {
       message.userId,
       profile.id,
       message.contactId,
-      topMatch.job.id,
+      job.id,
     );
 
     await this.reply(
       message,
-      `Resume generated for *${topMatch.job.title}* at ${topMatch.job.company}! ✅\n\n(Stored in your CareerAI account — PDF export coming in a future update.)`,
+      `*Tailored resume — ${job.title} @ ${job.company}*\n\n${content}`,
+    );
+    await this.reply(
+      message,
+      `Saved to your CareerAI account ✅\n\nReply *APPLY ${jobNum}* for the apply link, or *GENERATE COVER LETTER* for a cover letter.`,
     );
   }
 
@@ -686,7 +803,9 @@ export class CareerBotService {
     if (!conversation) return;
 
     if (text.length <= WA_MAX_CHARS) {
-      await this.inbox.sendOutgoingMessage(message.userId, conversation.id, text);
+      await this.inbox.sendOutgoingMessage(message.userId, conversation.id, text, {
+        source: CAREER_BOT_MESSAGE_SOURCE,
+      });
       return;
     }
 
@@ -702,7 +821,9 @@ export class CareerBotService {
     if (remaining.length > 0) chunks.push(remaining);
 
     for (const chunk of chunks) {
-      await this.inbox.sendOutgoingMessage(message.userId, conversation.id, chunk);
+      await this.inbox.sendOutgoingMessage(message.userId, conversation.id, chunk, {
+        source: CAREER_BOT_MESSAGE_SOURCE,
+      });
     }
   }
 
@@ -752,6 +873,12 @@ export class CareerBotService {
       }
     }
 
+    if (step === 'follow_up_roles') {
+      if (t.length < 2) {
+        return 'Please enter at least one target role (e.g. *React Developer*).';
+      }
+    }
+
     return null;
   }
 
@@ -797,16 +924,121 @@ export class CareerBotService {
   private helpText(): string {
     return [
       '*Commands:*',
-      '• FIND JOBS {keyword}',
-      '• VIEW JOBS',
-      '• SHOW APPLICATIONS',
-      '• GENERATE RESUME',
+      '• VIEW JOBS / FIND JOBS {keyword}',
+      '• APPLY 1 — save job & get apply link',
+      '• RESUME 2 — tailor CV for job #2',
       '• GENERATE COVER LETTER',
-      '• IMPROVE RESUME',
+      '• UPLOAD RESUME — update your CV',
+      '• SHOW APPLICATIONS',
       '• CAREER ADVICE {question}',
       '• PREPARE INTERVIEW',
-      '• STOP DIGEST — unsubscribe from daily job alerts',
-      '• START DIGEST — re-enable daily alerts',
+      '• STOP DIGEST / START DIGEST',
     ].join('\n');
+  }
+
+  private shouldAcceptResumeUpload(profile: CareerProfile): boolean {
+    if (['welcome', 'awaiting_resume'].includes(profile.onboardingStep)) {
+      return true;
+    }
+    const data = profile.onboardingData as Record<string, unknown> | null;
+    return data?.reupload_pending === true;
+  }
+
+  private async isReuploadPending(profileId: number): Promise<boolean> {
+    const profile = await this.prisma.careerProfile.findUnique({
+      where: { id: profileId },
+      select: { onboardingData: true },
+    });
+    const data = profile?.onboardingData as Record<string, unknown> | null;
+    return data?.reupload_pending === true;
+  }
+
+  private async setReuploadPending(profileId: number, pending: boolean): Promise<void> {
+    await this.mergeOnboardingData(profileId, { reupload_pending: pending });
+  }
+
+  private async clearReuploadPending(profileId: number): Promise<void> {
+    await this.mergeOnboardingData(profileId, { reupload_pending: false });
+  }
+
+  private async mergeOnboardingData(
+    profileId: number,
+    patch: Record<string, unknown>,
+  ): Promise<void> {
+    const profile = await this.prisma.careerProfile.findUnique({
+      where: { id: profileId },
+      select: { onboardingData: true },
+    });
+    const existing = (profile?.onboardingData as Record<string, unknown>) ?? {};
+    await this.prisma.careerProfile.update({
+      where: { id: profileId },
+      data: { onboardingData: { ...existing, ...patch } as any },
+    });
+  }
+
+  private async saveJobSession(profileId: number, jobIds: number[]): Promise<void> {
+    const session: JobSession = { jobIds, listedAt: new Date().toISOString() };
+    await this.mergeOnboardingData(profileId, { job_session: session });
+  }
+
+  private async loadJobSession(profileId: number): Promise<JobSession | null> {
+    const profile = await this.prisma.careerProfile.findUnique({
+      where: { id: profileId },
+      select: { onboardingData: true },
+    });
+    const data = profile?.onboardingData as Record<string, unknown> | null;
+    const session = data?.job_session as JobSession | undefined;
+    if (!session?.jobIds?.length) {
+      return null;
+    }
+    return session;
+  }
+
+  private async resolveJobByIndex(
+    profile: CareerProfile,
+    userId: number,
+    index1Based: number,
+  ) {
+    if (index1Based < 1) {
+      return null;
+    }
+
+    const session = await this.loadJobSession(profile.id);
+    if (session && session.jobIds[index1Based - 1]) {
+      return this.prisma.careerJob.findFirst({
+        where: {
+          id: session.jobIds[index1Based - 1],
+          userId,
+          isActive: true,
+        },
+      });
+    }
+
+    const matches = await this.prisma.careerJobMatch.findMany({
+      where: { profileId: profile.id, userId },
+      orderBy: { score: 'desc' },
+      take: 10,
+      include: { job: true },
+    });
+    return matches[index1Based - 1]?.job ?? null;
+  }
+
+  private async jobIndexInSession(profileId: number, jobId: number): Promise<number | null> {
+    const session = await this.loadJobSession(profileId);
+    if (!session) {
+      return null;
+    }
+    const idx = session.jobIds.indexOf(jobId);
+    return idx >= 0 ? idx + 1 : null;
+  }
+
+  private parseApplyIndex(lower: string): number | null {
+    const match = lower.match(/^apply\s*#?\s*(\d+)\s*$/);
+    return match ? parseInt(match[1], 10) : null;
+  }
+
+  private parseResumeIndex(lower: string): number | null {
+    const match = lower.match(/^(?:generate\s+)?resume\s*#?\s*(\d+)\s*$/);
+    return match ? parseInt(match[1], 10) : null;
   }
 }

@@ -37,18 +37,18 @@ export const INSTAGRAM_SETUP_GUIDE = {
     },
     {
       id: 'paste_credentials',
-      title: 'Paste credentials in WhatsFlow',
+      title: 'Paste credentials in AutoWave',
       description: 'Page access token, Page ID, verify token (any secret you choose), and app secret.',
     },
     {
       id: 'webhook',
       title: 'Add webhook in Meta',
       description:
-        'Callback URL from WhatsFlow Settings. Use the same verify token. Subscribe to messages.',
+        'Callback URL from AutoWave Settings. Use the same verify token. Subscribe to messages.',
     },
     {
       id: 'test',
-      title: 'Test connection in WhatsFlow',
+      title: 'Test connection in AutoWave',
       description: 'Confirms your Page token and linked Instagram @username.',
     },
   ],

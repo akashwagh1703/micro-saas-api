@@ -5,6 +5,9 @@ export const CAREER_AI_BUSINESS = 'career_ai';
 /** Max bot replies per contact per minute (Phase 10 rate limit). */
 export const CAREER_RATE_LIMIT_DEFAULT = 20;
 
+/** Stored on outgoing message metadata to distinguish bot replies from human inbox messages. */
+export const CAREER_BOT_MESSAGE_SOURCE = 'career_bot';
+
 /** Max characters accepted from a single WhatsApp user message. */
 export const CAREER_MAX_INBOUND_CHARS = 4000;
 
@@ -45,6 +48,7 @@ export const CAREER_COMMANDS = {
   STOP_DIGEST: ['stop digest', 'unsubscribe', 'stop daily digest'],
   START_DIGEST: ['start digest', 'subscribe digest'],
   HELP: ['help', 'commands', 'menu'],
+  UPLOAD_RESUME: ['upload resume', 'update resume', 'new resume'],
 } as const;
 
 export const CAREER_RESUME_MIME = [
