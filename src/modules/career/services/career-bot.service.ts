@@ -7,12 +7,13 @@ import { InboxService } from '../../inbox/inbox.service';
 import { CAREER_COMMANDS, CAREER_MAX_INBOUND_CHARS, CAREER_BOT_MESSAGE_SOURCE, CAREER_WORK_MODE_BUTTONS, buildJobActionButtons } from '../career.constants';
 import { CareerProfileService } from './career-profile.service';
 import { CareerJobService } from './career-job.service';
-import { CareerMatchingService, JobMatchResult } from './career-matching.service';
+import { CareerMatchingService, JobMatchResult, CAREER_MIN_MATCH_SCORE } from './career-matching.service';
 import { CareerAiService, ConvTurn } from './career-ai.service';
 import { CareerResumeParserService } from './career-resume-parser.service';
 import { CareerStorageService } from './career-storage.service';
 import { CareerApplicationService } from './career-application.service';
 import { CareerPrivacyService } from './career-privacy.service';
+import { CareerDocumentShareService } from './career-document-share.service';
 import { CareerProfile } from '@prisma/client';
 import { JOB_DISPATCHER, JobDispatcher } from '../../queue/job-dispatcher';
 
@@ -41,6 +42,7 @@ export class CareerBotService {
     private readonly storage: CareerStorageService,
     private readonly applications: CareerApplicationService,
     private readonly privacy: CareerPrivacyService,
+    private readonly share: CareerDocumentShareService,
     @Inject(JOB_DISPATCHER) private readonly dispatcher: JobDispatcher,
   ) {}
 
@@ -136,8 +138,10 @@ export class CareerBotService {
       await this.cmdGenerateResume(message, profile);
       return true;
     }
-    if (this.matchesCommand(lower, CAREER_COMMANDS.GENERATE_COVER_LETTER)) {
-      await this.cmdGenerateCoverLetter(message, profile);
+
+    const coverIndex = this.parseCoverLetterIndex(lower);
+    if (coverIndex !== null || this.matchesCommand(lower, CAREER_COMMANDS.GENERATE_COVER_LETTER)) {
+      await this.cmdGenerateCoverLetter(message, profile, coverIndex ?? undefined);
       return true;
     }
     if (this.matchesCommand(lower, CAREER_COMMANDS.IMPROVE_RESUME)) {
@@ -353,16 +357,19 @@ export class CareerBotService {
   ): Promise<void> {
     await this.profiles.markComplete(profile.id);
     const jobList = await this.jobs.listActive(message.userId);
-    const matches = this.matching.matchProfileToJobs(profile, jobList);
+    const allMatches = this.matching.matchProfileToJobs(profile, jobList);
     await this.matching.persistMatches(
       message.userId,
       profile.id,
       message.contactId,
-      matches,
+      allMatches,
     );
+    const matches = this.matching.filterQualityMatches(allMatches);
     await this.reply(
       message,
-      `Your Career Profile is ready! ✅\n\nI found ${matches.length} matching jobs.\n\nReply *VIEW JOBS* to see them, or *FIND JOBS python* to search by keyword.\n${this.helpText()}`,
+      matches.length > 0
+        ? `Your Career Profile is ready! ✅\n\nI found *${matches.length}* strong matches (40%+ fit).\n\nReply *VIEW JOBS* to see them, or *FIND JOBS python* to search by keyword.\n${this.helpText()}`
+        : `Your Career Profile is ready! ✅\n\nNo strong matches yet — ask your operator to fetch jobs, then reply *FIND JOBS react*.\n${this.helpText()}`,
     );
   }
 
@@ -592,16 +599,22 @@ export class CareerBotService {
       jobList = this.jobs.searchByKeyword(jobList, keyword);
     }
 
-    const matches = this.matching.matchProfileToJobs(profile, jobList);
+    const allMatches = this.matching.matchProfileToJobs(profile, jobList);
     await this.matching.persistMatches(
       message.userId,
       profile.id,
       message.contactId,
-      matches,
+      allMatches,
     );
+    const matches = this.matching.filterQualityMatches(allMatches);
 
     if (matches.length === 0) {
-      await this.reply(message, 'No matching jobs found. Try another keyword like "React" or "Laravel".');
+      await this.reply(
+        message,
+        allMatches.length > 0
+          ? 'Jobs found but none scored 40%+ for your profile yet. Try *FIND JOBS {keyword}* or update your preferred location/roles in onboarding.'
+          : 'No matching jobs found. Try another keyword like "React" or "Sales", or ask your operator to fetch live jobs.',
+      );
       return;
     }
 
@@ -614,7 +627,7 @@ export class CareerBotService {
     });
     lines.push(
       '',
-      'Reply *APPLY 1* to save & get apply link, or *RESUME 2* to tailor your CV for job #2.',
+      'Reply *APPLY 1* to save & get apply link, *RESUME 2* for a tailored CV, or *COVER LETTER 1* for a cover letter.',
     );
     await this.reply(message, lines.join('\n'));
     await this.sendJobActionButtons(message, top.length);
@@ -821,7 +834,7 @@ export class CareerBotService {
       content,
     );
 
-    await this.prisma.careerResumeVersion.create({
+    const version = await this.prisma.careerResumeVersion.create({
       data: {
         userId: message.userId,
         resumeId,
@@ -839,33 +852,51 @@ export class CareerBotService {
       job.id,
     );
 
+    const downloadUrl = this.share.buildShareUrl('resume-version', version.id, message.userId);
+
     await this.reply(
       message,
-      `*Tailored resume — ${job.title} @ ${job.company}*\n\n${content}`,
+      `*Tailored resume ready* — ${job.title} @ ${job.company}\n\n📎 Download your CV (link valid 72 hours):\n${downloadUrl}`,
     );
-    await this.reply(
+    const followUpSent = await this.reply(
       message,
-      `Saved to your CareerAI account ✅\n\nReply *APPLY ${jobNum}* for the apply link, or *GENERATE COVER LETTER* for a cover letter.`,
+      `Saved securely ✅\n\nReply *APPLY ${jobNum}* for the apply link, or *COVER LETTER ${jobNum}* for a matching cover letter.`,
     );
+    if (!followUpSent) {
+      this.logger.warn(
+        `Resume generated for profileId=${profile.id} jobId=${job.id} but WhatsApp delivery failed`,
+      );
+    }
   }
 
   private async cmdGenerateCoverLetter(
     message: Message & { contact: Contact },
     profile: CareerProfile,
+    index1Based?: number,
   ): Promise<void> {
-    const topMatch = await this.prisma.careerJobMatch.findFirst({
-      where: { profileId: profile.id },
-      orderBy: { score: 'desc' },
-      include: { job: true },
-    });
-    if (!topMatch?.job) {
-      await this.reply(message, 'No job matches yet. Reply FIND JOBS first.');
+    let job = index1Based
+      ? await this.resolveJobByIndex(profile, message.userId, index1Based)
+      : await this.resolveJobByIndex(profile, message.userId, 1);
+
+    if (!job) {
+      const topMatch = await this.prisma.careerJobMatch.findFirst({
+        where: { profileId: profile.id, score: { gte: CAREER_MIN_MATCH_SCORE } },
+        orderBy: { score: 'desc' },
+        include: { job: true },
+      });
+      job = topMatch?.job ?? null;
+    }
+
+    if (!job) {
+      await this.reply(message, 'No job matches yet. Reply *FIND JOBS* or *VIEW JOBS* first.');
       return;
     }
 
+    const jobNum = index1Based ?? (await this.jobIndexInSession(profile.id, job.id)) ?? 1;
+
     await this.reply(
       message,
-      `Generating cover letter for *${topMatch.job.title}* @ ${topMatch.job.company}… ⏳`,
+      `Generating cover letter for *${job.title}* @ ${job.company}… ⏳`,
     );
 
     await this.dispatcher.enqueueCareerTask({
@@ -873,10 +904,15 @@ export class CareerBotService {
       messageId: message.id,
       profileId: profile.id,
       userId: message.userId,
+      jobIndex: jobNum,
     });
   }
 
-  async runGenerateCoverLetterTask(messageId: number, profileId: number): Promise<void> {
+  async runGenerateCoverLetterTask(
+    messageId: number,
+    profileId: number,
+    jobIndex?: number,
+  ): Promise<void> {
     const message = await this.loadIncomingMessage(messageId);
     if (!message) {
       return;
@@ -888,13 +924,21 @@ export class CareerBotService {
       return;
     }
 
-    const topMatch = await this.prisma.careerJobMatch.findFirst({
-      where: { profileId: profile.id },
-      orderBy: { score: 'desc' },
-      include: { job: true },
-    });
-    if (!topMatch?.job) {
-      await this.reply(message, 'No job matches yet. Reply FIND JOBS first.');
+    let job = jobIndex
+      ? await this.resolveJobByIndex(profile, message.userId, jobIndex)
+      : await this.resolveJobByIndex(profile, message.userId, 1);
+
+    if (!job) {
+      const topMatch = await this.prisma.careerJobMatch.findFirst({
+        where: { profileId: profile.id, score: { gte: CAREER_MIN_MATCH_SCORE } },
+        orderBy: { score: 'desc' },
+        include: { job: true },
+      });
+      job = topMatch?.job ?? null;
+    }
+
+    if (!job) {
+      await this.reply(message, 'No job matches yet. Reply *FIND JOBS* first.');
       return;
     }
 
@@ -904,7 +948,7 @@ export class CareerBotService {
         this.careerAi.generateCoverLetter(
           message.userId,
           this.profiles.profileSnapshot(profile),
-          topMatch.job,
+          job!,
         ),
       null,
       'generate_cover_letter',
@@ -914,19 +958,150 @@ export class CareerBotService {
       return;
     }
 
-    await this.prisma.careerCoverLetter.create({
+    const filePath = await this.storage.saveText(
+      message.userId,
+      'generated',
+      `cover_letter_${job.id}.txt`,
+      content,
+    );
+
+    const letter = await this.prisma.careerCoverLetter.create({
       data: {
         userId: message.userId,
         profileId: profile.id,
-        jobId: topMatch.job.id,
+        jobId: job.id,
         content,
+        filePath,
       },
     });
 
+    const jobNum = jobIndex ?? (await this.jobIndexInSession(profile.id, job.id)) ?? 1;
+    const downloadUrl = this.share.buildShareUrl('cover-letter', letter.id, message.userId);
+
     await this.reply(
       message,
-      `Cover letter for *${topMatch.job.title}*:\n\n${content}`,
+      `*Cover letter ready* — ${job.title} @ ${job.company}\n\n📎 Download (link valid 72 hours):\n${downloadUrl}`,
     );
+    await this.reply(
+      message,
+      `Saved securely ✅ Reply *APPLY ${jobNum}* to save this role and get the apply link.`,
+    );
+  }
+
+  /** Re-run matching for a profile (portal operator action). */
+  async rematchProfile(userId: number, profileId: number) {
+    const profile = await this.prisma.careerProfile.findFirst({
+      where: { id: profileId, userId },
+    });
+    if (!profile) {
+      return null;
+    }
+
+    const jobList = await this.jobs.listActive(userId);
+    const allMatches = this.matching.matchProfileToJobs(profile, jobList);
+    await this.matching.persistMatches(userId, profileId, profile.contactId, allMatches);
+    const quality = this.matching.filterQualityMatches(allMatches);
+
+    return {
+      matchCount: quality.length,
+      totalScored: allMatches.length,
+      topScore: quality[0]?.score ?? 0,
+    };
+  }
+
+  /** Send a generated resume to the job seeker on WhatsApp (portal operator action). */
+  async sendResumeVersionToContact(
+    userId: number,
+    versionId: number,
+  ): Promise<{ success: boolean; error?: string }> {
+    const version = await this.prisma.careerResumeVersion.findFirst({
+      where: { id: versionId, userId },
+      include: { job: true, resume: true },
+    });
+    if (!version?.content) {
+      return { success: false, error: 'Resume version not found' };
+    }
+
+    const profileId = version.resume?.profileId;
+    if (!profileId) {
+      return { success: false, error: 'Profile not linked' };
+    }
+
+    const title = version.job
+      ? `*Tailored resume — ${version.job.title} @ ${version.job.company}*`
+      : `*${version.title ?? 'Tailored resume'}*`;
+
+    const downloadUrl = this.share.buildShareUrl('resume-version', version.id, userId);
+    return this.sendTextToProfile(
+      userId,
+      profileId,
+      `${title}\n\n📎 Download (link valid 72 hours):\n${downloadUrl}`,
+    );
+  }
+
+  /** Send a cover letter to the job seeker on WhatsApp (portal operator action). */
+  async sendCoverLetterToContact(
+    userId: number,
+    coverLetterId: number,
+  ): Promise<{ success: boolean; error?: string }> {
+    const letter = await this.prisma.careerCoverLetter.findFirst({
+      where: { id: coverLetterId, userId },
+      include: { job: true },
+    });
+    if (!letter?.content) {
+      return { success: false, error: 'Cover letter not found' };
+    }
+
+    const title = letter.job
+      ? `*Cover letter — ${letter.job.title} @ ${letter.job.company}*`
+      : '*Cover letter*';
+
+    const downloadUrl = this.share.buildShareUrl('cover-letter', letter.id, userId);
+    return this.sendTextToProfile(
+      userId,
+      letter.profileId,
+      `${title}\n\n📎 Download (link valid 72 hours):\n${downloadUrl}`,
+    );
+  }
+
+  async notifyCareerTaskFailure(messageId: number, taskLabel: string): Promise<void> {
+    const message = await this.loadIncomingMessage(messageId);
+    if (!message) {
+      return;
+    }
+    await this.reply(
+      message,
+      `Sorry, ${taskLabel} failed. Please try again in a moment. If it keeps failing, check AI settings in your portal or contact support.`,
+    );
+  }
+
+  private async sendTextToProfile(
+    userId: number,
+    profileId: number,
+    text: string,
+  ): Promise<{ success: boolean; error?: string }> {
+    const profile = await this.prisma.careerProfile.findFirst({
+      where: { id: profileId, userId },
+    });
+    if (!profile) {
+      return { success: false, error: 'Profile not found' };
+    }
+
+    const conversation = await this.prisma.conversation.findUnique({
+      where: { contactId: profile.contactId },
+    });
+    if (!conversation) {
+      return { success: false, error: 'No WhatsApp conversation for this contact' };
+    }
+
+    const sent = await this.sendChunkedText(userId, conversation.id, text);
+    if (!sent) {
+      return {
+        success: false,
+        error: 'WhatsApp delivery failed — check connection and 24-hour messaging window',
+      };
+    }
+    return { success: true };
   }
 
   private async loadIncomingMessage(
@@ -993,35 +1168,54 @@ export class CareerBotService {
    * The original reply() sent the full string regardless of length.
    * This version splits at paragraph boundaries and sends multiple messages.
    */
-  private async reply(message: Message & { contact: Contact }, text: string): Promise<void> {
+  private async reply(message: Message & { contact: Contact }, text: string): Promise<boolean> {
     const conversation = await this.prisma.conversation.findUnique({
       where: { contactId: message.contactId },
     });
-    if (!conversation) return;
-
-    if (text.length <= WA_MAX_CHARS) {
-      await this.inbox.sendOutgoingMessage(message.userId, conversation.id, text, {
-        source: CAREER_BOT_MESSAGE_SOURCE,
-      });
-      return;
+    if (!conversation) {
+      this.logger.warn(`No conversation for contactId=${message.contactId} — message not sent`);
+      return false;
     }
 
-    // Split at double-newline paragraph boundaries where possible.
+    const sent = await this.sendChunkedText(message.userId, conversation.id, text);
+    if (!sent) {
+      this.logger.warn(`WhatsApp reply failed for contactId=${message.contactId}`);
+    }
+    return sent;
+  }
+
+  private async sendChunkedText(
+    userId: number,
+    conversationId: number,
+    text: string,
+  ): Promise<boolean> {
     const chunks: string[] = [];
-    let remaining = text;
-    while (remaining.length > WA_MAX_CHARS) {
-      const cut = remaining.lastIndexOf('\n\n', WA_MAX_CHARS);
-      const splitAt = cut > 0 ? cut : WA_MAX_CHARS;
-      chunks.push(remaining.slice(0, splitAt).trim());
-      remaining = remaining.slice(splitAt).trim();
+    if (text.length <= WA_MAX_CHARS) {
+      chunks.push(text);
+    } else {
+      let remaining = text;
+      while (remaining.length > WA_MAX_CHARS) {
+        const cut = remaining.lastIndexOf('\n\n', WA_MAX_CHARS);
+        const splitAt = cut > 0 ? cut : WA_MAX_CHARS;
+        chunks.push(remaining.slice(0, splitAt).trim());
+        remaining = remaining.slice(splitAt).trim();
+      }
+      if (remaining.length > 0) {
+        chunks.push(remaining);
+      }
     }
-    if (remaining.length > 0) chunks.push(remaining);
 
+    let allOk = true;
     for (const chunk of chunks) {
-      await this.inbox.sendOutgoingMessage(message.userId, conversation.id, chunk, {
+      const result = await this.inbox.sendOutgoingMessage(userId, conversationId, chunk, {
         source: CAREER_BOT_MESSAGE_SOURCE,
       });
+      if (!result.success) {
+        allOk = false;
+        this.logger.warn(`WhatsApp chunk failed conversationId=${conversationId}: ${result.error}`);
+      }
     }
+    return allOk;
   }
 
   /**
@@ -1124,6 +1318,7 @@ export class CareerBotService {
       '• *VIEW JOBS* — see your top matches',
       '• *APPLY 2* — save job #2 & get apply link',
       '• *RESUME 1* — tailored CV for job #1',
+      '• *COVER LETTER 2* — cover letter for job #2',
       '',
       '*More:*',
       '• *FIND JOBS python* — search by keyword',
@@ -1445,7 +1640,7 @@ export class CareerBotService {
     }
 
     const matches = await this.prisma.careerJobMatch.findMany({
-      where: { profileId: profile.id, userId },
+      where: { profileId: profile.id, userId, score: { gte: CAREER_MIN_MATCH_SCORE } },
       orderBy: { score: 'desc' },
       take: 10,
       include: { job: true },
@@ -1469,6 +1664,11 @@ export class CareerBotService {
 
   private parseResumeIndex(lower: string): number | null {
     const match = lower.match(/^(?:generate\s+)?resume\s*#?\s*(\d+)\s*$/);
+    return match ? parseInt(match[1], 10) : null;
+  }
+
+  private parseCoverLetterIndex(lower: string): number | null {
+    const match = lower.match(/^(?:generate\s+)?cover\s+letter\s*#?\s*(\d+)\s*$/);
     return match ? parseInt(match[1], 10) : null;
   }
 }

@@ -9,6 +9,9 @@ const CAREER_BUTTON_REPLY_MAP: Record<string, string> = {
   resume_1: 'RESUME 1',
   resume_2: 'RESUME 2',
   resume_3: 'RESUME 3',
+  cover_1: 'COVER LETTER 1',
+  cover_2: 'COVER LETTER 2',
+  cover_3: 'COVER LETTER 3',
 };
 
 export function mapCareerButtonReply(buttonId: string | undefined): string | null {

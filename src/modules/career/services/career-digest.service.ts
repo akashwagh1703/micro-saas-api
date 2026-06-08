@@ -12,6 +12,8 @@ export interface DigestBatchResult {
   failed: number;
 }
 
+type DigestProfileOutcome = 'sent' | 'skipped' | 'failed';
+
 @Injectable()
 export class CareerDigestService {
   private readonly logger = new Logger(CareerDigestService.name);
@@ -27,19 +29,19 @@ export class CareerDigestService {
    * Sends the daily digest for one profile. Returns true only when a WhatsApp
    * message was actually delivered.
    */
-  async sendDailyDigestForProfile(profileId: number): Promise<boolean> {
+  async sendDailyDigestForProfile(profileId: number): Promise<DigestProfileOutcome> {
     const profile = await this.prisma.careerProfile.findUnique({
       where: { id: profileId },
       include: { contact: true },
     });
 
     if (!profile?.isComplete || !profile.contact) {
-      return false;
+      return 'skipped';
     }
 
     if (profile.digestOptOut) {
       this.logger.debug(`Digest skipped — profile ${profileId} opted out`);
-      return false;
+      return 'skipped';
     }
 
     const startOfTodayUtc = new Date();
@@ -54,25 +56,27 @@ export class CareerDigestService {
     });
     if (alreadySentToday) {
       this.logger.debug(`Digest skipped — profile ${profileId} already sent today`);
-      return false;
+      return 'skipped';
     }
 
     try {
       const jobList = await this.jobs.listActive(profile.userId);
-      const matches = this.matching.matchProfileToJobs(profile, jobList);
+      const allMatches = this.matching.matchProfileToJobs(profile, jobList);
       await this.matching.persistMatches(
         profile.userId,
         profile.id,
         profile.contactId,
-        matches,
+        allMatches,
       );
+      const matches = this.matching.filterQualityMatches(allMatches);
 
       if (matches.length === 0) {
         await this.recordNotification(profile, 'skipped', {
-          reason: 'no_matches',
+          reason: allMatches.length > 0 ? 'low_match_scores' : 'no_matches',
           matchCount: 0,
+          totalScored: allMatches.length,
         });
-        return false;
+        return 'skipped';
       }
 
       const top = matches.slice(0, 3);
@@ -113,7 +117,7 @@ export class CareerDigestService {
           reason: 'no_conversation',
           matchCount: matches.length,
         });
-        return false;
+        return 'failed';
       }
 
       const sendResult = await this.inbox.sendOutgoingMessage(
@@ -128,7 +132,7 @@ export class CareerDigestService {
           error: sendResult.error,
           matchCount: matches.length,
         });
-        return false;
+        return 'failed';
       }
 
       const jobButtons = buildJobActionButtons(top.length);
@@ -147,14 +151,14 @@ export class CareerDigestService {
         topJobIds: top.map((t) => t.job.id),
       });
 
-      return true;
+      return 'sent';
     } catch (e: any) {
       this.logger.error(`Daily digest failed for profile ${profileId}: ${e.message}`);
       await this.recordNotification(profile, 'failed', {
         reason: 'exception',
         error: e.message,
       });
-      return false;
+      return 'failed';
     }
   }
 
@@ -167,15 +171,13 @@ export class CareerDigestService {
     const result: DigestBatchResult = { sent: 0, skipped: 0, failed: 0 };
 
     for (const p of profiles) {
-      try {
-        const ok = await this.sendDailyDigestForProfile(p.id);
-        if (ok) {
-          result.sent++;
-        } else {
-          result.skipped++;
-        }
-      } catch {
+      const outcome = await this.sendDailyDigestForProfile(p.id);
+      if (outcome === 'sent') {
+        result.sent++;
+      } else if (outcome === 'failed') {
         result.failed++;
+      } else {
+        result.skipped++;
       }
     }
 

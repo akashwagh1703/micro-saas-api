@@ -3,6 +3,7 @@ import { IntegrationsModule } from '../integrations/integrations.module';
 import { InboxModule } from '../inbox/inbox.module';
 import { WhatsappModule } from '../whatsapp/whatsapp.module';
 import { SettingsModule } from '../settings/settings.module';
+import { CareerPublicController } from './career-public.controller';
 import { CareerController } from './career.controller';
 import { CareerBotService } from './services/career-bot.service';
 import { CareerIncomingHandler } from './career-incoming.handler';
@@ -27,10 +28,11 @@ import { NaukriJobSource } from './job-sources/naukri.job-source';
 import { LinkedInJobSource } from './job-sources/linkedin.job-source';
 import { CareerJobSourceRegistry } from './job-sources/career-job-source.registry';
 import { CareerJobUpsertService } from './job-sources/career-job-upsert.service';
+import { CareerDocumentShareService } from './services/career-document-share.service';
 
 @Module({
   imports: [IntegrationsModule, InboxModule, WhatsappModule, SettingsModule],
-  controllers: [CareerController],
+  controllers: [CareerController, CareerPublicController],
   providers: [
     CareerBotService,
     CareerIncomingHandler,
@@ -55,6 +57,7 @@ import { CareerJobUpsertService } from './job-sources/career-job-upsert.service'
     NaukriJobSource,
     LinkedInJobSource,
     CareerJobSourceRegistry,
+    CareerDocumentShareService,
   ],
   exports: [CareerIncomingHandler, CareerDigestService, CareerBotService],
 })

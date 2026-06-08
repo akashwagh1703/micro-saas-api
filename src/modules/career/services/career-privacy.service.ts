@@ -47,6 +47,7 @@ export class CareerPrivacyService {
       }
     }
     for (const letter of profile.coverLetters) {
+      if (letter.filePath) filePaths.push(letter.filePath);
       if (letter.filePathPdf) filePaths.push(letter.filePathPdf);
       if (letter.filePathDocx) filePaths.push(letter.filePathDocx);
     }

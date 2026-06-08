@@ -24,14 +24,33 @@ const W_SALARY     = 15;
 const W_LOCATION   = 15;
 const W_ROLE       = 10;
 
+/** Minimum score shown to job seekers (VIEW JOBS, digest, APPLY/RESUME lists). */
+export const CAREER_MIN_MATCH_SCORE = 40;
+
+const CITY_ALIASES: Record<string, string[]> = {
+  bangalore: ['bangalore', 'bengaluru'],
+  bengaluru: ['bangalore', 'bengaluru'],
+  mumbai: ['mumbai', 'bombay'],
+  bombay: ['mumbai', 'bombay'],
+  delhi: ['delhi', 'new delhi', 'ncr'],
+  chennai: ['chennai', 'madras'],
+  kolkata: ['kolkata', 'calcutta'],
+  hyderabad: ['hyderabad'],
+  pune: ['pune', 'poona'],
+};
+
 @Injectable()
 export class CareerMatchingService {
   constructor(private readonly prisma: PrismaService) {}
 
+  filterQualityMatches(results: JobMatchResult[]): JobMatchResult[] {
+    return results.filter((r) => r.score >= CAREER_MIN_MATCH_SCORE);
+  }
+
   matchProfileToJobs(profile: CareerProfile, jobs: CareerJob[]): JobMatchResult[] {
     const profileSkills    = this.normalizeSkills(profile.skills);
     const preferredRoles   = this.normalizeArray(profile.preferredRoles);
-    const preferredLocs    = this.normalizeArray(profile.preferredLocations).map((l) => l.toLowerCase());
+    const preferredLocs    = this.buildLocationPreferences(profile);
     const profileExpYears  = this.calcExperienceYears(profile.experience);
     const expectedSalaryL  = this.parseSalaryLPA(profile.expectedSalary);
     const workPref         = (profile.workPreference ?? '').toLowerCase();
@@ -45,9 +64,7 @@ export class CareerMatchingService {
         // ── 1. Skills (40 pts) ───────────────────────────────────────────────
         const required = this.normalizeSkills(job.requiredSkills);
         if (required.length > 0) {
-          const hits = required.filter((skill) =>
-            profileSkills.some((ps) => ps.includes(skill) || skill.includes(ps)),
-          );
+          const hits = required.filter((skill) => this.skillMatches(profileSkills, skill));
           score += (hits.length / required.length) * W_SKILLS;
           hits.forEach((s) => matched.push(`✓ ${this.cap(s)}`));
           required.filter((s) => !hits.includes(s)).forEach((s) => missing.push(this.cap(s)));
@@ -62,8 +79,11 @@ export class CareerMatchingService {
         if (profileExpYears >= minExp && profileExpYears <= maxExp) {
           score += W_EXPERIENCE;
           matched.push(`✓ ${profileExpYears}y exp (needs ${minExp}–${maxExp}y)`);
+        } else if (profileExpYears >= minExp && profileExpYears > maxExp) {
+          score += W_EXPERIENCE * 0.75;
+          matched.push(`✓ ${profileExpYears}y exp (role asks ${minExp}–${maxExp}y)`);
         } else if (profileExpYears >= minExp) {
-          score += W_EXPERIENCE;
+          score += W_EXPERIENCE * 0.85;
           matched.push(`✓ Experience meets minimum (${minExp}y+)`);
         } else if (minExp > 0) {
           // Partial credit proportional to how close the candidate is.
@@ -106,11 +126,7 @@ export class CareerMatchingService {
           // Candidate wants remote, job is not.
           missing.push('Remote role required');
         } else if (preferredLocs.length > 0) {
-          const locHit = preferredLocs.some(
-            (loc) =>
-              jobCity.includes(loc) ||
-              loc.includes(jobCity.split(' ')[0]),   // "Bangalore" matches "Bengaluru, Karnataka"
-          );
+          const locHit = preferredLocs.some((loc) => this.locationMatches(loc, jobCity));
           if (locHit) {
             score += W_LOCATION;
             matched.push(`✓ Location matches`);
@@ -238,6 +254,39 @@ export class CareerMatchingService {
   private inrToLPA(inr: number | null | undefined): number | null {
     if (!inr) return null;
     return inr > 1000 ? Math.round(inr / 100_000 * 10) / 10 : inr;
+  }
+
+  private buildLocationPreferences(profile: CareerProfile): string[] {
+    const fromPreferred = this.normalizeArray(profile.preferredLocations);
+    const current = profile.currentLocation?.trim();
+    const combined = current && !fromPreferred.includes(current)
+      ? [...fromPreferred, current]
+      : fromPreferred;
+    return combined.map((l) => l.toLowerCase()).filter(Boolean);
+  }
+
+  private locationMatches(preferred: string, jobCity: string): boolean {
+    if (!preferred || !jobCity) return false;
+    if (jobCity.includes(preferred) || preferred.includes(jobCity.split(',')[0]?.trim() ?? '')) {
+      return true;
+    }
+    const aliases = CITY_ALIASES[preferred.split(/\s+/)[0]] ?? [preferred];
+    return aliases.some(
+      (alias) => jobCity.includes(alias) || alias.includes(jobCity.split(',')[0]?.trim() ?? ''),
+    );
+  }
+
+  private skillMatches(profileSkills: string[], skill: string): boolean {
+    return profileSkills.some((ps) => {
+      if (ps === skill) return true;
+      const [short, long] = ps.length <= skill.length ? [ps, skill] : [skill, ps];
+      if (short.length < 2) return false;
+      return new RegExp(`\\b${this.escapeRegex(short)}\\b`).test(long);
+    });
+  }
+
+  private escapeRegex(value: string): string {
+    return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   }
 
   private normalizeSkills(raw: unknown): string[] {

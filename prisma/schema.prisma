@@ -490,6 +490,7 @@ model CareerCoverLetter {
   profileId    Int       @map("profile_id")
   jobId        Int?      @map("job_id")
   content      String    @db.Text
+  filePath     String?   @map("file_path")
   filePathPdf  String?   @map("file_path_pdf")
   filePathDocx String?   @map("file_path_docx")
   createdAt    DateTime? @default(now()) @map("created_at")

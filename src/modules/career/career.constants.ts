@@ -68,11 +68,14 @@ export const CAREER_WORK_MODE_BUTTONS = [
 
 export function buildJobActionButtons(count: number): Array<{ id: string; title: string }> {
   const buttons: Array<{ id: string; title: string }> = [];
-  for (let i = 1; i <= Math.min(count, 3); i++) {
-    buttons.push({ id: `apply_${i}`, title: `Apply #${i}` });
-  }
-  if (buttons.length < 3 && count >= 1) {
+  if (count >= 1) {
+    buttons.push({ id: 'apply_1', title: 'Apply #1' });
     buttons.push({ id: 'resume_1', title: 'Resume #1' });
+  }
+  if (count >= 2) {
+    buttons.push({ id: 'apply_2', title: 'Apply #2' });
+  } else if (count >= 1) {
+    buttons.push({ id: 'cover_1', title: 'Cover #1' });
   }
   return buttons.slice(0, 3);
 }

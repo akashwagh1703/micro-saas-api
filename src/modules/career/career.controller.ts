@@ -10,6 +10,7 @@ import {
   Post,
   Query,
   StreamableFile,
+  UnprocessableEntityException,
   UseGuards,
 } from '@nestjs/common';
 import { TokenAuthGuard } from '../../common/guards/token-auth.guard';
@@ -24,6 +25,7 @@ import { CareerStorageService } from './services/career-storage.service';
 import { CareerAiUsageService } from './services/career-ai-usage.service';
 import { CareerAuditService } from './services/career-audit.service';
 import { CareerPrivacyService } from './services/career-privacy.service';
+import { CareerBotService } from './services/career-bot.service';
 import { CAREER_APPLICATION_STATUSES } from './career.constants';
 import { IsArray, IsIn, IsOptional, IsString } from 'class-validator';
 
@@ -127,6 +129,7 @@ export class CareerController {
     private readonly aiUsage: CareerAiUsageService,
     private readonly audit: CareerAuditService,
     private readonly privacy: CareerPrivacyService,
+    private readonly bot: CareerBotService,
   ) {}
 
   @Get('storage/status')
@@ -270,6 +273,68 @@ export class CareerController {
       throw new NotFoundException('Profile not found');
     }
     return result;
+  }
+
+  @Post('profiles/:id/rematch')
+  async rematchProfile(
+    @CurrentUser('id') userId: number,
+    @Param('id', ParseIntPipe) id: number,
+  ) {
+    const result = await this.bot.rematchProfile(userId, id);
+    if (!result) {
+      throw new NotFoundException('Profile not found');
+    }
+    return {
+      message: `Re-matched profile — ${result.matchCount} strong matches (40%+ score)`,
+      ...result,
+    };
+  }
+
+  @Post('resume-versions/:id/send')
+  async sendResumeVersion(
+    @CurrentUser('id') userId: number,
+    @Param('id', ParseIntPipe) id: number,
+  ) {
+    const result = await this.bot.sendResumeVersionToContact(userId, id);
+    if (!result.success) {
+      throw new UnprocessableEntityException(result.error ?? 'Could not send resume on WhatsApp');
+    }
+    return { message: 'Resume sent on WhatsApp', success: true };
+  }
+
+  @Post('cover-letters/:id/send')
+  async sendCoverLetter(
+    @CurrentUser('id') userId: number,
+    @Param('id', ParseIntPipe) id: number,
+  ) {
+    const result = await this.bot.sendCoverLetterToContact(userId, id);
+    if (!result.success) {
+      throw new UnprocessableEntityException(result.error ?? 'Could not send cover letter on WhatsApp');
+    }
+    return { message: 'Cover letter sent on WhatsApp', success: true };
+  }
+
+  @Get('cover-letters/:id/download')
+  async downloadCoverLetter(
+    @CurrentUser('id') userId: number,
+    @Param('id', ParseIntPipe) id: number,
+  ): Promise<StreamableFile> {
+    const letter = await this.prisma.careerCoverLetter.findFirst({
+      where: { id, userId },
+      include: { job: true },
+    });
+    if (!letter?.content) {
+      throw new NotFoundException('Cover letter not found');
+    }
+
+    const fileName = letter.job
+      ? `cover-letter-${letter.job.company}-${letter.job.title}.txt`.replace(/[^\w.-]+/g, '_')
+      : `cover-letter-${id}.txt`;
+
+    return new StreamableFile(Buffer.from(letter.content, 'utf-8'), {
+      type: 'text/plain; charset=utf-8',
+      disposition: `attachment; filename="${fileName}"`,
+    });
   }
 
   @Get('cover-letters')
