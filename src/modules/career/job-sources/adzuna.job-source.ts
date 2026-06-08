@@ -77,7 +77,7 @@ export class AdzunaJobSource implements CareerJobSource {
               results_per_page: 20,
               what: keyword,
               where: location,
-              content_type: 'application/json',
+              'content-type': 'application/json',
             },
             timeout: 15_000,
           },
