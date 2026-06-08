@@ -21,25 +21,33 @@ import {
 @Injectable()
 export class QueueService implements JobDispatcher, OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(QueueService.name);
-  private boss: PgBoss;
-  private ready: Promise<void>;
+  private boss?: PgBoss;
+  private readonly ready: Promise<void>;
+  private resolveReady!: () => void;
+  private rejectReady!: (err: unknown) => void;
   private enabled = false;
 
-  constructor(private readonly config: ConfigService) {}
+  constructor(private readonly config: ConfigService) {
+    this.ready = new Promise<void>((resolve, reject) => {
+      this.resolveReady = resolve;
+      this.rejectReady = reject;
+    });
+  }
 
   async onModuleInit(): Promise<void> {
     const driver = this.config.get<string>('QUEUE_DRIVER') ?? 'pgboss';
     if (driver !== 'pgboss') {
       this.logger.log(`QUEUE_DRIVER=${driver}; pg-boss disabled (work runs inline).`);
+      this.resolveReady();
       return;
     }
-    this.enabled = true;
 
-    const connectionString = this.config.get<string>('DATABASE_URL');
-    this.boss = new PgBoss({ connectionString });
-    this.boss.on('error', (err) => this.logger.error(`pg-boss error: ${err.message}`));
+    try {
+      this.enabled = true;
+      const connectionString = this.config.get<string>('DATABASE_URL');
+      this.boss = new PgBoss({ connectionString });
+      this.boss.on('error', (err) => this.logger.error(`pg-boss error: ${err.message}`));
 
-    this.ready = (async () => {
       await this.boss.start();
       for (const queue of ALL_QUEUES) {
         try {
@@ -49,21 +57,33 @@ export class QueueService implements JobDispatcher, OnModuleInit, OnModuleDestro
         }
       }
       this.logger.log('Queue started (pg-boss).');
-    })();
-
-    await this.ready;
+      this.resolveReady();
+    } catch (err) {
+      this.enabled = false;
+      this.boss = undefined;
+      this.rejectReady(err);
+      throw err;
+    }
   }
 
   async onModuleDestroy(): Promise<void> {
-    if (this.enabled) {
-      await this.boss?.stop({ graceful: true });
+    if (this.enabled && this.boss) {
+      await this.boss.stop({ graceful: true });
     }
+  }
+
+  private async assertBoss(): Promise<PgBoss> {
+    await this.ready;
+    if (!this.enabled || !this.boss) {
+      throw new Error('pg-boss is not enabled');
+    }
+    return this.boss;
   }
 
   /** Registers a worker handler for a queue. Unwraps pg-boss job batches. */
   async work<T>(queue: string, handler: (data: T) => Promise<void>): Promise<void> {
-    await this.ready;
-    await this.boss.work<T>(queue, async (jobs) => {
+    const boss = await this.assertBoss();
+    await boss.work<T>(queue, async (jobs) => {
       for (const job of jobs) {
         await handler(job.data);
       }
@@ -71,23 +91,23 @@ export class QueueService implements JobDispatcher, OnModuleInit, OnModuleDestro
   }
 
   async enqueueProcessIncoming(messageId: number): Promise<void> {
-    await this.ready;
-    await this.boss.send(QUEUE_PROCESS_INCOMING, { messageId }, { retryLimit: 3 });
+    const boss = await this.assertBoss();
+    await boss.send(QUEUE_PROCESS_INCOMING, { messageId }, { retryLimit: 3 });
   }
 
   async enqueueExecuteWorkflow(executionId: number): Promise<void> {
-    await this.ready;
-    await this.boss.send(QUEUE_EXECUTE_WORKFLOW, { executionId }, { retryLimit: 2 });
+    const boss = await this.assertBoss();
+    await boss.send(QUEUE_EXECUTE_WORKFLOW, { executionId }, { retryLimit: 2 });
   }
 
   async enqueueSendMessage(payload: SendMessageJob): Promise<void> {
-    await this.ready;
-    await this.boss.send(QUEUE_SEND_MESSAGE, payload, { retryLimit: 3 });
+    const boss = await this.assertBoss();
+    await boss.send(QUEUE_SEND_MESSAGE, payload, { retryLimit: 3 });
   }
 
   async enqueueCareerTask(payload: CareerTaskJob): Promise<void> {
-    await this.ready;
-    await this.boss.send(QUEUE_CAREER_TASK, payload, { retryLimit: 2 });
+    const boss = await this.assertBoss();
+    await boss.send(QUEUE_CAREER_TASK, payload, { retryLimit: 2 });
   }
 
   /** Register a cron schedule (stored in PostgreSQL — safe with multiple API instances). */
@@ -97,7 +117,7 @@ export class QueueService implements JobDispatcher, OnModuleInit, OnModuleDestro
     data: object = {},
     options?: { tz?: string },
   ): Promise<void> {
-    await this.ready;
-    await this.boss.schedule(queue, cron, data, options ?? {});
+    const boss = await this.assertBoss();
+    await boss.schedule(queue, cron, data, options ?? {});
   }
 }
