@@ -65,33 +65,46 @@ export class CareerAiService {
     userId: number,
     profile: Record<string, unknown>,
     job: { title: string; company: string; description?: string | null },
+    originalResumeText: string,
   ): Promise<string | null> {
+    if (!originalResumeText.trim()) {
+      return null;
+    }
+
     const messages: Array<{ role: 'system' | 'user'; content: string }> = [
       {
         role: 'system',
         content:
-          'You are an expert resume writer who creates ATS-optimised resumes. ' +
-          'Mirror keywords from the job description. Never invent facts. ' +
-          'Return plain text only with clear section headers.',
+          'You tailor an EXISTING resume for a specific job application. ' +
+          'CRITICAL RULES:\n' +
+          '1. Use ONLY facts from the candidate\'s original resume text and profile — never invent employers, job titles, dates, degrees, certifications, or skills.\n' +
+          '2. Do NOT add experience, projects, or qualifications that are not in the source resume.\n' +
+          '3. You MAY reword bullet points, reorder sections, and mirror keywords from the job description when they honestly describe existing experience.\n' +
+          '4. You MAY write a short professional summary that reframes their real background for this role.\n' +
+          '5. Return plain text only with section headers: CONTACT | PROFESSIONAL SUMMARY | SKILLS | EXPERIENCE | EDUCATION | CERTIFICATIONS',
       },
       {
         role: 'user',
         content: [
-          `Create a tailored resume for this candidate applying to: ${job.title} at ${job.company}`,
+          `Tailor this candidate's resume for: ${job.title} at ${job.company}`,
           '',
-          `Job description: ${(job.description ?? 'N/A').slice(0, 2000)}`,
+          '--- TARGET JOB ---',
+          `Title: ${job.title}`,
+          `Company: ${job.company}`,
+          `Description: ${(job.description ?? 'N/A').slice(0, 2500)}`,
           '',
-          'Candidate profile:',
-          JSON.stringify(profile).slice(0, 6000),
+          '--- CANDIDATE PROFILE (structured) ---',
+          JSON.stringify(profile).slice(0, 4000),
           '',
-          'Format: CONTACT | PROFESSIONAL SUMMARY | SKILLS | EXPERIENCE | EDUCATION | CERTIFICATIONS',
+          '--- ORIGINAL RESUME (source of truth — do not add facts beyond this) ---',
+          originalResumeText.slice(0, 12000),
         ].join('\n'),
       },
     ];
 
     const result = await this.ai.completeWithMessages(userId, messages, {
       max_tokens: 3000,
-      temperature: 0.3,
+      temperature: 0.2,
     });
     await this.track(userId, 'generate_resume', result);
     return result.success ? (result.content ?? null) : null;
@@ -103,35 +116,47 @@ export class CareerAiService {
     userId: number,
     profile: Record<string, unknown>,
     job: { title: string; company: string; description?: string | null },
+    originalResumeText: string,
   ): Promise<string | null> {
+    if (!originalResumeText.trim()) {
+      return null;
+    }
+
     const messages: Array<{ role: 'system' | 'user'; content: string }> = [
       {
         role: 'system',
         content:
-          'You are a professional cover letter writer. ' +
-          'Write concise, confident, tailored letters under 350 words. ' +
-          'Open strong. End with a clear call to action. Plain text only, no headers.',
+          'You write cover letters based ONLY on the candidate\'s real resume and profile. ' +
+          'Never invent employers, achievements, degrees, or skills. ' +
+          'Reference specific real experience from their resume that matches the job. ' +
+          'Under 350 words. Plain text only — paragraphs separated by blank lines. No markdown.',
       },
       {
         role: 'user',
         content: [
-          `Write a cover letter for ${(profile['full_name'] as string) ?? 'the candidate'} ` +
-            `applying to ${job.title} at ${job.company}.`,
+          `Write a cover letter for ${(profile['full_name'] as string) ?? 'the candidate'} applying to ${job.title} at ${job.company}.`,
           '',
-          `Job description: ${(job.description ?? 'N/A').slice(0, 1500)}`,
+          '--- TARGET JOB ---',
+          `Description: ${(job.description ?? 'N/A').slice(0, 2000)}`,
           '',
-          `Candidate background: ${JSON.stringify({
+          '--- CANDIDATE PROFILE ---',
+          JSON.stringify({
+            full_name: profile['full_name'],
             skills: profile['skills'],
             experience: profile['experience'],
             education: profile['education'],
-          }).slice(0, 3000)}`,
+            current_location: profile['current_location'],
+          }).slice(0, 3000),
+          '',
+          '--- ORIGINAL RESUME (only cite facts from here) ---',
+          originalResumeText.slice(0, 10000),
         ].join('\n'),
       },
     ];
 
     const result = await this.ai.completeWithMessages(userId, messages, {
       max_tokens: 1000,
-      temperature: 0.5,
+      temperature: 0.35,
     });
     await this.track(userId, 'generate_cover_letter', result);
     return result.success ? (result.content ?? null) : null;

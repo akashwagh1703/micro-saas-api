@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import axios from 'axios';
 import * as crypto from 'crypto';
+import FormData from 'form-data';
 import { withMetaApiRetry } from '../../common/meta-api-retry';
 
 export interface WhatsAppReplyButton {
@@ -141,6 +142,99 @@ export class WhatsAppApiService {
       return { success: false, message: data?.error?.message ?? 'Send failed' };
     } catch (e: any) {
       this.logger.error(`WhatsApp send failed: ${e.message}`);
+      return { success: false, message: e.message };
+    }
+  }
+
+  /** Upload media to Meta — required before sending document/image messages. */
+  async uploadMedia(
+    accessToken: string,
+    phoneNumberId: string,
+    buffer: Buffer,
+    mimeType: string,
+    filename: string,
+  ): Promise<WhatsAppApiResult & { mediaId?: string }> {
+    if (!accessToken || !phoneNumberId || !buffer?.length) {
+      return { success: false, message: 'Missing credentials or file data' };
+    }
+
+    const safeName = (filename || 'document').replace(/[^\w.-]+/g, '_').slice(0, 200);
+    const form = new FormData();
+    form.append('messaging_product', 'whatsapp');
+    form.append('type', mimeType);
+    form.append('file', buffer, { filename: safeName, contentType: mimeType });
+
+    try {
+      const { status, data } = await withMetaApiRetry(async () => {
+        const response = await axios.post(`${this.base}/${phoneNumberId}/media`, form, {
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+            ...form.getHeaders(),
+          },
+          timeout: 90_000,
+          maxBodyLength: Infinity,
+          maxContentLength: Infinity,
+          validateStatus: () => true,
+        });
+        return { status: response.status, data: response.data };
+      });
+
+      if (status >= 200 && status < 300 && data?.id) {
+        return { success: true, data, mediaId: String(data.id) };
+      }
+
+      return { success: false, message: data?.error?.message ?? 'Media upload failed' };
+    } catch (e: any) {
+      this.logger.error(`WhatsApp media upload failed: ${e.message}`);
+      return { success: false, message: e.message };
+    }
+  }
+
+  async sendDocumentMessage(
+    accessToken: string,
+    phoneNumberId: string,
+    to: string,
+    mediaId: string,
+    filename: string,
+    caption?: string,
+  ): Promise<WhatsAppApiResult> {
+    const phone = (to ?? '').replace(/\D/g, '');
+    const safeName = (filename || 'document').replace(/[^\w.-]+/g, '_').slice(0, 256);
+
+    const document: Record<string, string> = {
+      id: mediaId,
+      filename: safeName,
+    };
+    if (caption?.trim()) {
+      document.caption = caption.trim().slice(0, 1024);
+    }
+
+    try {
+      const { status, data } = await withMetaApiRetry(async () => {
+        const response = await axios.post(
+          `${this.base}/${phoneNumberId}/messages`,
+          {
+            messaging_product: 'whatsapp',
+            to: phone,
+            type: 'document',
+            document,
+          },
+          {
+            headers: { Authorization: `Bearer ${accessToken}` },
+            timeout: 30_000,
+            validateStatus: () => true,
+          },
+        );
+        return { status: response.status, data: response.data };
+      });
+
+      if (status >= 200 && status < 300) {
+        return { success: true, data };
+      }
+
+      return { success: false, message: data?.error?.message ?? 'Document send failed' };
+    } catch (e: any) {
+      this.logger.error(`WhatsApp document send failed: ${e.message}`);
       return { success: false, message: e.message };
     }
   }

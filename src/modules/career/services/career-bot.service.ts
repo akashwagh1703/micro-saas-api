@@ -14,6 +14,12 @@ import { CareerStorageService } from './career-storage.service';
 import { CareerApplicationService } from './career-application.service';
 import { CareerPrivacyService } from './career-privacy.service';
 import { CareerDocumentShareService } from './career-document-share.service';
+import { CareerDocxService } from './career-docx.service';
+import {
+  careerDocxFileName,
+  DOCX_MIME,
+  readCareerDocumentBuffer,
+} from '../career-document.util';
 import { CareerProfile } from '@prisma/client';
 import { JOB_DISPATCHER, JobDispatcher } from '../../queue/job-dispatcher';
 
@@ -43,6 +49,7 @@ export class CareerBotService {
     private readonly applications: CareerApplicationService,
     private readonly privacy: CareerPrivacyService,
     private readonly share: CareerDocumentShareService,
+    private readonly docx: CareerDocxService,
     @Inject(JOB_DISPATCHER) private readonly dispatcher: JobDispatcher,
   ) {}
 
@@ -793,6 +800,15 @@ export class CareerBotService {
 
     const jobNum = index1Based ?? (await this.jobIndexInSession(profile.id, job.id)) ?? 1;
 
+    const originalResumeText = await this.loadOriginalResumeText(profile);
+    if (!originalResumeText.trim()) {
+      await this.reply(
+        message,
+        'Please upload your resume first (*UPLOAD RESUME*) so I can tailor it using your real experience.',
+      );
+      return;
+    }
+
     const content = await this.safeAiCall(
       message.userId,
       () =>
@@ -800,6 +816,7 @@ export class CareerBotService {
           message.userId,
           this.profiles.profileSnapshot(profile),
           job!,
+          originalResumeText,
         ),
       null,
       'generate_resume',
@@ -827,11 +844,13 @@ export class CareerBotService {
         })
       ).id;
 
-    const filePath = await this.storage.saveText(
+    const docTitle = `${profile.fullName ?? 'Candidate'} — ${job.title}`;
+    const docxBuffer = await this.docx.resumeFromText(docTitle, content);
+    const filePathDocx = await this.storage.saveBuffer(
       message.userId,
       'generated',
-      `resume_${job.id}.txt`,
-      content,
+      `resume_${job.id}.docx`,
+      docxBuffer,
     );
 
     const version = await this.prisma.careerResumeVersion.create({
@@ -841,7 +860,7 @@ export class CareerBotService {
         jobId: job.id,
         title: `${job.title} — tailored`,
         content,
-        filePath,
+        filePathDocx,
       },
     });
 
@@ -853,11 +872,31 @@ export class CareerBotService {
     );
 
     const downloadUrl = this.share.buildShareUrl('resume-version', version.id, message.userId);
-
-    await this.reply(
-      message,
-      `*Tailored resume ready* — ${job.title} @ ${job.company}\n\n📎 Download your CV (link valid 72 hours):\n${downloadUrl}`,
+    const fileName = careerDocxFileName(`${job.title}-${job.company}`);
+    const docSent = await this.sendDocumentToContact(
+      message.userId,
+      message.contactId,
+      docxBuffer,
+      fileName,
+      DOCX_MIME,
+      `Tailored resume for ${job.title} @ ${job.company}`,
     );
+
+    if (docSent.success) {
+      await this.reply(
+        message,
+        `*Tailored resume sent* ✅ — ${job.title} @ ${job.company}\n\nBased on your uploaded resume, optimised for this role.\n\nBackup download (72h): ${downloadUrl}`,
+      );
+    } else {
+      this.logger.warn(
+        `Resume document send failed profileId=${profile.id}: ${docSent.error ?? 'unknown'}`,
+      );
+      await this.reply(
+        message,
+        `*Tailored resume ready* — ${job.title} @ ${job.company}\n\n📎 Download DOCX (link valid 72 hours):\n${downloadUrl}`,
+      );
+    }
+
     const followUpSent = await this.reply(
       message,
       `Saved securely ✅\n\nReply *APPLY ${jobNum}* for the apply link, or *COVER LETTER ${jobNum}* for a matching cover letter.`,
@@ -942,6 +981,15 @@ export class CareerBotService {
       return;
     }
 
+    const originalResumeText = await this.loadOriginalResumeText(profile);
+    if (!originalResumeText.trim()) {
+      await this.reply(
+        message,
+        'Please upload your resume first (*UPLOAD RESUME*) so I can write a cover letter from your real background.',
+      );
+      return;
+    }
+
     const content = await this.safeAiCall(
       message.userId,
       () =>
@@ -949,6 +997,7 @@ export class CareerBotService {
           message.userId,
           this.profiles.profileSnapshot(profile),
           job!,
+          originalResumeText,
         ),
       null,
       'generate_cover_letter',
@@ -958,11 +1007,13 @@ export class CareerBotService {
       return;
     }
 
-    const filePath = await this.storage.saveText(
+    const docTitle = `Cover Letter — ${job.title} @ ${job.company}`;
+    const docxBuffer = await this.docx.coverLetterFromText(docTitle, content);
+    const filePathDocx = await this.storage.saveBuffer(
       message.userId,
       'generated',
-      `cover_letter_${job.id}.txt`,
-      content,
+      `cover_letter_${job.id}.docx`,
+      docxBuffer,
     );
 
     const letter = await this.prisma.careerCoverLetter.create({
@@ -971,17 +1022,38 @@ export class CareerBotService {
         profileId: profile.id,
         jobId: job.id,
         content,
-        filePath,
+        filePath: filePathDocx,
+        filePathDocx,
       },
     });
 
     const jobNum = jobIndex ?? (await this.jobIndexInSession(profile.id, job.id)) ?? 1;
     const downloadUrl = this.share.buildShareUrl('cover-letter', letter.id, message.userId);
-
-    await this.reply(
-      message,
-      `*Cover letter ready* — ${job.title} @ ${job.company}\n\n📎 Download (link valid 72 hours):\n${downloadUrl}`,
+    const fileName = careerDocxFileName(`cover-letter-${job.title}-${job.company}`);
+    const docSent = await this.sendDocumentToContact(
+      message.userId,
+      message.contactId,
+      docxBuffer,
+      fileName,
+      DOCX_MIME,
+      `Cover letter for ${job.title} @ ${job.company}`,
     );
+
+    if (docSent.success) {
+      await this.reply(
+        message,
+        `*Cover letter sent* ✅ — ${job.title} @ ${job.company}\n\nWritten from your resume.\n\nBackup download (72h): ${downloadUrl}`,
+      );
+    } else {
+      this.logger.warn(
+        `Cover letter document send failed profileId=${profile.id}: ${docSent.error ?? 'unknown'}`,
+      );
+      await this.reply(
+        message,
+        `*Cover letter ready* — ${job.title} @ ${job.company}\n\n📎 Download DOCX (link valid 72 hours):\n${downloadUrl}`,
+      );
+    }
+
     await this.reply(
       message,
       `Saved securely ✅ Reply *APPLY ${jobNum}* to save this role and get the apply link.`,
@@ -1018,7 +1090,7 @@ export class CareerBotService {
       where: { id: versionId, userId },
       include: { job: true, resume: true },
     });
-    if (!version?.content) {
+    if (!version?.content && !version?.filePathDocx && !version?.filePath) {
       return { success: false, error: 'Resume version not found' };
     }
 
@@ -1027,15 +1099,43 @@ export class CareerBotService {
       return { success: false, error: 'Profile not linked' };
     }
 
-    const title = version.job
-      ? `*Tailored resume — ${version.job.title} @ ${version.job.company}*`
-      : `*${version.title ?? 'Tailored resume'}*`;
+    const profile = await this.prisma.careerProfile.findFirst({
+      where: { id: profileId, userId },
+    });
+    if (!profile) {
+      return { success: false, error: 'Profile not found' };
+    }
+
+    const buffer = await readCareerDocumentBuffer(this.storage, version);
+    if (!buffer) {
+      return { success: false, error: 'Resume file unavailable' };
+    }
+
+    const fileName = careerDocxFileName(
+      version.job ? `${version.job.title}-${version.job.company}` : version.title ?? 'resume',
+    );
+    const caption = version.job
+      ? `Tailored resume — ${version.job.title} @ ${version.job.company}`
+      : 'Tailored resume';
+
+    const docSent = await this.sendDocumentToContact(
+      userId,
+      profile.contactId,
+      buffer,
+      fileName,
+      DOCX_MIME,
+      caption,
+    );
+
+    if (docSent.success) {
+      return { success: true };
+    }
 
     const downloadUrl = this.share.buildShareUrl('resume-version', version.id, userId);
     return this.sendTextToProfile(
       userId,
       profileId,
-      `${title}\n\n📎 Download (link valid 72 hours):\n${downloadUrl}`,
+      `${caption}\n\nDocument attach failed — download here (72h):\n${downloadUrl}`,
     );
   }
 
@@ -1048,19 +1148,42 @@ export class CareerBotService {
       where: { id: coverLetterId, userId },
       include: { job: true },
     });
-    if (!letter?.content) {
+    if (!letter?.content && !letter?.filePathDocx && !letter?.filePath) {
       return { success: false, error: 'Cover letter not found' };
     }
 
-    const title = letter.job
-      ? `*Cover letter — ${letter.job.title} @ ${letter.job.company}*`
-      : '*Cover letter*';
+    const buffer = await readCareerDocumentBuffer(this.storage, letter);
+    if (!buffer) {
+      return { success: false, error: 'Cover letter file unavailable' };
+    }
+
+    const fileName = careerDocxFileName(
+      letter.job
+        ? `cover-letter-${letter.job.title}-${letter.job.company}`
+        : `cover-letter-${letter.id}`,
+    );
+    const caption = letter.job
+      ? `Cover letter — ${letter.job.title} @ ${letter.job.company}`
+      : 'Cover letter';
+
+    const docSent = await this.sendDocumentToContact(
+      userId,
+      letter.profileId,
+      buffer,
+      fileName,
+      DOCX_MIME,
+      caption,
+    );
+
+    if (docSent.success) {
+      return { success: true };
+    }
 
     const downloadUrl = this.share.buildShareUrl('cover-letter', letter.id, userId);
     return this.sendTextToProfile(
       userId,
       letter.profileId,
-      `${title}\n\n📎 Download (link valid 72 hours):\n${downloadUrl}`,
+      `${caption}\n\nDocument attach failed — download here (72h):\n${downloadUrl}`,
     );
   }
 
@@ -1073,6 +1196,43 @@ export class CareerBotService {
       message,
       `Sorry, ${taskLabel} failed. Please try again in a moment. If it keeps failing, check AI settings in your portal or contact support.`,
     );
+  }
+
+  private async sendDocumentToContact(
+    userId: number,
+    contactId: number,
+    buffer: Buffer,
+    fileName: string,
+    mimeType: string,
+    caption?: string,
+  ): Promise<{ success: boolean; error?: string }> {
+    const conversation = await this.prisma.conversation.findUnique({
+      where: { contactId },
+    });
+    if (!conversation) {
+      return { success: false, error: 'No WhatsApp conversation for this contact' };
+    }
+
+    const result = await this.inbox.sendOutgoingDocument(
+      userId,
+      conversation.id,
+      buffer,
+      fileName,
+      mimeType,
+      caption,
+      { source: CAREER_BOT_MESSAGE_SOURCE },
+    );
+
+    if (!result.success) {
+      this.logger.warn(
+        `sendOutgoingDocument failed contactId=${contactId} file=${fileName}: ${result.error}`,
+      );
+    }
+
+    return {
+      success: result.success,
+      error: result.error ?? undefined,
+    };
   }
 
   private async sendTextToProfile(
@@ -1102,6 +1262,25 @@ export class CareerBotService {
       };
     }
     return { success: true };
+  }
+
+  private async loadOriginalResumeText(profile: CareerProfile): Promise<string> {
+    const resume = profile.masterResumeId
+      ? await this.prisma.careerResume.findUnique({ where: { id: profile.masterResumeId } })
+      : await this.prisma.careerResume.findFirst({
+          where: { profileId: profile.id, isMaster: true },
+          orderBy: { createdAt: 'desc' },
+        });
+
+    if (resume?.extractedText?.trim()) {
+      return resume.extractedText.trim();
+    }
+
+    const fallback = await this.prisma.careerResume.findFirst({
+      where: { profileId: profile.id, extractedText: { not: null } },
+      orderBy: { createdAt: 'desc' },
+    });
+    return fallback?.extractedText?.trim() ?? '';
   }
 
   private async loadIncomingMessage(

@@ -189,6 +189,75 @@ export class InboxService {
     return this.sendWhatsAppMessage(userId, conversation, content, options);
   }
 
+  async sendOutgoingDocument(
+    userId: number,
+    conversationId: number,
+    buffer: Buffer,
+    fileName: string,
+    mimeType: string,
+    caption?: string,
+    options?: { source?: string },
+  ): Promise<SendResult> {
+    const conversation = await this.prisma.conversation.findFirst({
+      where: { userId, id: conversationId },
+      include: { contact: true },
+    });
+    if (!conversation) {
+      throw new NotFoundException();
+    }
+
+    if (conversation.channel !== CHANNEL_WHATSAPP) {
+      return {
+        success: false,
+        message: null,
+        error: 'Document messages are only supported on WhatsApp',
+      };
+    }
+
+    const creds = await this.whatsapp.credentials(userId);
+    if (!creds?.account.isConnected) {
+      return { success: false, message: null, error: 'WhatsApp not connected' };
+    }
+
+    const token = creds.accessToken ?? '';
+    const phoneNumberId = creds.phoneNumberId ?? '';
+
+    const upload = await this.whatsAppApi.uploadMedia(
+      token,
+      phoneNumberId,
+      buffer,
+      mimeType,
+      fileName,
+    );
+    if (!upload.success || !upload.mediaId) {
+      return {
+        success: false,
+        message: null,
+        error: upload.message ?? 'Failed to upload document to WhatsApp',
+      };
+    }
+
+    const result = await this.whatsAppApi.sendDocumentMessage(
+      token,
+      phoneNumberId,
+      conversation.contact.phone ?? '',
+      upload.mediaId,
+      fileName,
+      caption,
+    );
+
+    const label = `[Document: ${fileName}]${caption ? `\n${caption}` : ''}`;
+    return this.persistOutgoingMessage(conversation, label, {
+      success: result.success,
+      waMessageId: result.data?.messages?.[0]?.id ?? null,
+      metadata: this.mergeOutgoingMetadata(
+        { uploadMediaId: upload.mediaId, fileName, mimeType, api: result.data },
+        options?.source,
+      ),
+      error: result.message ?? null,
+    });
+  }
+
   async sendInteractiveButtons(
     userId: number,
     conversationId: number,

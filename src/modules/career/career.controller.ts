@@ -26,6 +26,12 @@ import { CareerAiUsageService } from './services/career-ai-usage.service';
 import { CareerAuditService } from './services/career-audit.service';
 import { CareerPrivacyService } from './services/career-privacy.service';
 import { CareerBotService } from './services/career-bot.service';
+import {
+  careerDocxFileName,
+  careerDocxStreamable,
+  readCareerDocumentBuffer,
+} from './career-document.util';
+import { CareerDocxService } from './services/career-docx.service';
 import { CAREER_APPLICATION_STATUSES } from './career.constants';
 import { IsArray, IsIn, IsOptional, IsString } from 'class-validator';
 
@@ -130,6 +136,7 @@ export class CareerController {
     private readonly audit: CareerAuditService,
     private readonly privacy: CareerPrivacyService,
     private readonly bot: CareerBotService,
+    private readonly docx: CareerDocxService,
   ) {}
 
   @Get('storage/status')
@@ -312,29 +319,6 @@ export class CareerController {
       throw new UnprocessableEntityException(result.error ?? 'Could not send cover letter on WhatsApp');
     }
     return { message: 'Cover letter sent on WhatsApp', success: true };
-  }
-
-  @Get('cover-letters/:id/download')
-  async downloadCoverLetter(
-    @CurrentUser('id') userId: number,
-    @Param('id', ParseIntPipe) id: number,
-  ): Promise<StreamableFile> {
-    const letter = await this.prisma.careerCoverLetter.findFirst({
-      where: { id, userId },
-      include: { job: true },
-    });
-    if (!letter?.content) {
-      throw new NotFoundException('Cover letter not found');
-    }
-
-    const fileName = letter.job
-      ? `cover-letter-${letter.job.company}-${letter.job.title}.txt`.replace(/[^\w.-]+/g, '_')
-      : `cover-letter-${id}.txt`;
-
-    return new StreamableFile(Buffer.from(letter.content, 'utf-8'), {
-      type: 'text/plain; charset=utf-8',
-      disposition: `attachment; filename="${fileName}"`,
-    });
   }
 
   @Get('cover-letters')
@@ -524,20 +508,60 @@ export class CareerController {
   ): Promise<StreamableFile> {
     const version = await this.prisma.careerResumeVersion.findFirst({
       where: { id, userId },
+      include: { job: true },
     });
-    if (!version?.filePath) {
+    if (!version?.filePathDocx && !version?.filePath && !version?.content) {
       throw new NotFoundException('Generated resume not found');
     }
 
-    const buffer = await this.storage.readBuffer(version.filePath);
+    let buffer = await readCareerDocumentBuffer(this.storage, version);
     if (!buffer) {
       throw new NotFoundException('Generated resume file unavailable');
     }
 
-    const fileName = version.title ? `${version.title}.txt` : `resume-version-${id}.txt`;
-    return new StreamableFile(buffer, {
-      type: 'text/plain; charset=utf-8',
-      disposition: `attachment; filename="${fileName.replace(/"/g, '')}"`,
+    if (!version.filePathDocx && !version.filePath?.endsWith('.docx')) {
+      const title = version.job
+        ? `${version.job.title} — tailored`
+        : version.title ?? 'Tailored resume';
+      buffer = await this.docx.resumeFromText(title, version.content ?? buffer.toString('utf8'));
+    }
+
+    const fileName = careerDocxFileName(
+      version.title ?? version.job?.title ?? `resume-version-${id}`,
+    );
+    return careerDocxStreamable(buffer, fileName);
+  }
+
+  @Get('cover-letters/:id/download')
+  async downloadCoverLetterVersion(
+    @CurrentUser('id') userId: number,
+    @Param('id', ParseIntPipe) id: number,
+  ): Promise<StreamableFile> {
+    const letter = await this.prisma.careerCoverLetter.findFirst({
+      where: { id, userId },
+      include: { job: true },
     });
+    if (!letter?.filePathDocx && !letter?.filePath && !letter?.content) {
+      throw new NotFoundException('Cover letter not found');
+    }
+
+    let buffer = await readCareerDocumentBuffer(this.storage, letter);
+    if (!buffer) {
+      throw new NotFoundException('Cover letter file unavailable');
+    }
+
+    if (!letter.filePathDocx && !letter.filePath?.endsWith('.docx')) {
+      const title = letter.job
+        ? `Cover Letter — ${letter.job.title} @ ${letter.job.company}`
+        : 'Cover letter';
+      buffer = await this.docx.coverLetterFromText(title, letter.content ?? buffer.toString('utf8'));
+    }
+
+    const fileName = careerDocxFileName(
+      letter.job
+        ? `cover-letter-${letter.job.company}-${letter.job.title}`
+        : `cover-letter-${id}`,
+    );
+    return careerDocxStreamable(buffer, fileName);
   }
 }

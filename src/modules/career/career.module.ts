@@ -29,6 +29,7 @@ import { LinkedInJobSource } from './job-sources/linkedin.job-source';
 import { CareerJobSourceRegistry } from './job-sources/career-job-source.registry';
 import { CareerJobUpsertService } from './job-sources/career-job-upsert.service';
 import { CareerDocumentShareService } from './services/career-document-share.service';
+import { CareerDocxService } from './services/career-docx.service';
 
 @Module({
   imports: [IntegrationsModule, InboxModule, WhatsappModule, SettingsModule],
@@ -58,6 +59,7 @@ import { CareerDocumentShareService } from './services/career-document-share.ser
     LinkedInJobSource,
     CareerJobSourceRegistry,
     CareerDocumentShareService,
+    CareerDocxService,
   ],
   exports: [CareerIncomingHandler, CareerDigestService, CareerBotService],
 })
