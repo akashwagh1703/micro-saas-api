@@ -13,12 +13,16 @@ import {
 export class CareerDocxService {
   async resumeFromText(title: string, body: string): Promise<Buffer> {
     const lines = body.replace(/\r\n/g, '\n').split('\n');
-    const children: Paragraph[] = [
-      new Paragraph({
-        children: [new TextRun({ text: title, bold: true, size: 32 })],
-        spacing: { after: 240 },
-      }),
-    ];
+    const children: Paragraph[] = [];
+
+    if (title.trim()) {
+      children.push(
+        new Paragraph({
+          children: [new TextRun({ text: title.trim(), bold: true, size: 32 })],
+          spacing: { after: 240 },
+        }),
+      );
+    }
 
     for (const line of lines) {
       const trimmed = line.trim();

@@ -81,7 +81,8 @@ export class CareerAiService {
           '2. Do NOT add experience, projects, or qualifications that are not in the source resume.\n' +
           '3. You MAY reword bullet points, reorder sections, and mirror keywords from the job description when they honestly describe existing experience.\n' +
           '4. You MAY write a short professional summary that reframes their real background for this role.\n' +
-          '5. Return plain text only with section headers: CONTACT | PROFESSIONAL SUMMARY | SKILLS | EXPERIENCE | EDUCATION | CERTIFICATIONS',
+          '5. Return plain text only with section headers: CONTACT | PROFESSIONAL SUMMARY | SKILLS | EXPERIENCE | EDUCATION | CERTIFICATIONS\n' +
+          '6. Minimum length: at least 350 words. Every section must contain real content from the source resume — never leave sections empty.',
       },
       {
         role: 'user',
@@ -332,7 +333,13 @@ export class CareerAiService {
 
   private buildParsePrompt(resumeText: string): string {
     return [
-      'You are a precise resume parser. Return ONLY a JSON object — no explanation, no markdown fences.',
+      'You are a precise resume parser for Indian and international CVs. Return ONLY a JSON object — no explanation, no markdown fences.',
+      '',
+      'Rules:',
+      '- Extract phone numbers in +91 or 10-digit Indian format when present.',
+      '- Parse salary as "X LPA" or lakh when written that way.',
+      '- Infer preferred_roles from latest job titles when not explicitly listed.',
+      '- current_location is the city the candidate currently lives in.',
       '',
       'Use this exact schema. Use empty arrays [] for missing sections. ' +
         'For experience, always include a "years" field with the number of years (e.g. "2").',

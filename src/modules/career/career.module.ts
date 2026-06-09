@@ -30,6 +30,7 @@ import { CareerJobSourceRegistry } from './job-sources/career-job-source.registr
 import { CareerJobUpsertService } from './job-sources/career-job-upsert.service';
 import { CareerDocumentShareService } from './services/career-document-share.service';
 import { CareerDocxService } from './services/career-docx.service';
+import { CareerResumeBuilderService } from './services/career-resume-builder.service';
 
 @Module({
   imports: [IntegrationsModule, InboxModule, WhatsappModule, SettingsModule],
@@ -60,6 +61,7 @@ import { CareerDocxService } from './services/career-docx.service';
     CareerJobSourceRegistry,
     CareerDocumentShareService,
     CareerDocxService,
+    CareerResumeBuilderService,
   ],
   exports: [CareerIncomingHandler, CareerDigestService, CareerBotService],
 })

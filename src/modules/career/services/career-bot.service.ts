@@ -8,13 +8,14 @@ import { CAREER_COMMANDS, CAREER_MAX_INBOUND_CHARS, CAREER_BOT_MESSAGE_SOURCE, C
 import { CareerProfileService } from './career-profile.service';
 import { CareerJobService } from './career-job.service';
 import { CareerMatchingService, JobMatchResult, CAREER_MIN_MATCH_SCORE } from './career-matching.service';
-import { CareerAiService, ConvTurn } from './career-ai.service';
+import { CareerAiService, ConvTurn, ParsedCareerProfile } from './career-ai.service';
 import { CareerResumeParserService } from './career-resume-parser.service';
 import { CareerStorageService } from './career-storage.service';
 import { CareerApplicationService } from './career-application.service';
 import { CareerPrivacyService } from './career-privacy.service';
 import { CareerDocumentShareService } from './career-document-share.service';
 import { CareerDocxService } from './career-docx.service';
+import { CareerResumeBuilderService } from './career-resume-builder.service';
 import {
   careerDocxFileName,
   DOCX_MIME,
@@ -50,6 +51,7 @@ export class CareerBotService {
     private readonly privacy: CareerPrivacyService,
     private readonly share: CareerDocumentShareService,
     private readonly docx: CareerDocxService,
+    private readonly resumeBuilder: CareerResumeBuilderService,
     @Inject(JOB_DISPATCHER) private readonly dispatcher: JobDispatcher,
   ) {}
 
@@ -357,13 +359,14 @@ export class CareerBotService {
     }
   }
 
-  /** Marks onboarding complete, runs initial job matching, and sends the welcome summary. */
+  /** Marks onboarding complete, runs initial job matching, and shows top jobs immediately. */
   private async finishOnboarding(
     message: Message & { contact: Contact },
     profile: CareerProfile,
   ): Promise<void> {
     await this.profiles.markComplete(profile.id);
-    const jobList = await this.jobs.listActive(message.userId);
+    let jobList = await this.jobs.listActive(message.userId);
+    jobList = this.jobs.relevantJobsForProfile(jobList, profile);
     const allMatches = this.matching.matchProfileToJobs(profile, jobList);
     await this.matching.persistMatches(
       message.userId,
@@ -372,12 +375,49 @@ export class CareerBotService {
       allMatches,
     );
     const matches = this.matching.filterQualityMatches(allMatches);
-    await this.reply(
-      message,
+    const toShow = matches.length > 0 ? matches : allMatches.slice(0, 5);
+    const intro =
       matches.length > 0
-        ? `Your Career Profile is ready! ✅\n\nI found *${matches.length}* strong matches (40%+ fit).\n\nReply *VIEW JOBS* to see them, or *FIND JOBS python* to search by keyword.\n${this.helpText()}`
-        : `Your Career Profile is ready! ✅\n\nNo strong matches yet — ask your operator to fetch jobs, then reply *FIND JOBS react*.\n${this.helpText()}`,
+        ? `Your Career Profile is ready! ✅ I found *${matches.length}* strong matches for your role, skills, and location.`
+        : toShow.length > 0
+          ? 'Your Career Profile is ready! ✅ Here are the closest roles I found — reply *FIND JOBS {skill}* to refine.'
+          : 'Your Career Profile is ready! ✅';
+    await this.presentTopJobs(message, profile, toShow, intro);
+  }
+
+  /** Sends the numbered job list and action buttons to WhatsApp. */
+  private async presentTopJobs(
+    message: Message & { contact: Contact },
+    profile: CareerProfile,
+    matches: JobMatchResult[],
+    intro: string,
+    maxJobs = 5,
+  ): Promise<void> {
+    if (matches.length === 0) {
+      await this.reply(
+        message,
+        `${intro}\n\nNo jobs in the system yet. Reply *VIEW JOBS* after your operator fetches listings, or *FIND JOBS react* to search.`,
+      );
+      return;
+    }
+
+    const top = matches.slice(0, maxJobs);
+    await this.saveJobSession(profile.id, top.map((m) => m.job.id));
+
+    const lines = [`${intro}\n`, `*Top ${top.length} jobs for you:*\n`];
+    top.forEach((m, i) => {
+      lines.push(...this.formatJobListing(m, i));
+    });
+    lines.push(
+      '',
+      'One tap next steps:',
+      '• *APPLY 1* — save & get apply link',
+      '• *RESUME 1* — tailored DOCX for job #1',
+      '• *COVER LETTER 1* — matching cover letter',
+      '• *FIND JOBS python* — search more roles',
     );
+    await this.reply(message, lines.join('\n'));
+    await this.sendJobActionButtons(message, top.length);
   }
 
   // ─── Resume document upload ──────────────────────────────────────────────────
@@ -529,7 +569,7 @@ export class CareerBotService {
       },
     });
 
-    const parsed = extracted
+    const aiParsed = extracted
       ? await this.safeAiCall(
           message.userId,
           () => this.careerAi.parseResume(message.userId, extracted),
@@ -537,22 +577,29 @@ export class CareerBotService {
           'parse_resume',
         )
       : null;
+    const basicParsed = extracted ? this.resumeParser.extractBasicFields(extracted) : null;
+    const parsed = this.mergeParsedProfile(aiParsed, basicParsed);
 
     if (reupload && profile.isComplete) {
       await this.clearReuploadPending(profile.id);
       if (parsed) {
         const updated = await this.profiles.applyParsedResumeUpdate(profile.id, parsed);
-        const jobList = await this.jobs.listActive(message.userId);
-        const matches = this.matching.matchProfileToJobs(updated, jobList);
+        let jobList = await this.jobs.listActive(message.userId);
+        jobList = this.jobs.relevantJobsForProfile(jobList, updated);
+        const allMatches = this.matching.matchProfileToJobs(updated, jobList);
         await this.matching.persistMatches(
           message.userId,
           updated.id,
           message.contactId,
-          matches,
+          allMatches,
         );
-        await this.reply(
+        const matches = this.matching.filterQualityMatches(allMatches);
+        const toShow = matches.length > 0 ? matches : allMatches.slice(0, 5);
+        await this.presentTopJobs(
           message,
-          `Resume updated! ✅ Profile refreshed — ${matches.length} matching jobs.\n\nReply *VIEW JOBS* to see them.`,
+          updated,
+          toShow,
+          'Resume updated! ✅ Profile refreshed.',
         );
       } else {
         await this.reply(
@@ -569,9 +616,10 @@ export class CareerBotService {
         await this.finishOnboarding(message, updated);
         return;
       }
-      const intro = `Resume parsed! ✅\n\nHi ${updated.fullName ?? 'there'},`;
+      const summary = this.resumeBuilder.formatParsedSummary(updated);
+      const intro = `Resume parsed! ✅\n\n${summary}`;
       if (updated.onboardingStep === 'follow_up_job_type') {
-        await this.reply(message, `${intro} one quick question:`);
+        await this.reply(message, `${intro}\n\nOne quick question:`);
         await this.replyWorkModePrompt(message);
         return;
       }
@@ -580,8 +628,23 @@ export class CareerBotService {
       return;
     }
 
-    // AI parse failed or text was empty — advance to follow_up_location so the
-    // user can proceed through manual questions instead of getting stuck.
+    // AI parse failed — use heuristic fields so onboarding can still continue.
+    const fallbackParsed = extracted ? this.resumeParser.extractBasicFields(extracted) : null;
+    if (fallbackParsed) {
+      const updated = await this.profiles.applyParsedResume(profile.id, fallbackParsed);
+      const summary = this.resumeBuilder.formatParsedSummary(updated);
+      if (updated.onboardingStep === 'complete') {
+        await this.finishOnboarding(message, updated);
+        return;
+      }
+      const question = this.getOnboardingSteps()[updated.onboardingStep]?.question;
+      await this.reply(
+        message,
+        `Resume saved. ✅\n\n${summary}\n\n${question ?? 'What is your current city/location?'}`,
+      );
+      return;
+    }
+
     await this.profiles.updateOnboarding(profile.id, 'follow_up_location', {});
     await this.reply(
       message,
@@ -598,12 +661,11 @@ export class CareerBotService {
   ): Promise<void> {
     let jobList = await this.jobs.listActive(message.userId);
 
-    // FIX 5: The original regex only stripped "find jobs" / "find job", so alternate
-    // command phrases like "search jobs react" or "view jobs python" left the full
-    // command phrase in the keyword, producing zero or wrong results.
     const keyword = this.extractJobKeyword(text);
     if (keyword && keyword !== 'all' && keyword.length > 1) {
       jobList = this.jobs.searchByKeyword(jobList, keyword);
+    } else {
+      jobList = this.jobs.relevantJobsForProfile(jobList, profile);
     }
 
     const allMatches = this.matching.matchProfileToJobs(profile, jobList);
@@ -614,30 +676,22 @@ export class CareerBotService {
       allMatches,
     );
     const matches = this.matching.filterQualityMatches(allMatches);
+    const toShow = matches.length > 0 ? matches : allMatches.slice(0, 8);
 
-    if (matches.length === 0) {
+    if (toShow.length === 0) {
       await this.reply(
         message,
-        allMatches.length > 0
-          ? 'Jobs found but none scored 40%+ for your profile yet. Try *FIND JOBS {keyword}* or update your preferred location/roles in onboarding.'
-          : 'No matching jobs found. Try another keyword like "React" or "Sales", or ask your operator to fetch live jobs.',
+        'No matching jobs found. Try *FIND JOBS react* or *FIND JOBS sales*, or ask your operator to fetch live jobs.',
       );
       return;
     }
 
-    const top = matches.slice(0, 10);
-    await this.saveJobSession(profile.id, top.map((m) => m.job.id));
+    const intro =
+      matches.length > 0
+        ? `Found *${matches.length}* jobs matching your profile${keyword && keyword !== 'all' ? ` for "${keyword}"` : ''}:`
+        : `Closest matches${keyword && keyword !== 'all' ? ` for "${keyword}"` : ''} (refine with location/role if needed):`;
 
-    const lines = [`Found ${matches.length} matching jobs:\n`];
-    top.forEach((m, i) => {
-      lines.push(...this.formatJobListing(m, i));
-    });
-    lines.push(
-      '',
-      'Reply *APPLY 1* to save & get apply link, *RESUME 2* for a tailored CV, or *COVER LETTER 1* for a cover letter.',
-    );
-    await this.reply(message, lines.join('\n'));
-    await this.sendJobActionButtons(message, top.length);
+    await this.presentTopJobs(message, profile, toShow.slice(0, 8), intro, 8);
   }
 
   private formatJobListing(m: JobMatchResult, index: number): string[] {
@@ -809,7 +863,7 @@ export class CareerBotService {
       return;
     }
 
-    const content = await this.safeAiCall(
+    const aiContent = await this.safeAiCall(
       message.userId,
       () =>
         this.careerAi.generateTailoredResume(
@@ -821,10 +875,13 @@ export class CareerBotService {
       null,
       'generate_resume',
     );
-    if (!content) {
-      await this.reply(message, 'Could not generate resume. Check AI settings in your portal.');
-      return;
-    }
+    const snapshot = this.profiles.profileSnapshot(profile);
+    const content = this.resumeBuilder.ensureTailoredResume(
+      aiContent,
+      snapshot,
+      originalResumeText,
+      job!,
+    );
 
     const master = profile.masterResumeId
       ? await this.prisma.careerResume.findUnique({ where: { id: profile.masterResumeId } })
@@ -844,8 +901,7 @@ export class CareerBotService {
         })
       ).id;
 
-    const docTitle = `${profile.fullName ?? 'Candidate'} — ${job.title}`;
-    const docxBuffer = await this.docx.resumeFromText(docTitle, content);
+    const docxBuffer = await this.docx.resumeFromText('', content);
     const filePathDocx = await this.storage.saveBuffer(
       message.userId,
       'generated',
@@ -885,7 +941,7 @@ export class CareerBotService {
     if (docSent.success) {
       await this.reply(
         message,
-        `*Tailored resume sent* ✅ — ${job.title} @ ${job.company}\n\nBased on your uploaded resume, optimised for this role.\n\nBackup download (72h): ${downloadUrl}`,
+        `*Tailored resume sent* ✅ — ${job.title} @ ${job.company}\n\nBuilt from your uploaded resume, optimised for this role.\n\nReply *APPLY ${jobNum}* for the apply link, or *COVER LETTER ${jobNum}* for a matching cover letter.`,
       );
     } else {
       this.logger.warn(
@@ -894,16 +950,6 @@ export class CareerBotService {
       await this.reply(
         message,
         `*Tailored resume ready* — ${job.title} @ ${job.company}\n\n📎 Download DOCX (link valid 72 hours):\n${downloadUrl}`,
-      );
-    }
-
-    const followUpSent = await this.reply(
-      message,
-      `Saved securely ✅\n\nReply *APPLY ${jobNum}* for the apply link, or *COVER LETTER ${jobNum}* for a matching cover letter.`,
-    );
-    if (!followUpSent) {
-      this.logger.warn(
-        `Resume generated for profileId=${profile.id} jobId=${job.id} but WhatsApp delivery failed`,
       );
     }
   }
@@ -990,7 +1036,7 @@ export class CareerBotService {
       return;
     }
 
-    const content = await this.safeAiCall(
+    const aiContent = await this.safeAiCall(
       message.userId,
       () =>
         this.careerAi.generateCoverLetter(
@@ -1002,10 +1048,13 @@ export class CareerBotService {
       null,
       'generate_cover_letter',
     );
-    if (!content) {
-      await this.reply(message, 'Could not generate cover letter. Check AI settings in your portal.');
-      return;
-    }
+    const snapshot = this.profiles.profileSnapshot(profile);
+    const content = this.resumeBuilder.ensureCoverLetter(
+      aiContent,
+      snapshot,
+      originalResumeText,
+      job!,
+    );
 
     const docTitle = `Cover Letter — ${job.title} @ ${job.company}`;
     const docxBuffer = await this.docx.coverLetterFromText(docTitle, content);
@@ -1042,7 +1091,7 @@ export class CareerBotService {
     if (docSent.success) {
       await this.reply(
         message,
-        `*Cover letter sent* ✅ — ${job.title} @ ${job.company}\n\nWritten from your resume.\n\nBackup download (72h): ${downloadUrl}`,
+        `*Cover letter sent* ✅ — ${job.title} @ ${job.company}\n\nWritten from your resume.\n\nReply *APPLY ${jobNum}* to save this role and get the apply link.`,
       );
     } else {
       this.logger.warn(
@@ -1053,11 +1102,6 @@ export class CareerBotService {
         `*Cover letter ready* — ${job.title} @ ${job.company}\n\n📎 Download DOCX (link valid 72 hours):\n${downloadUrl}`,
       );
     }
-
-    await this.reply(
-      message,
-      `Saved securely ✅ Reply *APPLY ${jobNum}* to save this role and get the apply link.`,
-    );
   }
 
   /** Re-run matching for a profile (portal operator action). */
@@ -1070,7 +1114,8 @@ export class CareerBotService {
     }
 
     const jobList = await this.jobs.listActive(userId);
-    const allMatches = this.matching.matchProfileToJobs(profile, jobList);
+    const relevant = this.jobs.relevantJobsForProfile(jobList, profile);
+    const allMatches = this.matching.matchProfileToJobs(profile, relevant);
     await this.matching.persistMatches(userId, profileId, profile.contactId, allMatches);
     const quality = this.matching.filterQualityMatches(allMatches);
 
@@ -1476,6 +1521,40 @@ export class CareerBotService {
       .slice(0, CAREER_MAX_INBOUND_CHARS);
   }
 
+  private mergeParsedProfile(
+    ai: ParsedCareerProfile | null,
+    basic: ParsedCareerProfile | null,
+  ): ParsedCareerProfile | null {
+    if (!ai && !basic) {
+      return null;
+    }
+    if (!ai) {
+      return basic;
+    }
+    if (!basic) {
+      return ai;
+    }
+    return {
+      ...basic,
+      ...ai,
+      full_name: ai.full_name ?? basic.full_name,
+      email: ai.email ?? basic.email,
+      phone: ai.phone ?? basic.phone,
+      skills: ai.skills?.length ? ai.skills : basic.skills,
+      experience: ai.experience?.length ? ai.experience : basic.experience,
+      education: ai.education?.length ? ai.education : basic.education,
+      preferred_roles: ai.preferred_roles?.length ? ai.preferred_roles : basic.preferred_roles,
+      current_location: ai.current_location ?? basic.current_location,
+      preferred_locations: ai.preferred_locations?.length
+        ? ai.preferred_locations
+        : basic.preferred_locations,
+      current_salary: ai.current_salary ?? basic.current_salary,
+      expected_salary: ai.expected_salary ?? basic.expected_salary,
+      notice_period: ai.notice_period ?? basic.notice_period,
+      work_preference: ai.work_preference ?? basic.work_preference,
+    };
+  }
+
   /** Catches thrown AI errors; logs context for production debugging. */
   private async safeAiCall<T>(
     userId: number,
@@ -1493,22 +1572,15 @@ export class CareerBotService {
 
   private helpText(): string {
     return [
-      '*Try these:*',
-      '• *VIEW JOBS* — see your top matches',
-      '• *APPLY 2* — save job #2 & get apply link',
-      '• *RESUME 1* — tailored CV for job #1',
-      '• *COVER LETTER 2* — cover letter for job #2',
+      '*Core commands:*',
+      '• *VIEW JOBS* — jobs matched to your profile',
+      '• *APPLY 1* — save job & get apply link',
+      '• *RESUME 1* — tailored DOCX resume for job #1',
+      '• *COVER LETTER 1* — cover letter for job #1',
+      '• *FIND JOBS react* — search by skill or role',
+      '• *UPLOAD RESUME* — update your CV (PDF/DOCX)',
       '',
-      '*More:*',
-      '• *FIND JOBS python* — search by keyword',
-      '• *UPLOAD RESUME* — new PDF/DOCX or photo',
-      '• *SALARY BENCHMARK* — market salary range for your role',
-      '• *SCHEDULE INTERVIEW {when}* — save preferred slot',
-      '• *ENABLE AUTO APPLY* — queue applications for operator assist',
-      '• *SHOW APPLICATIONS* — track applications',
-      '• *RESET PROFILE* — start onboarding again',
-      '• *DELETE MY DATA* — permanently erase your CareerAI profile',
-      '• *STOP DIGEST* / *START DIGEST*',
+      '*Also:* *SHOW APPLICATIONS* · *RESET PROFILE* · *DELETE MY DATA*',
     ].join('\n');
   }
 
