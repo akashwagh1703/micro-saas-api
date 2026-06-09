@@ -61,9 +61,22 @@ export class QueueService implements JobDispatcher, OnModuleInit, OnModuleDestro
     } catch (err) {
       this.enabled = false;
       this.boss = undefined;
-      this.rejectReady(err);
-      throw err;
+      const message = err instanceof Error ? err.message : String(err);
+      this.logger.error(
+        `pg-boss failed to start — HTTP API will still run; background jobs disabled: ${message}`,
+      );
+      this.resolveReady();
     }
+  }
+
+  /** Resolves when queue init finished (success or graceful disable). */
+  async waitUntilReady(): Promise<void> {
+    await this.ready;
+  }
+
+  /** True when pg-boss connected and workers can register. */
+  isBossRunning(): boolean {
+    return this.enabled && !!this.boss;
   }
 
   async onModuleDestroy(): Promise<void> {

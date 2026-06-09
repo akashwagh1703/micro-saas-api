@@ -36,6 +36,12 @@ export class QueueWorker implements OnModuleInit {
       return;
     }
 
+    await this.queue.waitUntilReady();
+    if (!this.queue.isBossRunning()) {
+      this.logger.warn('pg-boss unavailable; queue workers not registered');
+      return;
+    }
+
     await this.queue.work<{ messageId: number }>(QUEUE_PROCESS_INCOMING, async (data) => {
       try {
         await this.incoming.handle(data.messageId);

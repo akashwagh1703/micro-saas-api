@@ -31,6 +31,12 @@ export class CareerPgBossScheduler implements OnModuleInit {
       return;
     }
 
+    await this.queue.waitUntilReady();
+    if (!this.queue.isBossRunning()) {
+      this.logger.warn('pg-boss unavailable; career cron schedules skipped');
+      return;
+    }
+
     await this.queue.work(QUEUE_CAREER_DIGEST, async () => {
       this.logger.log('pg-boss: running career digest batch');
       await this.digest.runDailyDigestBatch();
