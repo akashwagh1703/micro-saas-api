@@ -4,6 +4,7 @@ import axios from 'axios';
 import { CareerJobSource, JobSourceStatus, NormalizedJobListing } from './job-source.types';
 import { CareerJobUpsertService } from './career-job-upsert.service';
 import {
+  formatHttpError,
   formatSalaryInr,
   formatUpsertError,
   normalizeContractType,
@@ -67,6 +68,8 @@ export class AdzunaJobSource implements CareerJobSource {
     if (!this.enabled) return 0;
 
     let stored = 0;
+    let lastError: string | null = null;
+
     for (let page = 1; page <= pages; page++) {
       try {
         const { data } = await axios.get<{ results: AdzunaJob[] }>(
@@ -92,9 +95,14 @@ export class AdzunaJobSource implements CareerJobSource {
             this.logger.warn(`Skipped Adzuna job ${job.id}: ${formatUpsertError(e)}`);
           }
         }
-      } catch (e: any) {
-        this.logger.warn(`Adzuna fetch failed (keyword="${keyword}" page=${page}): ${e.message}`);
+      } catch (e: unknown) {
+        lastError = formatHttpError(e);
+        this.logger.warn(`Adzuna fetch failed (keyword="${keyword}" page=${page}): ${lastError}`);
       }
+    }
+
+    if (stored === 0 && lastError) {
+      throw new Error(lastError);
     }
 
     this.logger.log(`Adzuna: stored ${stored} jobs for userId=${userId} keyword="${keyword}"`);

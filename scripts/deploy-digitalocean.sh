@@ -38,8 +38,8 @@ pm2 save
 
 echo "==> health check"
 sleep 3
-curl -fsS "http://127.0.0.1:${PORT:-3000}/up" >/dev/null || {
-  echo "WARN: /up check failed — inspect: pm2 logs $PM2_NAME --lines 50"
+curl -fsS "http://127.0.0.1:${PORT:-3000}/up/ready" >/dev/null || {
+  echo "WARN: /up/ready check failed — inspect: pm2 logs $PM2_NAME --lines 50"
   exit 1
 }
 

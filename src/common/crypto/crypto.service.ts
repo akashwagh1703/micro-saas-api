@@ -15,9 +15,16 @@ export class CryptoService {
   }
 
   private resolveKey(raw?: string): Buffer {
+    const isProd = this.config.get<string>('NODE_ENV') === 'production';
+
     if (!raw) {
+      if (isProd) {
+        throw new Error(
+          'APP_ENCRYPTION_KEY is required in production. Generate: node -e "console.log(require(\'crypto\').randomBytes(32).toString(\'base64\'))"',
+        );
+      }
       this.logger.warn(
-        'APP_ENCRYPTION_KEY is not set. Falling back to an insecure development key. Set it in production.',
+        'APP_ENCRYPTION_KEY is not set. Falling back to an insecure development key.',
       );
       return crypto.createHash('sha256').update('insecure-development-key').digest();
     }

@@ -19,10 +19,19 @@ export class CareerDocumentShareService {
   private readonly defaultTtlHours: number;
 
   constructor(private readonly config: ConfigService) {
-    this.secret =
-      config.get<string>('CAREER_SHARE_SECRET') ??
-      config.get<string>('APP_ENCRYPTION_KEY') ??
-      'dev-insecure-share-key';
+    const shareSecret = config.get<string>('CAREER_SHARE_SECRET')?.trim();
+    const encryptionKey = config.get<string>('APP_ENCRYPTION_KEY')?.trim();
+    const isProd = config.get<string>('NODE_ENV') === 'production';
+
+    if (shareSecret) {
+      this.secret = shareSecret;
+    } else if (encryptionKey) {
+      this.secret = encryptionKey;
+    } else if (isProd) {
+      throw new Error('Set CAREER_SHARE_SECRET or APP_ENCRYPTION_KEY in production');
+    } else {
+      this.secret = 'dev-insecure-share-key';
+    }
     this.appUrl = (config.get<string>('APP_URL') ?? 'http://localhost:3000').replace(/\/$/, '');
     this.defaultTtlHours = parseInt(config.get<string>('CAREER_SHARE_TTL_HOURS') ?? '72', 10);
   }

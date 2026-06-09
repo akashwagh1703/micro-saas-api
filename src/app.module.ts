@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
+import { validateEnv } from './config/env.validation';
 import { PrismaModule } from './prisma/prisma.module';
 import { CryptoModule } from './common/crypto/crypto.module';
 import { ActivityLoggerModule } from './common/activity-logger.module';
@@ -21,7 +22,7 @@ import { AppController } from './app.controller';
 
 @Module({
   imports: [
-    ConfigModule.forRoot({ isGlobal: true }),
+    ConfigModule.forRoot({ isGlobal: true, validate: validateEnv }),
     PrismaModule,
     CryptoModule,
     ActivityLoggerModule,

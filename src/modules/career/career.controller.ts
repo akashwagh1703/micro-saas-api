@@ -380,7 +380,7 @@ export class CareerController {
       userId,
       dto.keyword,
       dto.location ?? 'india',
-      2,
+      1,
       source,
     );
 

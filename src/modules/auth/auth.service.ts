@@ -72,8 +72,10 @@ export class AuthService {
 
   private async createToken(userId: number): Promise<string> {
     const { plainText, hash } = this.crypto.generateToken();
+    const expiresAt = new Date();
+    expiresAt.setDate(expiresAt.getDate() + 90);
     await this.prisma.personalAccessToken.create({
-      data: { userId, name: 'auth', token: hash },
+      data: { userId, name: 'auth', token: hash, expiresAt },
     });
     return plainText;
   }
