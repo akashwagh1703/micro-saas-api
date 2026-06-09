@@ -103,7 +103,9 @@ export class SettingsController {
       business_description: settings.business_description ?? null,
       business_label: business_category ? businessLabel(business_category) : null,
       use_case_labels: use_cases.map((uc) => useCaseLabel(uc)),
-      configured: !!business_category && use_cases.length > 0,
+      configured:
+        !!business_category &&
+        (business_category === 'career_ai' || use_cases.length > 0),
       published_count,
       can_change_business: published_count === 0,
     };

@@ -20,6 +20,7 @@ import {
   shouldUseAiGeneration,
   useCaseLabel,
 } from './business-workflow';
+import { CAREER_AI_BUSINESS } from '../career/career.constants';
 
 export interface TemplateSummary {
   slug: string;
@@ -136,6 +137,11 @@ export class WorkflowTemplateService {
     await this.settings.set(userId, 'use_cases', JSON.stringify(uniqueUseCases));
     if (businessDescription !== undefined && businessDescription !== null) {
       await this.settings.set(userId, 'business_description', businessDescription.trim());
+    }
+
+    // CareerAI uses a dedicated WhatsApp bot — no generic auto-reply workflows needed.
+    if (businessCategory === CAREER_AI_BUSINESS) {
+      return [];
     }
 
     const workflows: Workflow[] = [];

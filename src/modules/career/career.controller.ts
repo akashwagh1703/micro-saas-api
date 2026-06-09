@@ -292,7 +292,7 @@ export class CareerController {
       throw new NotFoundException('Profile not found');
     }
     return {
-      message: `Re-matched profile — ${result.matchCount} strong matches (40%+ score)`,
+      message: `Re-matched profile — ${result.matchCount} strong matches (70%+ score)`,
       ...result,
     };
   }

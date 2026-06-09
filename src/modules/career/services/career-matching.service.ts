@@ -25,7 +25,7 @@ const W_LOCATION   = 15;
 const W_ROLE       = 10;
 
 /** Minimum score shown to job seekers (VIEW JOBS, digest, APPLY/RESUME lists). */
-export const CAREER_MIN_MATCH_SCORE = 40;
+export const CAREER_MIN_MATCH_SCORE = 70;
 
 const CITY_ALIASES: Record<string, string[]> = {
   bangalore: ['bangalore', 'bengaluru'],

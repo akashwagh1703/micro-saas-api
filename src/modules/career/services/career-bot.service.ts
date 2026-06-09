@@ -375,14 +375,20 @@ export class CareerBotService {
       allMatches,
     );
     const matches = this.matching.filterQualityMatches(allMatches);
-    const toShow = matches.length > 0 ? matches : allMatches.slice(0, 5);
     const intro =
       matches.length > 0
-        ? `Your Career Profile is ready! ✅ I found *${matches.length}* strong matches for your role, skills, and location.`
-        : toShow.length > 0
-          ? 'Your Career Profile is ready! ✅ Here are the closest roles I found — reply *FIND JOBS {skill}* to refine.'
-          : 'Your Career Profile is ready! ✅';
-    await this.presentTopJobs(message, profile, toShow, intro);
+        ? `Your Career Profile is ready! ✅ I found *${matches.length}* strong matches (70%+ fit) for your role, skills, and location.`
+        : 'Your Career Profile is ready! ✅';
+    if (matches.length === 0) {
+      await this.reply(
+        message,
+        allMatches.length > 0
+          ? `${intro}\n\nNo jobs scored 70%+ for your profile yet. Try *FIND JOBS {skill}* or update your location/roles, or ask your operator to fetch more listings.`
+          : `${intro}\n\nNo jobs in the system yet. Reply *VIEW JOBS* after your operator fetches listings.`,
+      );
+      return;
+    }
+    await this.presentTopJobs(message, profile, matches, intro);
   }
 
   /** Sends the numbered job list and action buttons to WhatsApp. */
@@ -594,12 +600,20 @@ export class CareerBotService {
           allMatches,
         );
         const matches = this.matching.filterQualityMatches(allMatches);
-        const toShow = matches.length > 0 ? matches : allMatches.slice(0, 5);
+        if (matches.length === 0) {
+          await this.reply(
+            message,
+            allMatches.length > 0
+              ? 'Resume updated! ✅ No jobs scored 70%+ for your profile yet. Try *FIND JOBS {skill}* or *VIEW JOBS* after more listings are fetched.'
+              : 'Resume updated! ✅ No matching jobs in the system yet. Reply *VIEW JOBS* later.',
+          );
+          return;
+        }
         await this.presentTopJobs(
           message,
           updated,
-          toShow,
-          'Resume updated! ✅ Profile refreshed.',
+          matches,
+          `Resume updated! ✅ I found *${matches.length}* strong matches (70%+ fit).`,
         );
       } else {
         await this.reply(
@@ -676,22 +690,20 @@ export class CareerBotService {
       allMatches,
     );
     const matches = this.matching.filterQualityMatches(allMatches);
-    const toShow = matches.length > 0 ? matches : allMatches.slice(0, 8);
 
-    if (toShow.length === 0) {
+    if (matches.length === 0) {
       await this.reply(
         message,
-        'No matching jobs found. Try *FIND JOBS react* or *FIND JOBS sales*, or ask your operator to fetch live jobs.',
+        allMatches.length > 0
+          ? `No jobs scored *70%+* for your profile${keyword && keyword !== 'all' ? ` for "${keyword}"` : ''}. Try another keyword, update your profile, or ask your operator to fetch more listings.`
+          : 'No matching jobs found. Try *FIND JOBS react* or *FIND JOBS sales*, or ask your operator to fetch live jobs.',
       );
       return;
     }
 
-    const intro =
-      matches.length > 0
-        ? `Found *${matches.length}* jobs matching your profile${keyword && keyword !== 'all' ? ` for "${keyword}"` : ''}:`
-        : `Closest matches${keyword && keyword !== 'all' ? ` for "${keyword}"` : ''} (refine with location/role if needed):`;
+    const intro = `Found *${matches.length}* jobs with *70%+* match${keyword && keyword !== 'all' ? ` for "${keyword}"` : ''}:`;
 
-    await this.presentTopJobs(message, profile, toShow.slice(0, 8), intro, 8);
+    await this.presentTopJobs(message, profile, matches, intro, 8);
   }
 
   private formatJobListing(m: JobMatchResult, index: number): string[] {
