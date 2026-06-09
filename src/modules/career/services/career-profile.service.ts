@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { CareerProfile, Contact, Prisma } from '@prisma/client';
 import { PrismaService } from '../../../prisma/prisma.service';
-import { ParsedCareerProfile } from './career-ai.service';
+import { ParsedCareerProfile } from '../career-parsed-profile.types';
 
 const ONBOARDING_FIELD_ORDER: Array<{
   step: string;

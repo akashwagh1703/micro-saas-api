@@ -25,7 +25,6 @@ import {
   readAlertPreferences,
 } from '../career-alert-preferences.util';
 import { CareerResumeBuilderService } from './career-resume-builder.service';
-import { normalizeContractType } from '../job-sources/job-source.utils';
 import {
   careerDocxFileName,
   careerPdfFileName,
@@ -40,6 +39,17 @@ import {
   mergeNotifiedJobIds,
   readAlertState,
 } from '../career-alert-state.util';
+import { mergeParsedProfiles } from '../career-resume-parse.util';
+import {
+  employmentTypePromptBody,
+  formatOnboardingAck,
+  getOnboardingSteps,
+  parsingResumeRecoveryMessage,
+  validateOnboardingAnswer,
+  welcomeMessage,
+  awaitingResumeMessage,
+  workModePromptBody,
+} from '../career-onboarding.util';
 
 // WhatsApp rejects messages over 4096 chars. We use 3800 to leave a safe buffer.
 const WA_MAX_CHARS = 3800;
@@ -373,24 +383,19 @@ export class CareerBotService {
       await this.profiles.updateOnboarding(profile.id, 'awaiting_resume', {});
       await this.reply(
         message,
-        'Welcome to CareerAI Bot! 🎯\n\nPlease upload your latest resume (PDF or DOCX).',
+        welcomeMessage(profile.fullName ?? message.contact.name),
       );
       return;
     }
 
     if (profile.onboardingStep === 'awaiting_resume') {
-      await this.reply(message, 'Please upload your resume as a PDF or DOCX document attachment.');
+      await this.reply(message, awaitingResumeMessage());
       return;
     }
 
-    // FIX 3: parsing_resume had no handler — user was permanently stuck receiving
-    // "Processing your profile…" forever. Recover by advancing to the first question.
     if (profile.onboardingStep === 'parsing_resume') {
       await this.profiles.updateOnboarding(profile.id, 'follow_up_location', {});
-      await this.reply(
-        message,
-        "Let's continue setting up your profile.\n\nWhat is your current city/location? (e.g. Mumbai, Pune)",
-      );
+      await this.reply(message, parsingResumeRecoveryMessage());
       return;
     }
 
@@ -422,7 +427,7 @@ export class CareerBotService {
         `Unknown onboarding step "${current.onboardingStep}" for profile ${current.id} — recovering`,
       );
       await this.profiles.updateOnboarding(current.id, 'follow_up_location', {});
-      await this.reply(message, "Let's continue. What is your current city/location?");
+      await this.reply(message, parsingResumeRecoveryMessage());
       return;
     }
 
@@ -431,42 +436,52 @@ export class CareerBotService {
       return;
     }
 
-    // PHASE 5 FIX 2: Validate the user's answer before saving.
-    const validationError = this.validateOnboardingAnswer(current.onboardingStep, text);
-    if (validationError) {
+    const validation = validateOnboardingAnswer(current.onboardingStep, text);
+    if (!validation.ok) {
       if (current.onboardingStep === 'follow_up_job_type') {
-        await this.replyWorkModePrompt(message, validationError);
+        await this.replyWorkModePrompt(message, validation.error);
       } else if (current.onboardingStep === 'follow_up_employment_type') {
-        await this.replyEmploymentTypePrompt(message, validationError);
+        await this.replyEmploymentTypePrompt(message, validation.error);
       } else {
-        await this.reply(message, validationError);
+        const reask = step.question ? `\n\n${step.question}` : '';
+        await this.reply(message, `${validation.error}${reask}`);
       }
       return;
     }
 
     const data: Prisma.CareerProfileUpdateInput = {};
     if (step.field === 'preferredLocations' || step.field === 'preferredRoles') {
-      data[step.field] = text.split(',').map((s) => s.trim()).filter(Boolean);
+      data[step.field] = (validation.value as string[]) ?? [];
     } else if (step.field === 'preferredJobTypes') {
-      data.preferredJobTypes = this.normalizeEmploymentTypes(text);
+      data.preferredJobTypes = [String(validation.value ?? text)];
     } else {
-      data[step.field] = text;
+      data[step.field] = String(validation.value ?? text);
     }
+
+    const ack = formatOnboardingAck(
+      current.onboardingStep,
+      validation.display ?? String(validation.value ?? text),
+    );
 
     const updated = await this.profiles.updateOnboarding(current.id, step.next, data);
 
     if (step.next === 'complete') {
+      await this.reply(message, ack);
       await this.finishOnboarding(message, updated);
       return;
     }
 
     const nextStep = steps[step.next];
     if (step.next === 'follow_up_employment_type') {
+      await this.reply(message, ack);
       await this.replyEmploymentTypePrompt(message);
     } else if (step.next === 'follow_up_job_type') {
+      await this.reply(message, ack);
       await this.replyWorkModePrompt(message);
     } else if (nextStep?.question) {
-      await this.reply(message, nextStep.question);
+      await this.reply(message, `${ack}\n\n${nextStep.question}`);
+    } else {
+      await this.reply(message, ack);
     }
   }
 
@@ -488,8 +503,8 @@ export class CareerBotService {
     const matches = this.matching.filterQualityMatches(allMatches);
     const intro =
       matches.length > 0
-        ? `Your Career Profile is ready! ✅ I found *${matches.length}* strong matches (70%+ fit) for your role, skills, and location.`
-        : 'Your Career Profile is ready! ✅';
+        ? `🎉 *Profile complete!* ✅\n\nI found *${matches.length}* strong matches (70%+ fit) tailored to your role, skills & location.`
+        : '🎉 *Profile complete!* ✅\n\nYour career profile is ready — let\'s find the right opportunities for you.';
     if (matches.length === 0) {
       await this.reply(
         message,
@@ -696,7 +711,7 @@ export class CareerBotService {
         )
       : null;
     const basicParsed = extracted ? this.resumeParser.extractBasicFields(extracted) : null;
-    const parsed = this.mergeParsedProfile(aiParsed, basicParsed);
+    const parsed = mergeParsedProfiles(aiParsed, basicParsed, extracted ?? undefined);
 
     if (reupload && profile.isComplete) {
       await this.clearReuploadPending(profile.id);
@@ -743,7 +758,13 @@ export class CareerBotService {
         return;
       }
       const summary = this.resumeBuilder.formatParsedSummary(updated);
-      const intro = `Resume parsed! ✅\n\n${summary}`;
+      const intro = [
+        '✨ *Resume parsed successfully!*',
+        '',
+        summary,
+        '',
+        '_Just a few quick questions to fine-tune your job matches…_',
+      ].join('\n');
       if (
         updated.onboardingStep === 'follow_up_employment_type' ||
         updated.onboardingStep === 'follow_up_job_type'
@@ -769,7 +790,13 @@ export class CareerBotService {
       const question = this.getOnboardingSteps()[updated.onboardingStep]?.question;
       await this.reply(
         message,
-        `Resume saved. ✅\n\n${summary}\n\n${question ?? 'What is your current city/location?'}`,
+        [
+          '✨ *Resume saved!*',
+          '',
+          summary,
+          '',
+          question ?? parsingResumeRecoveryMessage(),
+        ].join('\n\n'),
       );
       return;
     }
@@ -777,7 +804,13 @@ export class CareerBotService {
     await this.profiles.updateOnboarding(profile.id, 'follow_up_location', {});
     await this.reply(
       message,
-      'Resume saved. I could not auto-parse all fields.\n\nWhat is your current city/location?',
+      [
+        '📄 *Resume saved!* ✅',
+        '',
+        'I couldn\'t auto-read all fields — no worries, I\'ll ask a few quick questions.',
+        '',
+        parsingResumeRecoveryMessage(),
+      ].join('\n'),
     );
   }
 
@@ -1690,52 +1723,6 @@ export class CareerBotService {
     return true;
   }
 
-  /**
-   * Returns a user-facing error string when the answer fails basic validation,
-   * or null when the answer is acceptable.
-   * Only the fields where garbage input causes real downstream damage are checked.
-   */
-  private validateOnboardingAnswer(step: string, text: string): string | null {
-    const t = text.trim();
-    if (!t) return 'Please type a valid answer.';
-
-    if (step === 'follow_up_current_salary' || step === 'follow_up_expected_salary') {
-      const hasNumber    = /\d/.test(t);
-      const isNegotiable = /negotiable|open|discuss|fresher|no salary|nil/i.test(t);
-      if (!hasNumber && !isNegotiable) {
-        return 'Please enter a salary like *12 LPA*, *12-15 LPA*, or type *Negotiable* / *Fresher*.';
-      }
-    }
-
-    if (step === 'follow_up_notice_period') {
-      const valid = /\d|immediate|no\s*notice|zero|serving|n\/a|none/i.test(t);
-      if (!valid) {
-        return 'Please enter your notice period like *30 days*, *2 months*, or *Immediate*.';
-      }
-    }
-
-    if (step === 'follow_up_employment_type') {
-      const valid = /full.?time|part.?time|contract|freelance|intern/i.test(t);
-      if (!valid) {
-        return 'Please reply *Full-time*, *Part-time*, or *Contract*.';
-      }
-    }
-
-    if (step === 'follow_up_job_type') {
-      const valid = /remote|hybrid|onsite|on.?site|office|anywhere|wfh|work from home/i.test(t);
-      if (!valid) {
-        return 'Please reply *Remote*, *Hybrid*, or *Onsite*.';
-      }
-    }
-
-    if (step === 'follow_up_roles') {
-      if (t.length < 2) {
-        return 'Please enter at least one target role (e.g. *React Developer*).';
-      }
-    }
-
-    return null;
-  }
 
   /**
    * FIX 5: Strips all recognised command prefixes from the user's text so only
@@ -1759,40 +1746,6 @@ export class CareerBotService {
       .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, '')
       .trim()
       .slice(0, CAREER_MAX_INBOUND_CHARS);
-  }
-
-  private mergeParsedProfile(
-    ai: ParsedCareerProfile | null,
-    basic: ParsedCareerProfile | null,
-  ): ParsedCareerProfile | null {
-    if (!ai && !basic) {
-      return null;
-    }
-    if (!ai) {
-      return basic;
-    }
-    if (!basic) {
-      return ai;
-    }
-    return {
-      ...basic,
-      ...ai,
-      full_name: ai.full_name ?? basic.full_name,
-      email: ai.email ?? basic.email,
-      phone: ai.phone ?? basic.phone,
-      skills: ai.skills?.length ? ai.skills : basic.skills,
-      experience: ai.experience?.length ? ai.experience : basic.experience,
-      education: ai.education?.length ? ai.education : basic.education,
-      preferred_roles: ai.preferred_roles?.length ? ai.preferred_roles : basic.preferred_roles,
-      current_location: ai.current_location ?? basic.current_location,
-      preferred_locations: ai.preferred_locations?.length
-        ? ai.preferred_locations
-        : basic.preferred_locations,
-      current_salary: ai.current_salary ?? basic.current_salary,
-      expected_salary: ai.expected_salary ?? basic.expected_salary,
-      notice_period: ai.notice_period ?? basic.notice_period,
-      work_preference: ai.work_preference ?? basic.work_preference,
-    };
   }
 
   /** Catches thrown AI errors; logs context for production debugging. */
@@ -2050,55 +2003,8 @@ export class CareerBotService {
     );
   }
 
-  private getOnboardingSteps(): Record<
-    string,
-    { next: string; field: keyof CareerProfile; question: string }
-  > {
-    return {
-      follow_up_location: {
-        next: 'follow_up_preferred_location',
-        field: 'currentLocation',
-        question: 'What is your current city/location? (e.g. Mumbai, Pune)',
-      },
-      follow_up_preferred_location: {
-        next: 'follow_up_current_salary',
-        field: 'preferredLocations',
-        question:
-          'Where would you prefer to work? (city or "Remote", comma-separated for multiple)',
-      },
-      follow_up_current_salary: {
-        next: 'follow_up_expected_salary',
-        field: 'currentSalary',
-        question: 'What is your current salary? (e.g. 8 LPA or "Fresher")',
-      },
-      follow_up_expected_salary: {
-        next: 'follow_up_notice_period',
-        field: 'expectedSalary',
-        question: 'What is your expected salary? (e.g. 12 LPA or "Negotiable")',
-      },
-      follow_up_notice_period: {
-        next: 'follow_up_employment_type',
-        field: 'noticePeriod',
-        question: 'What is your notice period? (e.g. 30 days, 2 months, Immediate)',
-      },
-      follow_up_employment_type: {
-        next: 'follow_up_job_type',
-        field: 'preferredJobTypes',
-        question:
-          'Preferred employment type? Tap a button or type *Full-time*, *Part-time*, or *Contract*',
-      },
-      follow_up_job_type: {
-        next: 'follow_up_roles',
-        field: 'workPreference',
-        question: 'Preferred work mode? Tap a button or type Remote / Hybrid / Onsite',
-      },
-      follow_up_roles: {
-        next: 'complete',
-        field: 'preferredRoles',
-        question:
-          'What roles are you targeting? (comma-separated, e.g. React Developer, Full Stack Engineer)',
-      },
-    };
+  private getOnboardingSteps() {
+    return getOnboardingSteps();
   }
 
   private async promptOnboardingStep(
@@ -2123,26 +2029,14 @@ export class CareerBotService {
     message: Message & { contact: Contact },
     prefix?: string,
   ): Promise<void> {
-    const body = [
-      prefix,
-      'Preferred employment type? Tap a button below or type *Full-time*, *Part-time*, or *Contract*.',
-    ]
-      .filter(Boolean)
-      .join('\n\n');
-    await this.replyButtons(message, body, [...CAREER_EMPLOYMENT_TYPE_BUTTONS]);
+    await this.replyButtons(message, employmentTypePromptBody(prefix), [...CAREER_EMPLOYMENT_TYPE_BUTTONS]);
   }
 
   private async replyWorkModePrompt(
     message: Message & { contact: Contact },
     prefix?: string,
   ): Promise<void> {
-    const body = [
-      prefix,
-      'Preferred work mode? Tap a button below or type *Remote*, *Hybrid*, or *Onsite*.',
-    ]
-      .filter(Boolean)
-      .join('\n\n');
-    await this.replyButtons(message, body, [...CAREER_WORK_MODE_BUTTONS]);
+    await this.replyButtons(message, workModePromptBody(prefix), [...CAREER_WORK_MODE_BUTTONS]);
   }
 
   private async sendJobActionButtons(
@@ -2311,13 +2205,5 @@ export class CareerBotService {
       lower.match(/^job\s*#?\s*(\d+)\s*$/) ||
       lower.match(/^view\s+job\s*#?\s*(\d+)\s*$/);
     return match ? parseInt(match[1], 10) : null;
-  }
-
-  private normalizeEmploymentTypes(text: string): string[] {
-    const parts = text.split(',').map((s) => s.trim()).filter(Boolean);
-    const normalized = parts
-      .map((part) => normalizeContractType(part) ?? part.toLowerCase().replace(/\s+/g, '_'))
-      .filter(Boolean);
-    return normalized.length > 0 ? normalized : ['full_time'];
   }
 }

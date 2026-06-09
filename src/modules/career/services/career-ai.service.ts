@@ -6,27 +6,11 @@ import {
   SalaryInsightData,
   SkillGapPlanData,
 } from '../career-guidance-state.util';
+import { ParsedCareerProfile } from '../career-parsed-profile.types';
+import { normalizeRawAiParse } from '../career-resume-parse.util';
 import { CareerAiUsageService } from './career-ai-usage.service';
 
-export interface ParsedCareerProfile {
-  full_name?: string;
-  email?: string;
-  phone?: string;
-  skills?: string[];
-  experience?: Array<{ title?: string; company?: string; years?: string; summary?: string }>;
-  education?: Array<{ degree?: string; institution?: string; year?: string }>;
-  certifications?: string[];
-  projects?: string[];
-  languages?: string[];
-  current_location?: string;
-  preferred_locations?: string[];
-  current_salary?: string;
-  expected_salary?: string;
-  notice_period?: string;
-  work_preference?: string;
-  preferred_roles?: string[];
-}
-
+export type { ParsedCareerProfile } from '../career-parsed-profile.types';
 export type ConvTurn = { role: 'user' | 'assistant'; content: string };
 
 @Injectable()
@@ -43,23 +27,30 @@ export class CareerAiService {
       return null;
     }
 
-    const result1 = await this.ai.complete(userId, this.buildParsePrompt(resumeText), {
-      max_tokens: 2500,
-      temperature: 0.1,
+    const structuredHint = this.buildStructuredResumeHint(resumeText);
+
+    const result1 = await this.ai.complete(userId, this.buildParsePrompt(resumeText, structuredHint), {
+      max_tokens: 3500,
+      temperature: 0.05,
     });
     await this.track(userId, 'parse_resume', result1);
     if (result1.success && result1.content) {
       const parsed = this.parseJson(result1.content);
-      if (parsed) return parsed;
+      if (parsed) {
+        return normalizeRawAiParse(parsed) ?? parsed;
+      }
     }
 
     const result2 = await this.ai.complete(userId, this.buildFallbackParsePrompt(resumeText), {
-      max_tokens: 1200,
-      temperature: 0.1,
+      max_tokens: 2500,
+      temperature: 0.05,
     });
     await this.track(userId, 'parse_resume_fallback', result2);
     if (result2.success && result2.content) {
-      return this.parseJson(result2.content);
+      const parsed = this.parseJson(result2.content);
+      if (parsed) {
+        return normalizeRawAiParse(parsed) ?? parsed;
+      }
     }
 
     return null;
@@ -721,50 +712,62 @@ export class CareerAiService {
     }
   }
 
-  private buildParsePrompt(resumeText: string): string {
+  private buildStructuredResumeHint(resumeText: string): string {
+    const lines = resumeText.split('\n').map((l) => l.trim()).filter(Boolean);
+    const preview = lines.slice(0, 15).join('\n');
     return [
-      'You are a precise resume parser for Indian and international CVs. Return ONLY a JSON object — no explanation, no markdown fences.',
+      'Header preview (name is usually in first lines, NOT a job title):',
+      preview,
+    ].join('\n');
+  }
+
+  private buildParsePrompt(resumeText: string, structuredHint?: string): string {
+    return [
+      'You are an expert resume parser for Indian and international CVs. Return ONLY valid JSON — no markdown, no explanation.',
       '',
-      'Rules:',
-      '- Extract phone numbers in +91 or 10-digit Indian format when present.',
-      '- Parse salary as "X LPA" or lakh when written that way.',
-      '- Infer preferred_roles from latest job titles when not explicitly listed.',
-      '- current_location is the city the candidate currently lives in.',
+      'CRITICAL RULES:',
+      '1. full_name = candidate PERSON name only (2-4 words). NEVER put a job title in full_name.',
+      '2. preferred_roles = job titles the candidate wants or currently holds (from headline + experience). NEVER company names.',
+      '3. skills = EVERY technical/professional skill, tool, framework, and language mentioned — be exhaustive.',
+      '4. experience = ALL jobs listed, most recent FIRST. Each entry needs title, company, years (compute from dates if needed).',
+      '5. Parse phone as +91XXXXXXXXXX for Indian numbers. Parse salary as "X LPA" when written in lakhs.',
+      '6. current_location = city where candidate currently lives (not preferred city).',
+      '7. Do NOT invent data. Use empty string "" or [] when absent.',
       '',
-      'Use this exact schema. Use empty arrays [] for missing sections. ' +
-        'For experience, always include a "years" field with the number of years (e.g. "2").',
+      structuredHint ?? '',
       '',
+      'JSON schema (exact keys):',
       '{"full_name":"","email":"","phone":"","skills":["React","Node.js"],' +
-        '"experience":[{"title":"Software Engineer","company":"Acme","years":"3","summary":"Built REST APIs"}],' +
+        '"experience":[{"title":"Software Engineer","company":"Acme Pvt Ltd","years":"3","summary":"Built REST APIs"}],' +
         '"education":[{"degree":"B.Tech","institution":"IIT Mumbai","year":"2020"}],' +
         '"certifications":["AWS Certified"],"projects":["E-commerce platform"],"languages":["English","Hindi"],' +
         '"current_location":"Mumbai","preferred_locations":["Pune","Remote"],' +
         '"current_salary":"8 LPA","expected_salary":"12 LPA","notice_period":"30 days",' +
-        '"work_preference":"Hybrid","preferred_roles":["React Developer","Full Stack Engineer"]}',
+        '"work_preference":"Hybrid","preferred_roles":["Senior React Developer","Full Stack Engineer"]}',
       '',
-      'Resume text:',
-      // Increased from 12,000 to 14,000 chars to capture more of multi-page resumes.
-      resumeText.slice(0, 14000),
+      'Full resume text:',
+      resumeText.slice(0, 16000),
     ].join('\n');
   }
 
   private buildFallbackParsePrompt(resumeText: string): string {
     return [
-      'Extract ONLY skills and experience from this resume. Return JSON only.',
+      'Extract resume fields as JSON only. Follow rules: full_name=person name not job title; skills=all technologies; experience=all jobs newest first with years.',
       '',
-      'Schema: {"skills":["React"],"experience":[{"title":"Developer","company":"Acme","years":"3","summary":""}]}',
+      '{"full_name":"","email":"","phone":"","skills":[],"experience":[{"title":"","company":"","years":"","summary":""}],' +
+        '"education":[],"preferred_roles":[],"current_location":"","current_salary":"","expected_salary":"","notice_period":""}',
       '',
-      resumeText.slice(0, 8000),
+      resumeText.slice(0, 12000),
     ].join('\n');
   }
 
   private parseJson(raw: string): ParsedCareerProfile | null {
-    // Strip markdown code fences if the model added them despite instructions.
     const cleaned = raw.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '');
     const match = cleaned.match(/\{[\s\S]*\}/);
     if (!match) return null;
     try {
-      return JSON.parse(match[0]) as ParsedCareerProfile;
+      const obj = JSON.parse(match[0]) as unknown;
+      return normalizeRawAiParse(obj) ?? (obj as ParsedCareerProfile);
     } catch {
       return null;
     }
