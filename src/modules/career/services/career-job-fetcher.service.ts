@@ -4,8 +4,15 @@ import { CareerJobSourceRegistry } from '../job-sources/career-job-source.regist
 import { EXTERNAL_JOB_SOURCES } from '../job-sources/job-source.utils';
 import { JobSourceStatus } from '../job-sources/job-source.types';
 
+export interface FetchJobsResult {
+  total: number;
+  bySource: Record<string, number>;
+  enabledSources: string[];
+  errors: Record<string, string>;
+}
+
 /**
- * Orchestrates job fetching across Adzuna, Naukri, LinkedIn (and future sources).
+ * Orchestrates job fetching across Adzuna, JSearch, Naukri, LinkedIn (and future sources).
  */
 @Injectable()
 export class CareerJobFetcherService {
@@ -31,23 +38,56 @@ export class CareerJobFetcherService {
     pages = 2,
     sourceId?: string,
   ): Promise<number> {
+    const result = await this.fetchAndStoreDetailed(userId, keyword, location, pages, sourceId);
+    return result.total;
+  }
+
+  async fetchAndStoreDetailed(
+    userId: number,
+    keyword: string,
+    location = 'india',
+    pages = 2,
+    sourceId?: string,
+  ): Promise<FetchJobsResult> {
     const sources = sourceId
       ? [this.registry.get(sourceId)].filter((s): s is NonNullable<typeof s> => !!s?.isEnabled())
       : this.registry.enabled();
 
+    const bySource: Record<string, number> = {};
+    const errors: Record<string, string> = {};
+    let total = 0;
+
     if (sources.length === 0) {
-      return 0;
+      return { total: 0, bySource, enabledSources: [], errors };
     }
 
-    let stored = 0;
     for (const source of sources) {
-      stored += await source.fetchAndStore(userId, keyword, location, pages);
+      try {
+        const count = await source.fetchAndStore(userId, keyword, location, pages);
+        bySource[source.id] = count;
+        total += count;
+      } catch (e: unknown) {
+        const message = e instanceof Error ? e.message : String(e);
+        errors[source.id] = message;
+        bySource[source.id] = 0;
+        this.logger.error(
+          `Job source "${source.id}" failed for userId=${userId} keyword="${keyword}": ${message}`,
+        );
+      }
     }
 
     this.logger.log(
-      `Fetched ${stored} jobs for userId=${userId} keyword="${keyword}" from ${sources.map((s) => s.id).join(',')}`,
+      `Fetched ${total} jobs for userId=${userId} keyword="${keyword}" — ${sources
+        .map((s) => `${s.id}:${bySource[s.id] ?? 0}`)
+        .join(', ')}`,
     );
-    return stored;
+
+    return {
+      total,
+      bySource,
+      enabledSources: sources.map((s) => s.id),
+      errors,
+    };
   }
 
   async expireStaleJobs(olderThanDays = 30): Promise<number> {

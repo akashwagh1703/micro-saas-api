@@ -24,6 +24,7 @@ import { CareerAuditService } from './services/career-audit.service';
 import { CareerPrivacyService } from './services/career-privacy.service';
 import { CareerRetentionScheduler } from './career-retention.scheduler';
 import { AdzunaJobSource } from './job-sources/adzuna.job-source';
+import { JSearchJobSource } from './job-sources/jsearch.job-source';
 import { NaukriJobSource } from './job-sources/naukri.job-source';
 import { LinkedInJobSource } from './job-sources/linkedin.job-source';
 import { CareerJobSourceRegistry } from './job-sources/career-job-source.registry';
@@ -56,6 +57,7 @@ import { CareerResumeBuilderService } from './services/career-resume-builder.ser
     CareerRetentionScheduler,
     CareerJobUpsertService,
     AdzunaJobSource,
+    JSearchJobSource,
     NaukriJobSource,
     LinkedInJobSource,
     CareerJobSourceRegistry,

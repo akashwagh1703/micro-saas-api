@@ -6,9 +6,7 @@ import { CareerJobFetcherService } from './services/career-job-fetcher.service';
 /**
  * Keywords fetched on each refresh cycle.
  * Covers the most common job categories searched by Indian job seekers.
- * Each keyword costs 1 Adzuna API request (free tier: 250/day).
- * At 8 keywords × all career_ai tenants we stay well within the free limit
- * for typical usage (< 30 tenants).
+ * Each keyword runs all enabled sources (Adzuna + JSearch when configured).
  */
 const REFRESH_KEYWORDS = [
   'software developer',
@@ -44,7 +42,7 @@ export class CareerJobRefreshScheduler implements OnModuleInit {
     }
 
     if (!this.fetcher.isEnabled()) {
-      this.logger.log('Job refresh scheduler inactive — Adzuna credentials not set');
+      this.logger.log('Job refresh scheduler inactive — no job sources configured');
       return;
     }
 
@@ -59,52 +57,63 @@ export class CareerJobRefreshScheduler implements OnModuleInit {
     );
   }
 
-  /** Refresh Adzuna jobs for a single tenant (portal manual refresh). */
-  async runForUser(userId: number): Promise<{ expired: number; fetched: number }> {
+  /** Refresh jobs for a single tenant (portal manual refresh). */
+  async runForUser(userId: number): Promise<{
+    expired: number;
+    fetched: number;
+    bySource: Record<string, number>;
+  }> {
     this.logger.log(`Job refresh starting for userId=${userId}…`);
     const expired = await this.fetcher.expireStaleJobs(30);
 
+    const bySource: Record<string, number> = {};
     let fetched = 0;
+
     for (const keyword of REFRESH_KEYWORDS) {
-      try {
-        fetched += await this.fetcher.fetchAndStore(userId, keyword, 'india', 1);
-      } catch (e: any) {
-        this.logger.warn(`Refresh failed userId=${userId} keyword="${keyword}": ${e.message}`);
+      const result = await this.fetcher.fetchAndStoreDetailed(userId, keyword, 'india', 1);
+      fetched += result.total;
+      for (const [sourceId, count] of Object.entries(result.bySource)) {
+        bySource[sourceId] = (bySource[sourceId] ?? 0) + count;
       }
     }
 
-    this.logger.log(`Job refresh complete userId=${userId} — expired=${expired} fetched=${fetched}`);
-    return { expired, fetched };
+    this.logger.log(
+      `Job refresh complete userId=${userId} — expired=${expired} fetched=${fetched} (${Object.entries(bySource)
+        .map(([k, v]) => `${k}:${v}`)
+        .join(', ')})`,
+    );
+    return { expired, fetched, bySource };
   }
 
   /** Scheduled refresh for all career_ai tenants. */
-  async run(): Promise<{ expired: number; fetched: number }> {
+  async run(): Promise<{ expired: number; fetched: number; bySource: Record<string, number> }> {
     this.logger.log('Job refresh cycle starting…');
 
-    // Expire stale Adzuna jobs older than 30 days across all tenants.
     const expired = await this.fetcher.expireStaleJobs(30);
 
-    // Find all tenants using the career_ai business category.
     const settings = await this.prisma.userSetting.findMany({
       where: { key: 'business_category', value: 'career_ai' },
       select: { userId: true },
     });
 
+    const bySource: Record<string, number> = {};
     let fetched = 0;
+
     for (const { userId } of settings) {
       for (const keyword of REFRESH_KEYWORDS) {
-        try {
-          // Fetch 1 page (20 results) per keyword — keeps request count low.
-          fetched += await this.fetcher.fetchAndStore(userId, keyword, 'india', 1);
-        } catch (e: any) {
-          this.logger.warn(
-            `Refresh failed userId=${userId} keyword="${keyword}": ${e.message}`,
-          );
+        const result = await this.fetcher.fetchAndStoreDetailed(userId, keyword, 'india', 1);
+        fetched += result.total;
+        for (const [sourceId, count] of Object.entries(result.bySource)) {
+          bySource[sourceId] = (bySource[sourceId] ?? 0) + count;
         }
       }
     }
 
-    this.logger.log(`Job refresh complete — expired=${expired} fetched=${fetched}`);
-    return { expired, fetched };
+    this.logger.log(
+      `Job refresh complete — expired=${expired} fetched=${fetched} (${Object.entries(bySource)
+        .map(([k, v]) => `${k}:${v}`)
+        .join(', ')})`,
+    );
+    return { expired, fetched, bySource };
   }
 }

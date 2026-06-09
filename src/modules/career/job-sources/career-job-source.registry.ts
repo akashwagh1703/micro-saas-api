@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { CareerJobSource, JobSourceStatus } from './job-source.types';
 import { AdzunaJobSource } from './adzuna.job-source';
+import { JSearchJobSource } from './jsearch.job-source';
 import { NaukriJobSource } from './naukri.job-source';
 import { LinkedInJobSource } from './linkedin.job-source';
 
@@ -10,10 +11,11 @@ export class CareerJobSourceRegistry {
 
   constructor(
     adzuna: AdzunaJobSource,
+    jsearch: JSearchJobSource,
     naukri: NaukriJobSource,
     linkedin: LinkedInJobSource,
   ) {
-    this.sources = [adzuna, naukri, linkedin];
+    this.sources = [adzuna, jsearch, naukri, linkedin];
   }
 
   all(): CareerJobSource[] {

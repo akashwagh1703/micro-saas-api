@@ -15,10 +15,12 @@ export class CareerJobUpsertService {
   constructor(private readonly prisma: PrismaService) {}
 
   async upsert(userId: number, source: string, job: NormalizedJobListing): Promise<void> {
-    const externalId = String(job.externalId ?? '').trim();
-    if (!externalId) {
+    const rawExternalId = String(job.externalId ?? '').trim();
+    if (!rawExternalId) {
       throw new Error('Missing externalId');
     }
+
+    const storageKey = this.toStorageKey(source, rawExternalId);
 
     const description = (job.description ?? '').slice(0, 3000);
     const skills = job.requiredSkills?.length
@@ -47,12 +49,22 @@ export class CareerJobUpsertService {
       expiresAt: thirtyDaysFromNow(),
       industry: clipField(job.industry, 60),
       isActive: true,
+      source,
+      externalId: storageKey,
     };
 
-    const existing = await this.prisma.careerJob.findFirst({
-      where: { userId, externalId },
+    let existing = await this.prisma.careerJob.findFirst({
+      where: { userId, externalId: storageKey },
       select: { id: true },
     });
+
+    // Legacy rows stored raw Adzuna ids without source prefix — migrate on update.
+    if (!existing) {
+      existing = await this.prisma.careerJob.findFirst({
+        where: { userId, source, externalId: rawExternalId },
+        select: { id: true },
+      });
+    }
 
     if (existing) {
       await this.prisma.careerJob.update({
@@ -66,9 +78,13 @@ export class CareerJobUpsertService {
       data: {
         ...shared,
         userId,
-        source,
-        externalId,
       },
     });
+  }
+
+  /** Prevents Adzuna/JSearch id collisions in @@unique([userId, externalId]). */
+  private toStorageKey(source: string, externalId: string): string {
+    const key = `${source}::${externalId}`;
+    return key.length > 190 ? key.slice(0, 190) : key;
   }
 }

@@ -70,9 +70,9 @@ export class CareerJobService {
    * fake companies from appearing alongside real listings.
    */
   async ensureSampleJobs(userId: number): Promise<number> {
-    // If any non-seed real jobs exist, skip seeding entirely.
+    // If any non-seed real jobs exist (adzuna, jsearch, admin, etc.), skip seeding entirely.
     const realCount = await this.prisma.careerJob.count({
-      where: { userId, source: { not: 'seed' } },
+      where: { userId, source: { notIn: ['seed'] } },
     });
     if (realCount > 0) return realCount;
 

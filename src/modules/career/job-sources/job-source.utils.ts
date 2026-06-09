@@ -73,4 +73,4 @@ export function formatUpsertError(error: unknown): string {
 }
 
 /** External job sources whose listings expire on refresh cycles. */
-export const EXTERNAL_JOB_SOURCES = ['adzuna', 'naukri', 'linkedin'] as const;
+export const EXTERNAL_JOB_SOURCES = ['adzuna', 'jsearch', 'naukri', 'linkedin'] as const;

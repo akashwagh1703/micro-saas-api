@@ -364,34 +364,62 @@ export class CareerController {
     @Body() dto: FetchJobsDto,
     @Query('source') source?: string,
   ) {
+    const statuses = this.fetcher.listSources();
     if (!this.fetcher.isEnabled()) {
       return {
-        message: 'No job sources configured. Set ADZUNA_APP_ID/KEY or Naukri/LinkedIn API URLs.',
+        message:
+          'No job sources configured. Set ADZUNA_APP_ID/KEY and/or JSEARCH_RAPIDAPI_KEY in API env.',
         count: 0,
-        sources: this.fetcher.listSources(),
+        by_source: {},
+        sources: statuses,
       };
     }
-    const count = await this.fetcher.fetchAndStore(
+
+    const result = await this.fetcher.fetchAndStoreDetailed(
       userId,
       dto.keyword,
       dto.location ?? 'india',
-      3,
+      2,
       source,
     );
+
+    const parts = Object.entries(result.bySource)
+      .map(([id, n]) => `${id}: ${n}`)
+      .join(', ');
+
+    const errorParts = Object.entries(result.errors)
+      .map(([id, err]) => `${id} failed (${err})`)
+      .join('; ');
+
+    let message = `Fetched ${result.total} jobs for "${dto.keyword}"`;
+    if (parts) message += ` (${parts})`;
+    if (errorParts) message += `. ${errorParts}`;
+
     return {
-      message: `Fetched and stored ${count} jobs for keyword "${dto.keyword}"`,
-      count,
-      sources: this.fetcher.listSources(),
+      message,
+      count: result.total,
+      by_source: result.bySource,
+      errors: result.errors,
+      sources: statuses,
     };
   }
 
   @Post('jobs/refresh')
   async refreshJobs(@CurrentUser('id') userId: number) {
     if (!this.fetcher.isEnabled()) {
-      return { message: 'Job fetcher not configured.', expired: 0, fetched: 0 };
+      return { message: 'Job fetcher not configured.', expired: 0, fetched: 0, by_source: {} };
     }
     const result = await this.refreshScheduler.runForUser(userId);
-    return { message: 'Refresh complete for your account', ...result };
+    const breakdown = Object.entries(result.bySource ?? {})
+      .map(([id, n]) => `${id}: ${n}`)
+      .join(', ');
+    return {
+      message: breakdown
+        ? `Refresh complete — ${result.fetched} jobs (${breakdown})`
+        : `Refresh complete — ${result.fetched} jobs fetched`,
+      ...result,
+      by_source: result.bySource,
+    };
   }
 
   @Post('jobs/seed')
