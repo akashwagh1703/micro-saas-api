@@ -1,4 +1,4 @@
-import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { QueueService } from '../queue/queue.service';
 import {
@@ -18,7 +18,7 @@ import { InboxService } from '../inbox/inbox.service';
 
 /** Registers handlers for all three job queues, running in this same process. */
 @Injectable()
-export class QueueWorker implements OnModuleInit {
+export class QueueWorker {
   private readonly logger = new Logger(QueueWorker.name);
 
   constructor(
@@ -30,7 +30,8 @@ export class QueueWorker implements OnModuleInit {
     private readonly careerTasks: CareerTaskProcessor,
   ) {}
 
-  async onModuleInit(): Promise<void> {
+  /** Called from main.ts after HTTP listen — keeps /up reachable even if workers fail. */
+  async registerWorkers(): Promise<void> {
     if ((this.config.get<string>('QUEUE_DRIVER') ?? 'pgboss') !== 'pgboss') {
       this.logger.log('QUEUE_DRIVER != pgboss; queue workers not registered (inline mode).');
       return;
@@ -42,6 +43,7 @@ export class QueueWorker implements OnModuleInit {
       return;
     }
 
+    try {
     await this.queue.work<{ messageId: number }>(QUEUE_PROCESS_INCOMING, async (data) => {
       try {
         await this.incoming.handle(data.messageId);
@@ -79,5 +81,9 @@ export class QueueWorker implements OnModuleInit {
     });
 
     this.logger.log('Queue workers registered.');
+    } catch (e: unknown) {
+      const message = e instanceof Error ? e.message : String(e);
+      this.logger.error(`Queue workers failed to register (API still online): ${message}`);
+    }
   }
 }

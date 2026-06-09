@@ -8,13 +8,12 @@ module.exports = {
       instances: 1,
       exec_mode: 'fork',
       autorestart: true,
-      max_memory_restart: '768M',
-      // Do not set NODE_ENV here — it overrides .env and can trigger stricter validation
-      // before other vars load. Set NODE_ENV=production in .env instead.
-      //
-      // All secrets (DATABASE_URL, APP_ENCRYPTION_KEY, QUEUE_DRIVER=pgboss, etc.)
-      // must be in .env in cwd — Nest ConfigModule loads it on boot.
-      // After editing .env: pm2 restart autowave-api --update-env
+      max_memory_restart: '1024M',
+      max_restarts: 20,
+      min_uptime: '10s',
+      restart_delay: 5000,
+      // Set NODE_ENV=production in .env (not here — avoids overriding other vars).
+      // Secrets live in .env; Nest ConfigModule loads it on boot.
     },
   ],
 };

@@ -35,6 +35,15 @@ export class QueueService implements JobDispatcher, OnModuleInit, OnModuleDestro
   }
 
   async onModuleInit(): Promise<void> {
+    // Do not block HTTP startup — pg-boss connects in the background.
+    void this.initBoss().catch((err: unknown) => {
+      const message = err instanceof Error ? err.message : String(err);
+      this.logger.error(`pg-boss background init failed: ${message}`);
+      this.resolveReady();
+    });
+  }
+
+  private async initBoss(): Promise<void> {
     const driver = this.config.get<string>('QUEUE_DRIVER') ?? 'pgboss';
     if (driver !== 'pgboss') {
       this.logger.log(`QUEUE_DRIVER=${driver}; pg-boss disabled (work runs inline).`);

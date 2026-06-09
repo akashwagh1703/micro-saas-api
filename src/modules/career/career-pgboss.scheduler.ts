@@ -1,4 +1,4 @@
-import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { QueueService } from '../queue/queue.service';
 import {
@@ -15,7 +15,7 @@ import { CareerPrivacyService } from './services/career-privacy.service';
  * even when multiple API pods are deployed.
  */
 @Injectable()
-export class CareerPgBossScheduler implements OnModuleInit {
+export class CareerPgBossScheduler {
   private readonly logger = new Logger(CareerPgBossScheduler.name);
 
   constructor(
@@ -26,18 +26,20 @@ export class CareerPgBossScheduler implements OnModuleInit {
     private readonly privacy: CareerPrivacyService,
   ) {}
 
-  async onModuleInit(): Promise<void> {
+  /** Called from main.ts after HTTP listen — cron setup must not block health checks. */
+  async registerSchedules(): Promise<void> {
     if ((this.config.get<string>('QUEUE_DRIVER') ?? 'pgboss') !== 'pgboss') {
       return;
     }
 
-    await this.queue.waitUntilReady();
-    if (!this.queue.isBossRunning()) {
-      this.logger.warn('pg-boss unavailable; career cron schedules skipped');
-      return;
-    }
+    try {
+      await this.queue.waitUntilReady();
+      if (!this.queue.isBossRunning()) {
+        this.logger.warn('pg-boss unavailable; career cron schedules skipped');
+        return;
+      }
 
-    await this.queue.work(QUEUE_CAREER_DIGEST, async () => {
+      await this.queue.work(QUEUE_CAREER_DIGEST, async () => {
       this.logger.log('pg-boss: running career digest batch');
       await this.digest.runDailyDigestBatch();
     });
@@ -76,6 +78,10 @@ export class CareerPgBossScheduler implements OnModuleInit {
     if (!Number.isNaN(retentionDays) && retentionDays > 0) {
       await this.queue.scheduleCron(QUEUE_CAREER_RETENTION, '0 3 * * *', {}, { tz: 'UTC' });
       this.logger.log(`pg-boss resume text retention scheduled daily 03:00 UTC (${retentionDays} days)`);
+    }
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      this.logger.error(`Career pg-boss schedules skipped (API still online): ${message}`);
     }
   }
 }

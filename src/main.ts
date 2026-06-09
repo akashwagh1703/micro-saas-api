@@ -2,15 +2,27 @@ import { NestFactory } from '@nestjs/core';
 import { Logger } from '@nestjs/common';
 import { AppModule } from './app.module';
 import { configureApp } from './bootstrap';
+import { QueueWorker } from './modules/jobs/queue.worker';
+import { CareerPgBossScheduler } from './modules/career/career-pgboss.scheduler';
 
 async function bootstrap() {
+  const log = new Logger('Bootstrap');
   const app = await NestFactory.create(AppModule, { rawBody: true });
 
   configureApp(app);
 
   const port = Number(process.env.PORT ?? 3000);
+  log.log(`Starting HTTP listener on port ${port}…`);
   await app.listen(port, '0.0.0.0');
-  new Logger('Bootstrap').log(`API listening on port ${port}`);
+  log.log(`API listening on port ${port}`);
+
+  try {
+    await app.get(QueueWorker).registerWorkers();
+    await app.get(CareerPgBossScheduler).registerSchedules();
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    log.error(`Background queue setup failed (API stays online): ${message}`);
+  }
 }
 
 bootstrap().catch((err: unknown) => {

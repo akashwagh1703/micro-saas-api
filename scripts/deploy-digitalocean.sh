@@ -18,6 +18,11 @@ fi
 git fetch origin "$BRANCH"
 git reset --hard "origin/$BRANCH"
 
+echo "==> Stop PM2 before build (nest deleteOutDir removes dist/ while PM2 restarts)"
+if pm2 describe "$PM2_NAME" >/dev/null 2>&1; then
+  pm2 delete "$PM2_NAME" 2>/dev/null || true
+fi
+
 echo "==> npm ci"
 npm ci
 
@@ -32,10 +37,7 @@ if [[ ! -f dist/main.js ]]; then
   exit 1
 fi
 
-echo "==> pm2 restart $PM2_NAME"
-if pm2 describe "$PM2_NAME" >/dev/null 2>&1; then
-  pm2 delete "$PM2_NAME" 2>/dev/null || true
-fi
+echo "==> pm2 start $PM2_NAME"
 pm2 start ecosystem.config.cjs --update-env
 
 pm2 save

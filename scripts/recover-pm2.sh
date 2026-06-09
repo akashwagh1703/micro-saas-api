@@ -20,6 +20,9 @@ if grep -q '^PORT=' .env; then
 fi
 PORT="${PORT:-3000}"
 
+echo "==> Stop PM2 before build (prevents dist/ delete race)"
+pm2 delete "$PM2_NAME" 2>/dev/null || true
+
 echo "==> npm ci"
 npm ci
 
@@ -36,7 +39,6 @@ fi
 
 echo "==> dist/main.js OK ($(wc -c < dist/main.js) bytes)"
 
-pm2 delete "$PM2_NAME" 2>/dev/null || true
 pm2 start ecosystem.config.cjs --update-env
 pm2 save
 
