@@ -25,9 +25,13 @@ const REFRESH_INTERVAL_MS = 6 * 60 * 60 * 1000;
 /** Delay before the first run after server start (ms). Avoids hammering the API on every hot-reload. */
 const STARTUP_DELAY_MS = 90_000;
 
+/** Keywords run in parallel during manual refresh (keeps total time under nginx limits when awaited). */
+const KEYWORD_BATCH_SIZE = 2;
+
 @Injectable()
 export class CareerJobRefreshScheduler implements OnModuleInit {
   private readonly logger = new Logger(CareerJobRefreshScheduler.name);
+  private readonly activeUserRefreshes = new Set<number>();
 
   constructor(
     private readonly config: ConfigService,
@@ -57,7 +61,36 @@ export class CareerJobRefreshScheduler implements OnModuleInit {
     );
   }
 
-  /** Refresh jobs for a single tenant (portal manual refresh). */
+  /**
+   * Portal manual refresh — returns immediately so nginx does not 504.
+   * Work continues in-process (1–3 min for all keywords × sources).
+   */
+  startForUser(userId: number): { status: 'started' | 'already_running'; message: string } {
+    if (this.activeUserRefreshes.has(userId)) {
+      return {
+        status: 'already_running',
+        message: 'Job refresh is already running — reload the jobs list in a minute.',
+      };
+    }
+
+    this.activeUserRefreshes.add(userId);
+    void this.runForUser(userId)
+      .catch((e: unknown) => {
+        const message = e instanceof Error ? e.message : String(e);
+        this.logger.error(`Job refresh failed userId=${userId}: ${message}`);
+      })
+      .finally(() => {
+        this.activeUserRefreshes.delete(userId);
+      });
+
+    return {
+      status: 'started',
+      message:
+        'Job refresh started in the background (Adzuna + JSearch, ~1–3 min). Reload this page shortly.',
+    };
+  }
+
+  /** Refresh jobs for a single tenant. */
   async runForUser(userId: number): Promise<{
     expired: number;
     fetched: number;
@@ -69,11 +102,18 @@ export class CareerJobRefreshScheduler implements OnModuleInit {
     const bySource: Record<string, number> = {};
     let fetched = 0;
 
-    for (const keyword of REFRESH_KEYWORDS) {
-      const result = await this.fetcher.fetchAndStoreDetailed(userId, keyword, 'india', 1);
-      fetched += result.total;
-      for (const [sourceId, count] of Object.entries(result.bySource)) {
-        bySource[sourceId] = (bySource[sourceId] ?? 0) + count;
+    for (let i = 0; i < REFRESH_KEYWORDS.length; i += KEYWORD_BATCH_SIZE) {
+      const batch = REFRESH_KEYWORDS.slice(i, i + KEYWORD_BATCH_SIZE);
+      const batchResults = await Promise.all(
+        batch.map((keyword) =>
+          this.fetcher.fetchAndStoreDetailed(userId, keyword, 'india', 1),
+        ),
+      );
+      for (const result of batchResults) {
+        fetched += result.total;
+        for (const [sourceId, count] of Object.entries(result.bySource)) {
+          bySource[sourceId] = (bySource[sourceId] ?? 0) + count;
+        }
       }
     }
 
@@ -100,11 +140,18 @@ export class CareerJobRefreshScheduler implements OnModuleInit {
     let fetched = 0;
 
     for (const { userId } of settings) {
-      for (const keyword of REFRESH_KEYWORDS) {
-        const result = await this.fetcher.fetchAndStoreDetailed(userId, keyword, 'india', 1);
-        fetched += result.total;
-        for (const [sourceId, count] of Object.entries(result.bySource)) {
-          bySource[sourceId] = (bySource[sourceId] ?? 0) + count;
+      for (let i = 0; i < REFRESH_KEYWORDS.length; i += KEYWORD_BATCH_SIZE) {
+        const batch = REFRESH_KEYWORDS.slice(i, i + KEYWORD_BATCH_SIZE);
+        const batchResults = await Promise.all(
+          batch.map((keyword) =>
+            this.fetcher.fetchAndStoreDetailed(userId, keyword, 'india', 1),
+          ),
+        );
+        for (const result of batchResults) {
+          fetched += result.total;
+          for (const [sourceId, count] of Object.entries(result.bySource)) {
+            bySource[sourceId] = (bySource[sourceId] ?? 0) + count;
+          }
         }
       }
     }

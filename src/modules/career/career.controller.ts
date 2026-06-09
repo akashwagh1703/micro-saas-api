@@ -3,6 +3,7 @@ import {
   Controller,
   Delete,
   Get,
+  HttpCode,
   NotFoundException,
   Param,
   ParseIntPipe,
@@ -405,21 +406,19 @@ export class CareerController {
   }
 
   @Post('jobs/refresh')
+  @HttpCode(202)
   async refreshJobs(@CurrentUser('id') userId: number) {
     if (!this.fetcher.isEnabled()) {
-      return { message: 'Job fetcher not configured.', expired: 0, fetched: 0, by_source: {} };
+      return {
+        status: 'unconfigured',
+        message: 'Job fetcher not configured. Set ADZUNA_APP_ID/KEY and/or JSEARCH_RAPIDAPI_KEY.',
+        expired: 0,
+        fetched: 0,
+        by_source: {},
+      };
     }
-    const result = await this.refreshScheduler.runForUser(userId);
-    const breakdown = Object.entries(result.bySource ?? {})
-      .map(([id, n]) => `${id}: ${n}`)
-      .join(', ');
-    return {
-      message: breakdown
-        ? `Refresh complete — ${result.fetched} jobs (${breakdown})`
-        : `Refresh complete — ${result.fetched} jobs fetched`,
-      ...result,
-      by_source: result.bySource,
-    };
+    const { status, message } = this.refreshScheduler.startForUser(userId);
+    return { status, message };
   }
 
   @Post('jobs/seed')

@@ -61,19 +61,28 @@ export class CareerJobFetcherService {
       return { total: 0, bySource, enabledSources: [], errors };
     }
 
-    for (const source of sources) {
-      try {
+    const results = await Promise.allSettled(
+      sources.map(async (source) => {
         const count = await source.fetchAndStore(userId, keyword, location, pages);
-        bySource[source.id] = count;
-        total += count;
-      } catch (e: unknown) {
-        const message = e instanceof Error ? e.message : String(e);
-        errors[source.id] = message;
-        bySource[source.id] = 0;
-        this.logger.error(
-          `Job source "${source.id}" failed for userId=${userId} keyword="${keyword}": ${message}`,
-        );
+        return { id: source.id, count };
+      }),
+    );
+
+    for (let i = 0; i < results.length; i++) {
+      const source = sources[i];
+      const outcome = results[i];
+      if (outcome.status === 'fulfilled') {
+        bySource[outcome.value.id] = outcome.value.count;
+        total += outcome.value.count;
+        continue;
       }
+      const message =
+        outcome.reason instanceof Error ? outcome.reason.message : String(outcome.reason);
+      errors[source.id] = message;
+      bySource[source.id] = 0;
+      this.logger.error(
+        `Job source "${source.id}" failed for userId=${userId} keyword="${keyword}": ${message}`,
+      );
     }
 
     this.logger.log(
