@@ -72,5 +72,50 @@ export function formatUpsertError(error: unknown): string {
   return String(error);
 }
 
+/** Readable message for axios / network failures (RapidAPI, Adzuna, etc.). */
+export function formatHttpError(error: unknown): string {
+  if (!error || typeof error !== 'object') {
+    return String(error);
+  }
+
+  const err = error as {
+    message?: string;
+    code?: string;
+    hostname?: string;
+    response?: { status?: number; data?: unknown };
+  };
+
+  const status = err.response?.status;
+  const body = err.response?.data;
+
+  if (body && typeof body === 'object') {
+    const record = body as Record<string, unknown>;
+    const nested =
+      record.error && typeof record.error === 'object'
+        ? (record.error as Record<string, unknown>).message
+        : null;
+    const apiMessage =
+      (typeof record.message === 'string' && record.message) ||
+      (typeof nested === 'string' && nested) ||
+      null;
+    if (status && apiMessage) return `HTTP ${status}: ${apiMessage}`;
+  }
+
+  if (status) {
+    return `HTTP ${status}: ${err.message ?? 'request failed'}`;
+  }
+
+  if (err.code === 'ENOTFOUND') {
+    const host = err.hostname ?? 'remote host';
+    return `DNS lookup failed for ${host} — check server internet/DNS, not a missing env var`;
+  }
+
+  if (err.code === 'ECONNREFUSED') {
+    return `Connection refused — ${err.message ?? 'network blocked or wrong URL'}`;
+  }
+
+  return err.message ?? String(error);
+}
+
 /** External job sources whose listings expire on refresh cycles. */
 export const EXTERNAL_JOB_SOURCES = ['adzuna', 'jsearch', 'naukri', 'linkedin'] as const;

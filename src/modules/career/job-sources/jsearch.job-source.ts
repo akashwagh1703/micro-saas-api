@@ -5,6 +5,7 @@ import { CareerJobSource, JobSourceStatus, NormalizedJobListing } from './job-so
 import { CareerJobUpsertService } from './career-job-upsert.service';
 import {
   extractSkillsFromDescription,
+  formatHttpError,
   formatUpsertError,
   normalizeContractType,
 } from './job-source.utils';
@@ -114,8 +115,9 @@ export class JSearchJobSource implements CareerJobSource {
         }
       }
     } catch (e: unknown) {
-      const message = e instanceof Error ? e.message : String(e);
+      const message = formatHttpError(e);
       this.logger.warn(`JSearch fetch failed (query="${query}" country=${country}): ${message}`);
+      throw new Error(message);
     }
 
     this.logger.log(
