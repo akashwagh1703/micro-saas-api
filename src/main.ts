@@ -13,4 +13,13 @@ async function bootstrap() {
   new Logger('Bootstrap').log(`API listening on port ${port}`);
 }
 
-bootstrap();
+bootstrap().catch((err: unknown) => {
+  const message = err instanceof Error ? err.message : String(err);
+  // eslint-disable-next-line no-console
+  console.error(`[Bootstrap] Fatal startup error: ${message}`);
+  if (err instanceof Error && err.stack) {
+    // eslint-disable-next-line no-console
+    console.error(err.stack);
+  }
+  process.exit(1);
+});
