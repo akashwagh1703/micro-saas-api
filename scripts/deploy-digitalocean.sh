@@ -27,12 +27,16 @@ npx prisma migrate deploy
 echo "==> build"
 npm run build
 
+if [[ ! -f dist/main.js ]]; then
+  echo "ERROR: dist/main.js missing after build — fix TypeScript errors and re-run npm run build"
+  exit 1
+fi
+
 echo "==> pm2 restart $PM2_NAME"
 if pm2 describe "$PM2_NAME" >/dev/null 2>&1; then
-  pm2 restart "$PM2_NAME" --update-env
-else
-  pm2 start dist/main.js --name "$PM2_NAME"
+  pm2 delete "$PM2_NAME" 2>/dev/null || true
 fi
+pm2 start ecosystem.config.cjs --update-env
 
 pm2 save
 
