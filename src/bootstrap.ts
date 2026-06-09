@@ -39,30 +39,24 @@ export function configureApp(app: INestApplication): void {
 
   if (allowedOrigins.length === 0) {
     corsLogger.warn('CORS_ORIGINS / PORTAL_URL not set — allowing all origins (dev only)');
-    app.enableCors({ origin: true, credentials: false });
-  } else {
-    corsLogger.log(`Allowed origins: ${allowedOrigins.join(', ')}`);
     app.enableCors({
-      origin: (origin, callback) => {
-        // Server-to-server, curl, Postman — no Origin header
-        if (!origin) {
-          callback(null, true);
-          return;
-        }
-        const normalized = origin.replace(/\/$/, '');
-        if (allowedOrigins.includes(normalized)) {
-          callback(null, true);
-          return;
-        }
-        corsLogger.warn(`Blocked CORS origin: ${origin}`);
-        callback(null, false);
-      },
+      origin: true,
       credentials: false,
       methods: ['GET', 'HEAD', 'PUT', 'PATCH', 'POST', 'DELETE', 'OPTIONS'],
       allowedHeaders: ['Content-Type', 'Authorization', 'Accept'],
+      optionsSuccessStatus: 204,
+    });
+  } else {
+    corsLogger.log(`Allowed origins: ${allowedOrigins.join(', ')}`);
+    app.enableCors({
+      origin: allowedOrigins,
+      credentials: false,
+      methods: ['GET', 'HEAD', 'PUT', 'PATCH', 'POST', 'DELETE', 'OPTIONS'],
+      allowedHeaders: ['Content-Type', 'Authorization', 'Accept'],
+      optionsSuccessStatus: 204,
     });
   }
-  app.setGlobalPrefix('api', { exclude: ['up'] });
+  app.setGlobalPrefix('api', { exclude: ['up', 'up/ready'] });
   app.useGlobalPipes(buildValidationPipe());
   app.useGlobalFilters(new AllExceptionsFilter());
 }
