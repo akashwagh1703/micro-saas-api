@@ -25,7 +25,7 @@ export class CareerJobUpsertService {
     const description = (job.description ?? '').slice(0, 3000);
     const skills = job.requiredSkills?.length
       ? job.requiredSkills
-      : extractSkillsFromDescription(description);
+      : extractSkillsFromDescription(description, job.title ?? '');
     const expRange = parseExperienceRange(description);
     const salaryMin = job.salaryMin ?? null;
     const salaryMax = job.salaryMax ?? null;

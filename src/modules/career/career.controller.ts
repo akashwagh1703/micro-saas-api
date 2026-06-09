@@ -14,12 +14,14 @@ import {
   UnprocessableEntityException,
   UseGuards,
 } from '@nestjs/common';
+import { CareerProfile } from '@prisma/client';
 import { TokenAuthGuard } from '../../common/guards/token-auth.guard';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CareerJobService } from './services/career-job.service';
 import { CareerJobFetcherService } from './services/career-job-fetcher.service';
 import { CareerJobRefreshScheduler } from './career-job-refresh.scheduler';
+import { CareerJobAlertService } from './services/career-job-alert.service';
 import { CareerDigestService } from './services/career-digest.service';
 import { CareerApplicationService } from './services/career-application.service';
 import { CareerStorageService } from './services/career-storage.service';
@@ -30,11 +32,20 @@ import { CareerBotService } from './services/career-bot.service';
 import {
   careerDocxFileName,
   careerDocxStreamable,
+  careerPdfFileName,
+  careerPdfStreamable,
   readCareerDocumentBuffer,
+  type CareerDocumentFormat,
 } from './career-document.util';
 import { CareerDocxService } from './services/career-docx.service';
+import { CareerPdfService } from './services/career-pdf.service';
+import { readInterviewHistory } from './career-interview-state.util';
+import { readGuidanceHistory } from './career-guidance-state.util';
+import { readAlertPreferences, mergeAlertPreferencesPatch } from './career-alert-preferences.util';
+import { CareerGuidanceService } from './services/career-guidance.service';
+import { CareerPortalShareService } from './services/career-portal-share.service';
 import { CAREER_APPLICATION_STATUSES } from './career.constants';
-import { IsArray, IsIn, IsOptional, IsString } from 'class-validator';
+import { IsArray, IsBoolean, IsIn, IsOptional, IsString } from 'class-validator';
 
 class UpdateApplicationStatusDto {
   @IsIn(CAREER_APPLICATION_STATUSES as unknown as string[])
@@ -113,6 +124,10 @@ class UpdateCareerProfileDto {
 
   @IsOptional()
   @IsArray()
+  preferred_job_types?: string[];
+
+  @IsOptional()
+  @IsArray()
   preferred_roles?: string[];
 
   @IsOptional()
@@ -120,6 +135,20 @@ class UpdateCareerProfileDto {
 
   @IsOptional()
   interview_preferences?: Record<string, unknown>;
+}
+
+class UpdateAlertPreferencesDto {
+  @IsOptional()
+  @IsBoolean()
+  whatsapp?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  email?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  in_app?: boolean;
 }
 
 @Controller('career')
@@ -130,6 +159,7 @@ export class CareerController {
     private readonly jobs: CareerJobService,
     private readonly fetcher: CareerJobFetcherService,
     private readonly refreshScheduler: CareerJobRefreshScheduler,
+    private readonly jobAlerts: CareerJobAlertService,
     private readonly digest: CareerDigestService,
     private readonly applications: CareerApplicationService,
     private readonly storage: CareerStorageService,
@@ -138,6 +168,9 @@ export class CareerController {
     private readonly privacy: CareerPrivacyService,
     private readonly bot: CareerBotService,
     private readonly docx: CareerDocxService,
+    private readonly pdf: CareerPdfService,
+    private readonly guidance: CareerGuidanceService,
+    private readonly portalShare: CareerPortalShareService,
   ) {}
 
   @Get('storage/status')
@@ -213,7 +246,7 @@ export class CareerController {
 
   @Get('profiles/:id')
   async profileDetail(@CurrentUser('id') userId: number, @Param('id', ParseIntPipe) id: number) {
-    return this.prisma.careerProfile.findFirst({
+    const profile = await this.prisma.careerProfile.findFirst({
       where: { id, userId },
       include: {
         contact: true,
@@ -229,6 +262,159 @@ export class CareerController {
         coverLetters: { orderBy: { createdAt: 'desc' }, take: 10, include: { job: true } },
       },
     });
+    if (!profile) {
+      throw new NotFoundException('Profile not found');
+    }
+    return {
+      ...profile,
+      interview_sessions: readInterviewHistory(profile.onboardingData),
+      guidance_history: readGuidanceHistory(profile.onboardingData),
+      alert_preferences: readAlertPreferences(profile.onboardingData),
+    };
+  }
+
+  @Patch('profiles/:id/alert-preferences')
+  async updateAlertPreferences(
+    @CurrentUser('id') userId: number,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: UpdateAlertPreferencesDto,
+  ) {
+    const profile = await this.prisma.careerProfile.findFirst({ where: { id, userId } });
+    if (!profile) {
+      throw new NotFoundException('Profile not found');
+    }
+
+    const patch: Record<string, boolean> = {};
+    if (dto.whatsapp !== undefined) patch.whatsapp = dto.whatsapp;
+    if (dto.email !== undefined) patch.email = dto.email;
+    if (dto.in_app !== undefined) patch.in_app = dto.in_app;
+
+    return this.prisma.careerProfile.update({
+      where: { id },
+      data: {
+        onboardingData: mergeAlertPreferencesPatch(profile.onboardingData, patch),
+      },
+    });
+  }
+
+  @Post('profiles/:id/portal-link')
+  async sendPortalLink(
+    @CurrentUser('id') userId: number,
+    @Param('id', ParseIntPipe) id: number,
+  ) {
+    const result = await this.bot.sendPortalLinkToContact(userId, id);
+    if (!result.success && !result.url) {
+      throw new UnprocessableEntityException(result.error ?? 'Could not send portal link');
+    }
+    return {
+      message: result.success ? 'Portal link sent on WhatsApp' : 'Portal link generated',
+      url: result.url ?? this.portalShare.buildPortalUrl(id, userId),
+      success: result.success,
+    };
+  }
+
+  @Get('profiles/:id/portal-url')
+  async getPortalUrl(@CurrentUser('id') userId: number, @Param('id', ParseIntPipe) id: number) {
+    const profile = await this.prisma.careerProfile.findFirst({ where: { id, userId } });
+    if (!profile) {
+      throw new NotFoundException('Profile not found');
+    }
+    return { url: this.portalShare.buildPortalUrl(profile.id, userId) };
+  }
+
+  @Get('profiles/:id/guidance')
+  async listGuidance(
+    @CurrentUser('id') userId: number,
+    @Param('id', ParseIntPipe) id: number,
+  ) {
+    const profile = await this.prisma.careerProfile.findFirst({
+      where: { id, userId },
+      select: { id: true, onboardingData: true },
+    });
+    if (!profile) {
+      throw new NotFoundException('Profile not found');
+    }
+    return { items: readGuidanceHistory(profile.onboardingData) };
+  }
+
+  @Post('profiles/:id/guidance/roadmap')
+  async generateGuidanceRoadmap(
+    @CurrentUser('id') userId: number,
+    @Param('id', ParseIntPipe) id: number,
+  ) {
+    return this.runGuidanceAction(userId, id, (profile) =>
+      this.guidance.generateRoadmap(userId, profile),
+    );
+  }
+
+  @Post('profiles/:id/guidance/skill-gap')
+  async generateGuidanceSkillGap(
+    @CurrentUser('id') userId: number,
+    @Param('id', ParseIntPipe) id: number,
+  ) {
+    return this.runGuidanceAction(userId, id, (profile) =>
+      this.guidance.generateSkillGap(userId, profile),
+    );
+  }
+
+  @Post('profiles/:id/guidance/certifications')
+  async generateGuidanceCertifications(
+    @CurrentUser('id') userId: number,
+    @Param('id', ParseIntPipe) id: number,
+  ) {
+    return this.runGuidanceAction(userId, id, (profile) =>
+      this.guidance.generateCertifications(userId, profile),
+    );
+  }
+
+  @Post('profiles/:id/guidance/salary')
+  async generateGuidanceSalary(
+    @CurrentUser('id') userId: number,
+    @Param('id', ParseIntPipe) id: number,
+  ) {
+    return this.runGuidanceAction(userId, id, (profile) =>
+      this.guidance.generateSalary(userId, profile),
+    );
+  }
+
+  @Post('profiles/:id/guidance/full')
+  async generateGuidanceFull(
+    @CurrentUser('id') userId: number,
+    @Param('id', ParseIntPipe) id: number,
+  ) {
+    const profile = await this.prisma.careerProfile.findFirst({ where: { id, userId } });
+    if (!profile) {
+      throw new NotFoundException('Profile not found');
+    }
+    const chunks = await this.guidance.generateFullSummary(userId, profile);
+    const items = readGuidanceHistory(
+      (
+        await this.prisma.careerProfile.findFirst({
+          where: { id, userId },
+          select: { onboardingData: true },
+        })
+      )?.onboardingData,
+    );
+    return {
+      message: 'Full career guidance generated',
+      chunks,
+      item: items[0] ?? null,
+    };
+  }
+
+  @Get('profiles/:id/interview-sessions')
+  async listInterviewSessions(
+    @CurrentUser('id') userId: number,
+    @Param('id', ParseIntPipe) id: number,
+  ) {
+    const profile = await this.prisma.careerProfile.findFirst({
+      where: { id, userId },
+      select: { id: true, onboardingData: true },
+    });
+    if (!profile) {
+      throw new NotFoundException('Profile not found');
+    }
+    return { items: readInterviewHistory(profile.onboardingData) };
   }
 
   @Patch('profiles/:id')
@@ -253,6 +439,7 @@ export class CareerController {
         expectedSalary: dto.expected_salary,
         noticePeriod: dto.notice_period,
         workPreference: dto.work_preference,
+        preferredJobTypes: dto.preferred_job_types as any,
         preferredRoles: dto.preferred_roles as any,
         ...(dto.auto_apply_consent !== undefined
           ? {
@@ -376,6 +563,7 @@ export class CareerController {
       };
     }
 
+    const fetchStartedAt = new Date();
     const result = await this.fetcher.fetchAndStoreDetailed(
       userId,
       dto.keyword,
@@ -383,6 +571,9 @@ export class CareerController {
       1,
       source,
     );
+
+    const newJobIds = await this.fetcher.findJobsCreatedSince(userId, fetchStartedAt);
+    const alertResult = await this.jobAlerts.processNewJobsForUser(userId, newJobIds);
 
     const parts = Object.entries(result.bySource)
       .map(([id, n]) => `${id}: ${n}`)
@@ -402,6 +593,8 @@ export class CareerController {
       by_source: result.bySource,
       errors: result.errors,
       sources: statuses,
+      new_jobs: newJobIds.length,
+      alerts_sent: alertResult.sent,
     };
   }
 
@@ -467,9 +660,17 @@ export class CareerController {
   }
 
   @Get('notifications')
-  async notifications(@CurrentUser('id') userId: number) {
+  async notifications(
+    @CurrentUser('id') userId: number,
+    @Query('profile_id') profileId?: string,
+    @Query('type') type?: string,
+  ) {
     return this.prisma.careerNotification.findMany({
-      where: { userId },
+      where: {
+        userId,
+        ...(profileId ? { profileId: parseInt(profileId, 10) } : {}),
+        ...(type ? { type } : {}),
+      },
       include: {
         profile: { include: { contact: true } },
       },
@@ -499,7 +700,6 @@ export class CareerController {
         'auto_apply',
         'linkedin_integration',
         'naukri_integration',
-        'interview_ai_agent',
         'salary_predictor',
         'career_coach',
       ],
@@ -532,63 +732,113 @@ export class CareerController {
   async downloadResumeVersion(
     @CurrentUser('id') userId: number,
     @Param('id', ParseIntPipe) id: number,
+    @Query('format') format?: string,
   ): Promise<StreamableFile> {
+    const docFormat: CareerDocumentFormat =
+      format?.trim().toLowerCase() === 'docx' ? 'docx' : 'pdf';
     const version = await this.prisma.careerResumeVersion.findFirst({
       where: { id, userId },
       include: { job: true },
     });
-    if (!version?.filePathDocx && !version?.filePath && !version?.content) {
+    if (!version?.filePathDocx && !version?.filePathPdf && !version?.filePath && !version?.content) {
       throw new NotFoundException('Generated resume not found');
     }
 
-    let buffer = await readCareerDocumentBuffer(this.storage, version);
-    if (!buffer) {
-      throw new NotFoundException('Generated resume file unavailable');
-    }
+    const title = version.job
+      ? `${version.job.title} — tailored`
+      : version.title ?? 'Tailored resume';
+    const baseName = version.title ?? version.job?.title ?? `resume-version-${id}`;
 
-    if (!version.filePathDocx && !version.filePath?.endsWith('.docx')) {
-      const title = version.job
-        ? `${version.job.title} — tailored`
-        : version.title ?? 'Tailored resume';
-      buffer = await this.docx.resumeFromText(title, version.content ?? buffer.toString('utf8'));
-    }
-
-    const fileName = careerDocxFileName(
-      version.title ?? version.job?.title ?? `resume-version-${id}`,
+    return this.streamGeneratedDocument(
+      version,
+      docFormat,
+      title,
+      baseName,
+      (t, body) => this.docx.resumeFromText(t, body),
+      (t, body) => this.pdf.fromText(t, body),
     );
-    return careerDocxStreamable(buffer, fileName);
   }
 
   @Get('cover-letters/:id/download')
   async downloadCoverLetterVersion(
     @CurrentUser('id') userId: number,
     @Param('id', ParseIntPipe) id: number,
+    @Query('format') format?: string,
   ): Promise<StreamableFile> {
+    const docFormat: CareerDocumentFormat =
+      format?.trim().toLowerCase() === 'docx' ? 'docx' : 'pdf';
     const letter = await this.prisma.careerCoverLetter.findFirst({
       where: { id, userId },
       include: { job: true },
     });
-    if (!letter?.filePathDocx && !letter?.filePath && !letter?.content) {
+    if (!letter?.filePathDocx && !letter?.filePathPdf && !letter?.filePath && !letter?.content) {
       throw new NotFoundException('Cover letter not found');
     }
 
-    let buffer = await readCareerDocumentBuffer(this.storage, letter);
-    if (!buffer) {
-      throw new NotFoundException('Cover letter file unavailable');
-    }
+    const title = letter.job
+      ? `Cover Letter — ${letter.job.title} @ ${letter.job.company}`
+      : 'Cover letter';
+    const baseName = letter.job
+      ? `cover-letter-${letter.job.company}-${letter.job.title}`
+      : `cover-letter-${id}`;
 
-    if (!letter.filePathDocx && !letter.filePath?.endsWith('.docx')) {
-      const title = letter.job
-        ? `Cover Letter — ${letter.job.title} @ ${letter.job.company}`
-        : 'Cover letter';
-      buffer = await this.docx.coverLetterFromText(title, letter.content ?? buffer.toString('utf8'));
-    }
-
-    const fileName = careerDocxFileName(
-      letter.job
-        ? `cover-letter-${letter.job.company}-${letter.job.title}`
-        : `cover-letter-${id}`,
+    return this.streamGeneratedDocument(
+      letter,
+      docFormat,
+      title,
+      baseName,
+      (t, body) => this.docx.coverLetterFromText(t, body),
+      (t, body) => this.pdf.fromText(t, body),
     );
-    return careerDocxStreamable(buffer, fileName);
+  }
+
+  private async runGuidanceAction(
+    userId: number,
+    profileId: number,
+    action: (profile: CareerProfile) => Promise<unknown>,
+  ) {
+    const profile = await this.prisma.careerProfile.findFirst({ where: { id: profileId, userId } });
+    if (!profile) {
+      throw new NotFoundException('Profile not found');
+    }
+    const item = await action(profile);
+    return { message: 'Guidance generated', item };
+  }
+
+  private async streamGeneratedDocument(
+    record: {
+      filePathPdf?: string | null;
+      filePathDocx?: string | null;
+      filePath?: string | null;
+      content?: string | null;
+    },
+    format: CareerDocumentFormat,
+    title: string,
+    baseName: string,
+    toDocx: (title: string, body: string) => Promise<Buffer>,
+    toPdf: (title: string, body: string) => Promise<Buffer>,
+  ): Promise<StreamableFile> {
+    let buffer = await readCareerDocumentBuffer(this.storage, record, format);
+    const plainText = record.content ?? (buffer ? buffer.toString('utf8') : '');
+
+    if (!buffer && plainText) {
+      buffer =
+        format === 'pdf'
+          ? await toPdf(title, plainText)
+          : await toDocx(title, plainText);
+    } else if (buffer && plainText && buffer.length < 256 && format === 'docx') {
+      buffer = await toDocx(title, plainText);
+    } else if (buffer && plainText && buffer.length < 256 && format === 'pdf') {
+      buffer = await toPdf(title, plainText);
+    }
+
+    if (!buffer) {
+      throw new NotFoundException('Document file unavailable');
+    }
+
+    if (format === 'pdf') {
+      return careerPdfStreamable(buffer, careerPdfFileName(baseName));
+    }
+    return careerDocxStreamable(buffer, careerDocxFileName(baseName));
   }
 }

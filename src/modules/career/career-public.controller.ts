@@ -9,13 +9,19 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { CareerStorageService } from './services/career-storage.service';
 import { CareerDocumentShareService } from './services/career-document-share.service';
 import { CareerDocxService } from './services/career-docx.service';
+import { CareerPdfService } from './services/career-pdf.service';
 import {
   careerDocxFileName,
   careerDocxStreamable,
+  careerPdfFileName,
+  careerPdfStreamable,
   readCareerDocumentBuffer,
+  type CareerDocumentFormat,
 } from './career-document.util';
 
-/** Public document downloads via signed token (no login — link sent on WhatsApp). */
+import { CareerPortalService } from './services/career-portal.service';
+
+/** Public document downloads and candidate portal (signed token — no login). */
 @Controller('career/public')
 export class CareerPublicController {
   constructor(
@@ -23,10 +29,25 @@ export class CareerPublicController {
     private readonly storage: CareerStorageService,
     private readonly share: CareerDocumentShareService,
     private readonly docx: CareerDocxService,
+    private readonly pdf: CareerPdfService,
+    private readonly portalService: CareerPortalService,
   ) {}
 
+  @Get('portal')
+  async getPortal(@Query('token') token?: string) {
+    if (!token?.trim()) {
+      throw new NotFoundException('Invalid or expired link');
+    }
+    return this.portalService.getPortalData(token);
+  }
+
   @Get('download')
-  async download(@Query('token') token?: string): Promise<StreamableFile> {
+  async download(
+    @Query('token') token?: string,
+    @Query('format') format?: string,
+  ): Promise<StreamableFile> {
+    const docFormat: CareerDocumentFormat =
+      format?.trim().toLowerCase() === 'docx' ? 'docx' : 'pdf';
     if (!token?.trim()) {
       throw new NotFoundException('Invalid or expired link');
     }
@@ -41,29 +62,25 @@ export class CareerPublicController {
         where: { id: payload.id, userId: payload.userId },
         include: { job: true },
       });
-      if (!version?.filePathDocx && !version?.filePath && !version?.content) {
+      if (!version?.filePathDocx && !version?.filePathPdf && !version?.filePath && !version?.content) {
         throw new NotFoundException('Document not found');
       }
 
-      let buffer = await readCareerDocumentBuffer(this.storage, version);
-      if (!buffer) {
-        throw new NotFoundException('Document unavailable');
-      }
+      const title = version.job
+        ? `${version.job.title} — Resume`
+        : version.title ?? 'Tailored resume';
+      const baseName = version.job
+        ? `resume-${version.job.company}-${version.job.title}`
+        : `resume-version-${version.id}`;
 
-      if (!version.filePathDocx && !version.filePath?.endsWith('.docx')) {
-        const title = version.job
-          ? `${version.job.title} — Resume`
-          : version.title ?? 'Tailored resume';
-        buffer = await this.docx.resumeFromText(title, version.content ?? buffer.toString('utf8'));
-      }
-
-      const fileName = careerDocxFileName(
-        version.job
-          ? `resume-${version.job.company}-${version.job.title}`
-          : `resume-version-${version.id}`,
+      return this.streamGeneratedDocument(
+        version,
+        docFormat,
+        title,
+        baseName,
+        (t, body) => this.docx.resumeFromText(t, body),
+        (t, body) => this.pdf.fromText(t, body),
       );
-
-      return careerDocxStreamable(buffer, fileName);
     }
 
     if (payload.kind === 'cover-letter') {
@@ -71,29 +88,25 @@ export class CareerPublicController {
         where: { id: payload.id, userId: payload.userId },
         include: { job: true },
       });
-      if (!letter?.filePathDocx && !letter?.filePath && !letter?.content) {
+      if (!letter?.filePathDocx && !letter?.filePathPdf && !letter?.filePath && !letter?.content) {
         throw new NotFoundException('Document not found');
       }
 
-      let buffer = await readCareerDocumentBuffer(this.storage, letter);
-      if (!buffer) {
-        throw new NotFoundException('Document unavailable');
-      }
+      const title = letter.job
+        ? `Cover Letter — ${letter.job.title} @ ${letter.job.company}`
+        : 'Cover letter';
+      const baseName = letter.job
+        ? `cover-letter-${letter.job.company}-${letter.job.title}`
+        : `cover-letter-${letter.id}`;
 
-      if (!letter.filePathDocx && !letter.filePath?.endsWith('.docx')) {
-        const title = letter.job
-          ? `Cover Letter — ${letter.job.title} @ ${letter.job.company}`
-          : 'Cover letter';
-        buffer = await this.docx.coverLetterFromText(title, letter.content ?? buffer.toString('utf8'));
-      }
-
-      const fileName = careerDocxFileName(
-        letter.job
-          ? `cover-letter-${letter.job.company}-${letter.job.title}`
-          : `cover-letter-${letter.id}`,
+      return this.streamGeneratedDocument(
+        letter,
+        docFormat,
+        title,
+        baseName,
+        (t, body) => this.docx.coverLetterFromText(t, body),
+        (t, body) => this.pdf.fromText(t, body),
       );
-
-      return careerDocxStreamable(buffer, fileName);
     }
 
     if (payload.kind === 'resume') {
@@ -117,5 +130,42 @@ export class CareerPublicController {
     }
 
     throw new NotFoundException('Invalid or expired link');
+  }
+
+  private async streamGeneratedDocument(
+    record: {
+      filePathPdf?: string | null;
+      filePathDocx?: string | null;
+      filePath?: string | null;
+      content?: string | null;
+    },
+    format: CareerDocumentFormat,
+    title: string,
+    baseName: string,
+    toDocx: (title: string, body: string) => Promise<Buffer>,
+    toPdf: (title: string, body: string) => Promise<Buffer>,
+  ): Promise<StreamableFile> {
+    let buffer = await readCareerDocumentBuffer(this.storage, record, format);
+    const plainText = record.content ?? (buffer ? buffer.toString('utf8') : '');
+
+    if (!buffer && plainText) {
+      buffer =
+        format === 'pdf'
+          ? await toPdf(title, plainText)
+          : await toDocx(title, plainText);
+    } else if (buffer && plainText && buffer.length < 256 && format === 'docx') {
+      buffer = await toDocx(title, plainText);
+    } else if (buffer && plainText && buffer.length < 256 && format === 'pdf') {
+      buffer = await toPdf(title, plainText);
+    }
+
+    if (!buffer) {
+      throw new NotFoundException('Document unavailable');
+    }
+
+    if (format === 'pdf') {
+      return careerPdfStreamable(buffer, careerPdfFileName(baseName));
+    }
+    return careerDocxStreamable(buffer, careerDocxFileName(baseName));
   }
 }

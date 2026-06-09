@@ -4,10 +4,10 @@ import { PrismaService } from '../../../prisma/prisma.service';
 import { WhatsappService } from '../../whatsapp/whatsapp.service';
 import { WhatsAppApiService } from '../../integrations/whatsapp-api.service';
 import { InboxService } from '../../inbox/inbox.service';
-import { CAREER_COMMANDS, CAREER_MAX_INBOUND_CHARS, CAREER_BOT_MESSAGE_SOURCE, CAREER_WORK_MODE_BUTTONS, buildJobActionButtons } from '../career.constants';
+import { CAREER_COMMANDS, CAREER_MAX_INBOUND_CHARS, CAREER_BOT_MESSAGE_SOURCE, CAREER_WORK_MODE_BUTTONS, CAREER_EMPLOYMENT_TYPE_BUTTONS, buildJobActionButtons } from '../career.constants';
 import { CareerProfileService } from './career-profile.service';
 import { CareerJobService } from './career-job.service';
-import { CareerMatchingService, JobMatchResult, CAREER_MIN_MATCH_SCORE } from './career-matching.service';
+import { CareerMatchingService, JobMatchResult, CAREER_MIN_MATCH_SCORE, formatMatchScoreLabel } from './career-matching.service';
 import { CareerAiService, ConvTurn, ParsedCareerProfile } from './career-ai.service';
 import { CareerResumeParserService } from './career-resume-parser.service';
 import { CareerStorageService } from './career-storage.service';
@@ -15,14 +15,31 @@ import { CareerApplicationService } from './career-application.service';
 import { CareerPrivacyService } from './career-privacy.service';
 import { CareerDocumentShareService } from './career-document-share.service';
 import { CareerDocxService } from './career-docx.service';
+import { CareerPdfService } from './career-pdf.service';
+import { CareerInterviewService } from './career-interview.service';
+import { CareerGuidanceService } from './career-guidance.service';
+import { CareerPortalShareService } from './career-portal-share.service';
+import {
+  formatAlertPreferencesWhatsApp,
+  mergeAlertPreferencesPatch,
+  readAlertPreferences,
+} from '../career-alert-preferences.util';
 import { CareerResumeBuilderService } from './career-resume-builder.service';
+import { normalizeContractType } from '../job-sources/job-source.utils';
 import {
   careerDocxFileName,
+  careerPdfFileName,
   DOCX_MIME,
+  PDF_MIME,
   readCareerDocumentBuffer,
 } from '../career-document.util';
 import { CareerProfile } from '@prisma/client';
 import { JOB_DISPATCHER, JobDispatcher } from '../../queue/job-dispatcher';
+import {
+  buildProfileDataPatch,
+  mergeNotifiedJobIds,
+  readAlertState,
+} from '../career-alert-state.util';
 
 // WhatsApp rejects messages over 4096 chars. We use 3800 to leave a safe buffer.
 const WA_MAX_CHARS = 3800;
@@ -51,7 +68,11 @@ export class CareerBotService {
     private readonly privacy: CareerPrivacyService,
     private readonly share: CareerDocumentShareService,
     private readonly docx: CareerDocxService,
+    private readonly pdf: CareerPdfService,
     private readonly resumeBuilder: CareerResumeBuilderService,
+    private readonly interview: CareerInterviewService,
+    private readonly guidance: CareerGuidanceService,
+    private readonly portalShare: CareerPortalShareService,
     @Inject(JOB_DISPATCHER) private readonly dispatcher: JobDispatcher,
   ) {}
 
@@ -82,7 +103,7 @@ export class CareerBotService {
       });
       await this.reply(
         message,
-        'You have unsubscribed from daily job digests. ✅\n\nReply *START DIGEST* anytime to re-enable.',
+        'You have unsubscribed from job alerts (instant + daily digest). ✅\n\nReply *START DIGEST* anytime to re-enable.',
       );
       return true;
     }
@@ -94,7 +115,7 @@ export class CareerBotService {
       });
       await this.reply(
         message,
-        'Daily job digests re-enabled! 🔔 You will receive matching jobs every morning.',
+        'Job alerts re-enabled! 🔔 You\'ll get instant alerts when new matching jobs arrive, plus a daily summary.',
       );
       return true;
     }
@@ -114,6 +135,25 @@ export class CareerBotService {
       return true;
     }
 
+    if (await this.interview.hasActiveSession(profile.id)) {
+      if (this.matchesCommand(lower, CAREER_COMMANDS.END_INTERVIEW)) {
+        await this.interview.cmdEnd(message, profile);
+        return true;
+      }
+      if (this.matchesCommand(lower, CAREER_COMMANDS.INTERVIEW_STATUS)) {
+        await this.interview.cmdStatus(message, profile);
+        return true;
+      }
+      if (this.matchesCommand(lower, CAREER_COMMANDS.HELP)) {
+        await this.interview.cmdStatus(message, profile);
+        return true;
+      }
+      const answered = await this.interview.handleAnswer(message, profile, text);
+      if (answered) {
+        return true;
+      }
+    }
+
     if (this.matchesCommand(lower, CAREER_COMMANDS.UPLOAD_RESUME)) {
       await this.setReuploadPending(profile.id, true);
       await this.reply(
@@ -126,6 +166,12 @@ export class CareerBotService {
     const applyIndex = this.parseApplyIndex(lower);
     if (applyIndex !== null) {
       await this.cmdApply(message, profile, applyIndex);
+      return true;
+    }
+
+    const jobDetailIndex = this.parseJobDetailIndex(lower);
+    if (jobDetailIndex !== null) {
+      await this.cmdJobDetails(message, profile, jobDetailIndex);
       return true;
     }
 
@@ -190,37 +236,96 @@ export class CareerBotService {
       await this.appendHistory(profile.id, text, advice);
       return true;
     }
-    if (this.matchesCommand(lower, CAREER_COMMANDS.PREPARE_INTERVIEW)) {
-      // Use the first preferred role if set; otherwise fall back to the first
-      // word of the user's message after the command (e.g. "prepare interview manager").
-      const roles = profile.preferredRoles as string[] | null;
-      const role =
-        roles?.[0] ??
-        (lower.replace(/prepare\s+interview|interview\s+prep|interview\s+tips/i, '').trim() ||
-          'professional');
-      const prep = await this.safeAiCall(
-        message.userId,
-        () =>
-          this.careerAi.interviewPrep(
-            message.userId,
-            role,
-            this.profiles.profileSnapshot(profile),
-          ),
-        'Interview prep is unavailable right now. Please try again later.',
-        'interview_prep',
-      );
-      await this.reply(message, prep);
+    if (
+      this.matchesCommand(lower, CAREER_COMMANDS.MOCK_INTERVIEW) ||
+      this.matchesCommand(lower, CAREER_COMMANDS.PREPARE_INTERVIEW)
+    ) {
+      await this.interview.cmdStart(message, profile, text, lower);
       return true;
     }
     if (this.matchesCommand(lower, CAREER_COMMANDS.SALARY_BENCHMARK)) {
-      const benchmark = await this.safeAiCall(
+      const entry = await this.safeAiCall(
         message.userId,
-        () =>
-          this.careerAi.salaryBenchmark(message.userId, this.profiles.profileSnapshot(profile)),
-        'Salary benchmark unavailable right now. Try again later.',
+        () => this.guidance.generateSalary(message.userId, profile),
+        null,
         'salary_benchmark',
       );
-      await this.reply(message, benchmark);
+      const textOut = entry?.whatsappSummary ?? 'Salary benchmark unavailable right now. Try again later.';
+      for (const chunk of this.guidance.splitForWhatsApp(textOut)) {
+        await this.reply(message, chunk);
+      }
+      return true;
+    }
+    if (this.matchesCommand(lower, CAREER_COMMANDS.CAREER_ROADMAP)) {
+      const entry = await this.safeAiCall(
+        message.userId,
+        () => this.guidance.generateRoadmap(message.userId, profile),
+        null,
+        'career_roadmap',
+      );
+      await this.reply(
+        message,
+        entry?.whatsappSummary ?? 'Could not generate your career roadmap. Try again shortly.',
+      );
+      return true;
+    }
+    if (this.matchesCommand(lower, CAREER_COMMANDS.SKILL_GAP)) {
+      const entry = await this.safeAiCall(
+        message.userId,
+        () => this.guidance.generateSkillGap(message.userId, profile),
+        null,
+        'skill_gap',
+      );
+      for (const chunk of this.guidance.splitForWhatsApp(
+        entry?.whatsappSummary ?? 'Could not build your skill gap plan. Try again shortly.',
+      )) {
+        await this.reply(message, chunk);
+      }
+      return true;
+    }
+    if (this.matchesCommand(lower, CAREER_COMMANDS.CERTIFICATIONS)) {
+      const entry = await this.safeAiCall(
+        message.userId,
+        () => this.guidance.generateCertifications(message.userId, profile),
+        null,
+        'certifications',
+      );
+      await this.reply(
+        message,
+        entry?.whatsappSummary ?? 'Could not load certification recommendations. Try again shortly.',
+      );
+      return true;
+    }
+    if (this.matchesCommand(lower, CAREER_COMMANDS.CAREER_GUIDANCE)) {
+      const chunks = await this.safeAiCall(
+        message.userId,
+        () => this.guidance.generateFullSummary(message.userId, profile),
+        [],
+        'career_guidance',
+      );
+      if (!chunks?.length) {
+        await this.reply(message, 'Career guidance unavailable right now. Try again later.');
+        return true;
+      }
+      for (const chunk of chunks) {
+        await this.reply(message, chunk);
+      }
+      return true;
+    }
+    if (this.matchesCommand(lower, CAREER_COMMANDS.ALERT_SETTINGS)) {
+      await this.cmdAlertSettings(message, profile);
+      return true;
+    }
+    if (this.matchesCommand(lower, CAREER_COMMANDS.ALERT_EMAIL_ON)) {
+      await this.cmdSetAlertEmail(message, profile, true);
+      return true;
+    }
+    if (this.matchesCommand(lower, CAREER_COMMANDS.ALERT_EMAIL_OFF)) {
+      await this.cmdSetAlertEmail(message, profile, false);
+      return true;
+    }
+    if (this.matchesCommand(lower, CAREER_COMMANDS.PORTAL_LINK)) {
+      await this.cmdPortalLink(message, profile);
       return true;
     }
     if (this.matchesCommand(lower, CAREER_COMMANDS.SCHEDULE_INTERVIEW)) {
@@ -331,6 +436,8 @@ export class CareerBotService {
     if (validationError) {
       if (current.onboardingStep === 'follow_up_job_type') {
         await this.replyWorkModePrompt(message, validationError);
+      } else if (current.onboardingStep === 'follow_up_employment_type') {
+        await this.replyEmploymentTypePrompt(message, validationError);
       } else {
         await this.reply(message, validationError);
       }
@@ -340,6 +447,8 @@ export class CareerBotService {
     const data: Prisma.CareerProfileUpdateInput = {};
     if (step.field === 'preferredLocations' || step.field === 'preferredRoles') {
       data[step.field] = text.split(',').map((s) => s.trim()).filter(Boolean);
+    } else if (step.field === 'preferredJobTypes') {
+      data.preferredJobTypes = this.normalizeEmploymentTypes(text);
     } else {
       data[step.field] = text;
     }
@@ -352,7 +461,9 @@ export class CareerBotService {
     }
 
     const nextStep = steps[step.next];
-    if (step.next === 'follow_up_job_type') {
+    if (step.next === 'follow_up_employment_type') {
+      await this.replyEmploymentTypePrompt(message);
+    } else if (step.next === 'follow_up_job_type') {
       await this.replyWorkModePrompt(message);
     } else if (nextStep?.question) {
       await this.reply(message, nextStep.question);
@@ -408,7 +519,7 @@ export class CareerBotService {
     }
 
     const top = matches.slice(0, maxJobs);
-    await this.saveJobSession(profile.id, top.map((m) => m.job.id));
+    await this.saveJobSession(profile.id, profile.onboardingData, top.map((m) => m.job.id));
 
     const lines = [`${intro}\n`, `*Top ${top.length} jobs for you:*\n`];
     top.forEach((m, i) => {
@@ -417,9 +528,10 @@ export class CareerBotService {
     lines.push(
       '',
       'One tap next steps:',
+      '• *JOB 1* — full job details',
       '• *APPLY 1* — save & get apply link',
-      '• *RESUME 1* — tailored DOCX for job #1',
-      '• *COVER LETTER 1* — matching cover letter',
+      '• *RESUME 1* — tailored resume (PDF + DOCX)',
+      '• *COVER LETTER 1* — matching cover letter (PDF + DOCX)',
       '• *FIND JOBS python* — search more roles',
     );
     await this.reply(message, lines.join('\n'));
@@ -632,9 +744,12 @@ export class CareerBotService {
       }
       const summary = this.resumeBuilder.formatParsedSummary(updated);
       const intro = `Resume parsed! ✅\n\n${summary}`;
-      if (updated.onboardingStep === 'follow_up_job_type') {
+      if (
+        updated.onboardingStep === 'follow_up_employment_type' ||
+        updated.onboardingStep === 'follow_up_job_type'
+      ) {
         await this.reply(message, `${intro}\n\nOne quick question:`);
-        await this.replyWorkModePrompt(message);
+        await this.promptOnboardingStep(message, updated.onboardingStep);
         return;
       }
       const question = this.getOnboardingSteps()[updated.onboardingStep]?.question;
@@ -710,7 +825,7 @@ export class CareerBotService {
     const lines = [
       `${index + 1}. *${m.job.title}* @ ${m.job.company}`,
       `   📍 ${m.job.location ?? '—'} | 💰 ${m.job.salaryText ?? '—'}`,
-      `   Match: ${m.score}%`,
+      `   Match: ${m.score}% — ${formatMatchScoreLabel(m.score)}`,
     ];
     if (m.matchFactors.length > 0) {
       lines.push(`   ${m.matchFactors.slice(0, 2).join('\n   ')}`);
@@ -718,11 +833,100 @@ export class CareerBotService {
     if (m.missingSkills.length > 0) {
       lines.push(`   Missing: ✗ ${m.missingSkills.slice(0, 2).join(', ')}`);
     }
+    lines.push(`   Reply *JOB ${index + 1}* for full details`);
     if (m.job.applyUrl) {
       lines.push(`   🔗 ${m.job.applyUrl}`);
     }
     lines.push('');
     return lines;
+  }
+
+  private async cmdJobDetails(
+    message: Message & { contact: Contact },
+    profile: CareerProfile,
+    index1Based: number,
+  ): Promise<void> {
+    const job = await this.resolveJobByIndex(profile, message.userId, index1Based);
+    if (!job) {
+      await this.reply(
+        message,
+        `Job #${index1Based} not found. Reply *VIEW JOBS* or *FIND JOBS* first to refresh the list.`,
+      );
+      return;
+    }
+
+    const stored = await this.prisma.careerJobMatch.findFirst({
+      where: { profileId: profile.id, jobId: job.id },
+    });
+    let match: JobMatchResult;
+    if (stored) {
+      match = {
+        job,
+        score: Math.round(stored.score),
+        matchFactors: Array.isArray(stored.matchFactors)
+          ? (stored.matchFactors as string[])
+          : [],
+        missingSkills: Array.isArray(stored.missingSkills)
+          ? (stored.missingSkills as string[])
+          : [],
+      };
+    } else {
+      const [computed] = this.matching.matchProfileToJobs(profile, [job]);
+      match = computed ?? {
+        job,
+        score: 0,
+        matchFactors: [],
+        missingSkills: [],
+      };
+    }
+
+    const desc = (job.description ?? '').replace(/\s+/g, ' ').trim();
+    const descPreview = desc.length > 500 ? `${desc.slice(0, 500)}…` : desc;
+    const employment = job.jobType?.replace(/_/g, ' ') ?? '—';
+    const expMin = job.minExperience ?? null;
+    const expMax = job.experienceMax ?? null;
+    const expText =
+      expMin !== null && expMax !== null
+        ? `${expMin}–${expMax} years`
+        : expMin !== null
+          ? `${expMin}+ years`
+          : '—';
+
+    const lines = [
+      `*Job #${index1Based}: ${job.title}*`,
+      `@ ${job.company}`,
+      '',
+      `📍 *Location:* ${job.location ?? job.city ?? '—'}`,
+      `💰 *Salary:* ${job.salaryText ?? '—'}`,
+      `🧳 *Employment:* ${employment}`,
+      `📊 *Experience:* ${expText}`,
+      `🎯 *Match:* ${match.score}% — ${formatMatchScoreLabel(match.score)}`,
+    ];
+
+    if (match.matchFactors.length > 0) {
+      lines.push('', '*Matching skills / factors:*');
+      match.matchFactors.slice(0, 8).forEach((f) => lines.push(f));
+    }
+    if (match.missingSkills.length > 0) {
+      lines.push('', '*Gaps:*');
+      match.missingSkills.slice(0, 8).forEach((s) => lines.push(`✗ ${s}`));
+    }
+    if (descPreview) {
+      lines.push('', '*Description:*', descPreview);
+    }
+    if (job.applyUrl) {
+      lines.push('', `🔗 *Apply:* ${job.applyUrl}`);
+    }
+
+    lines.push(
+      '',
+      '*Actions:*',
+      `• *APPLY ${index1Based}* — save & get apply link`,
+      `• *RESUME ${index1Based}* — tailored resume (PDF + DOCX)`,
+      `• *COVER LETTER ${index1Based}* — cover letter (PDF + DOCX)`,
+    );
+
+    await this.reply(message, lines.join('\n').slice(0, WA_MAX_CHARS));
   }
 
   private async cmdApply(
@@ -914,11 +1118,18 @@ export class CareerBotService {
       ).id;
 
     const docxBuffer = await this.docx.resumeFromText('', content);
+    const pdfBuffer = await this.pdf.fromText(`${job.title} — tailored`, content);
     const filePathDocx = await this.storage.saveBuffer(
       message.userId,
       'generated',
       `resume_${job.id}.docx`,
       docxBuffer,
+    );
+    const filePathPdf = await this.storage.saveBuffer(
+      message.userId,
+      'generated',
+      `resume_${job.id}.pdf`,
+      pdfBuffer,
     );
 
     const version = await this.prisma.careerResumeVersion.create({
@@ -929,6 +1140,8 @@ export class CareerBotService {
         title: `${job.title} — tailored`,
         content,
         filePathDocx,
+        filePathPdf,
+        filePath: filePathPdf,
       },
     });
 
@@ -940,20 +1153,20 @@ export class CareerBotService {
     );
 
     const downloadUrl = this.share.buildShareUrl('resume-version', version.id, message.userId);
-    const fileName = careerDocxFileName(`${job.title}-${job.company}`);
+    const pdfFileName = careerPdfFileName(`${job.title}-${job.company}`);
     const docSent = await this.sendDocumentToContact(
       message.userId,
       message.contactId,
-      docxBuffer,
-      fileName,
-      DOCX_MIME,
+      pdfBuffer,
+      pdfFileName,
+      PDF_MIME,
       `Tailored resume for ${job.title} @ ${job.company}`,
     );
 
     if (docSent.success) {
       await this.reply(
         message,
-        `*Tailored resume sent* ✅ — ${job.title} @ ${job.company}\n\nBuilt from your uploaded resume, optimised for this role.\n\nReply *APPLY ${jobNum}* for the apply link, or *COVER LETTER ${jobNum}* for a matching cover letter.`,
+        `*Tailored resume sent* ✅ — ${job.title} @ ${job.company}\n\nPDF attached. DOCX also available:\n${downloadUrl}?format=docx\n\nReply *APPLY ${jobNum}* for the apply link, or *COVER LETTER ${jobNum}* for a matching cover letter.`,
       );
     } else {
       this.logger.warn(
@@ -961,7 +1174,7 @@ export class CareerBotService {
       );
       await this.reply(
         message,
-        `*Tailored resume ready* — ${job.title} @ ${job.company}\n\n📎 Download DOCX (link valid 72 hours):\n${downloadUrl}`,
+        `*Tailored resume ready* — ${job.title} @ ${job.company}\n\n📎 PDF: ${downloadUrl}\n📎 DOCX: ${downloadUrl}?format=docx\n(links valid 72 hours)`,
       );
     }
   }
@@ -1070,11 +1283,18 @@ export class CareerBotService {
 
     const docTitle = `Cover Letter — ${job.title} @ ${job.company}`;
     const docxBuffer = await this.docx.coverLetterFromText(docTitle, content);
+    const pdfBuffer = await this.pdf.fromText(docTitle, content);
     const filePathDocx = await this.storage.saveBuffer(
       message.userId,
       'generated',
       `cover_letter_${job.id}.docx`,
       docxBuffer,
+    );
+    const filePathPdf = await this.storage.saveBuffer(
+      message.userId,
+      'generated',
+      `cover_letter_${job.id}.pdf`,
+      pdfBuffer,
     );
 
     const letter = await this.prisma.careerCoverLetter.create({
@@ -1083,27 +1303,28 @@ export class CareerBotService {
         profileId: profile.id,
         jobId: job.id,
         content,
-        filePath: filePathDocx,
+        filePath: filePathPdf,
         filePathDocx,
+        filePathPdf,
       },
     });
 
     const jobNum = jobIndex ?? (await this.jobIndexInSession(profile.id, job.id)) ?? 1;
     const downloadUrl = this.share.buildShareUrl('cover-letter', letter.id, message.userId);
-    const fileName = careerDocxFileName(`cover-letter-${job.title}-${job.company}`);
+    const pdfFileName = careerPdfFileName(`cover-letter-${job.title}-${job.company}`);
     const docSent = await this.sendDocumentToContact(
       message.userId,
       message.contactId,
-      docxBuffer,
-      fileName,
-      DOCX_MIME,
+      pdfBuffer,
+      pdfFileName,
+      PDF_MIME,
       `Cover letter for ${job.title} @ ${job.company}`,
     );
 
     if (docSent.success) {
       await this.reply(
         message,
-        `*Cover letter sent* ✅ — ${job.title} @ ${job.company}\n\nWritten from your resume.\n\nReply *APPLY ${jobNum}* to save this role and get the apply link.`,
+        `*Cover letter sent* ✅ — ${job.title} @ ${job.company}\n\nPDF attached. DOCX also available:\n${downloadUrl}?format=docx\n\nReply *APPLY ${jobNum}* to save this role and get the apply link.`,
       );
     } else {
       this.logger.warn(
@@ -1111,7 +1332,7 @@ export class CareerBotService {
       );
       await this.reply(
         message,
-        `*Cover letter ready* — ${job.title} @ ${job.company}\n\n📎 Download DOCX (link valid 72 hours):\n${downloadUrl}`,
+        `*Cover letter ready* — ${job.title} @ ${job.company}\n\n📎 PDF: ${downloadUrl}\n📎 DOCX: ${downloadUrl}?format=docx\n(links valid 72 hours)`,
       );
     }
   }
@@ -1493,6 +1714,13 @@ export class CareerBotService {
       }
     }
 
+    if (step === 'follow_up_employment_type') {
+      const valid = /full.?time|part.?time|contract|freelance|intern/i.test(t);
+      if (!valid) {
+        return 'Please reply *Full-time*, *Part-time*, or *Contract*.';
+      }
+    }
+
     if (step === 'follow_up_job_type') {
       const valid = /remote|hybrid|onsite|on.?site|office|anywhere|wfh|work from home/i.test(t);
       if (!valid) {
@@ -1586,9 +1814,19 @@ export class CareerBotService {
     return [
       '*Core commands:*',
       '• *VIEW JOBS* — jobs matched to your profile',
+      '• *JOB 1* — full details for job #1',
       '• *APPLY 1* — save job & get apply link',
-      '• *RESUME 1* — tailored DOCX resume for job #1',
-      '• *COVER LETTER 1* — cover letter for job #1',
+      '• *RESUME 1* — tailored resume (PDF + DOCX) for job #1',
+      '• *COVER LETTER 1* — cover letter (PDF + DOCX) for job #1',
+      '• *MOCK INTERVIEW* — 5-question practice with readiness score',
+      '• *MOCK INTERVIEW 1* — practice for job #1',
+      '• *CAREER ROADMAP* — personalized role ladder',
+      '• *SKILL GAP* — plan from your top job matches',
+      '• *CERTIFICATIONS* — cert recommendations',
+      '• *SALARY BENCHMARK* — market salary insights',
+      '• *CAREER GUIDANCE* — full roadmap + skills + certs',
+      '• *PORTAL LINK* — your candidate web dashboard',
+      '• *ALERT SETTINGS* — WhatsApp / email alert preferences',
       '• *FIND JOBS react* — search by skill or role',
       '• *UPLOAD RESUME* — update your CV (PDF/DOCX)',
       '',
@@ -1682,6 +1920,102 @@ export class CareerBotService {
     );
   }
 
+  private async cmdAlertSettings(
+    message: Message & { contact: Contact },
+    profile: CareerProfile,
+  ): Promise<void> {
+    const prefs = readAlertPreferences(profile.onboardingData);
+    await this.reply(
+      message,
+      formatAlertPreferencesWhatsApp(prefs, !!profile.email?.trim(), profile.digestOptOut === true),
+    );
+  }
+
+  private async cmdSetAlertEmail(
+    message: Message & { contact: Contact },
+    profile: CareerProfile,
+    enabled: boolean,
+  ): Promise<void> {
+    if (enabled && !profile.email?.trim()) {
+      await this.reply(
+        message,
+        'Add your email to your profile first (upload an updated resume or tell your operator), then try *ALERT EMAIL ON* again.',
+      );
+      return;
+    }
+
+    await this.prisma.careerProfile.update({
+      where: { id: profile.id },
+      data: {
+        onboardingData: mergeAlertPreferencesPatch(profile.onboardingData, { email: enabled }),
+      },
+    });
+
+    await this.reply(
+      message,
+      enabled
+        ? 'Email job alerts *enabled* ✅\n\nYou\'ll receive match emails when your operator has SMTP configured.'
+        : 'Email job alerts *disabled*. WhatsApp and portal alerts remain unchanged.\n\nReply *ALERT EMAIL ON* to re-enable.',
+    );
+  }
+
+  async sendPortalLinkToContact(
+    userId: number,
+    profileId: number,
+  ): Promise<{ success: boolean; url?: string; error?: string }> {
+    const profile = await this.prisma.careerProfile.findFirst({
+      where: { id: profileId, userId },
+      include: { contact: true },
+    });
+    if (!profile?.contact) {
+      return { success: false, error: 'Profile or contact not found' };
+    }
+
+    const url = this.portalShare.buildPortalUrl(profile.id, profile.userId);
+    const conversation = await this.prisma.conversation.findUnique({
+      where: { contactId: profile.contactId },
+    });
+    if (!conversation) {
+      return { success: false, url, error: 'No WhatsApp conversation for this contact' };
+    }
+
+    const name = profile.fullName ?? profile.contact.name ?? 'there';
+    const body = [
+      '*Your CareerAI Portal* 🌐',
+      '',
+      `Hi ${name}! Open your personal dashboard to view matches, applications, and alerts:`,
+      '',
+      url,
+      '',
+      'Bookmark this link — valid for 30 days. Reply *PORTAL LINK* anytime for a fresh link.',
+    ].join('\n');
+
+    const sendResult = await this.inbox.sendOutgoingMessage(userId, conversation.id, body);
+    if (!sendResult.success) {
+      return { success: false, url, error: sendResult.error ?? 'WhatsApp send failed' };
+    }
+    return { success: true, url };
+  }
+
+  private async cmdPortalLink(
+    message: Message & { contact: Contact },
+    profile: CareerProfile,
+  ): Promise<void> {
+    const result = await this.sendPortalLinkToContact(message.userId, profile.id);
+    if (result.success) {
+      await this.reply(
+        message,
+        'Portal link sent! 🌐 Check the message above to open your candidate dashboard.',
+      );
+      return;
+    }
+    if (result.url) {
+      await this.reply(message, `Your portal link:\n${result.url}`);
+      return;
+    }
+    await this.reply(message, 'Could not generate your portal link right now. Try again shortly.');
+  }
+
   private async cmdScheduleInterview(
     message: Message & { contact: Contact },
     profile: CareerProfile,
@@ -1743,9 +2077,15 @@ export class CareerBotService {
         question: 'What is your expected salary? (e.g. 12 LPA or "Negotiable")',
       },
       follow_up_notice_period: {
-        next: 'follow_up_job_type',
+        next: 'follow_up_employment_type',
         field: 'noticePeriod',
         question: 'What is your notice period? (e.g. 30 days, 2 months, Immediate)',
+      },
+      follow_up_employment_type: {
+        next: 'follow_up_job_type',
+        field: 'preferredJobTypes',
+        question:
+          'Preferred employment type? Tap a button or type *Full-time*, *Part-time*, or *Contract*',
       },
       follow_up_job_type: {
         next: 'follow_up_roles',
@@ -1765,6 +2105,10 @@ export class CareerBotService {
     message: Message & { contact: Contact },
     stepKey: string,
   ): Promise<void> {
+    if (stepKey === 'follow_up_employment_type') {
+      await this.replyEmploymentTypePrompt(message);
+      return;
+    }
     if (stepKey === 'follow_up_job_type') {
       await this.replyWorkModePrompt(message);
       return;
@@ -1773,6 +2117,19 @@ export class CareerBotService {
     if (question) {
       await this.reply(message, question);
     }
+  }
+
+  private async replyEmploymentTypePrompt(
+    message: Message & { contact: Contact },
+    prefix?: string,
+  ): Promise<void> {
+    const body = [
+      prefix,
+      'Preferred employment type? Tap a button below or type *Full-time*, *Part-time*, or *Contract*.',
+    ]
+      .filter(Boolean)
+      .join('\n\n');
+    await this.replyButtons(message, body, [...CAREER_EMPLOYMENT_TYPE_BUTTONS]);
   }
 
   private async replyWorkModePrompt(
@@ -1864,9 +2221,23 @@ export class CareerBotService {
     });
   }
 
-  private async saveJobSession(profileId: number, jobIds: number[]): Promise<void> {
-    const session: JobSession = { jobIds, listedAt: new Date().toISOString() };
-    await this.mergeOnboardingData(profileId, { job_session: session });
+  private async saveJobSession(
+    profileId: number,
+    existingData: unknown,
+    jobIds: number[],
+  ): Promise<void> {
+    const state = readAlertState(existingData);
+    await this.prisma.careerProfile.update({
+      where: { id: profileId },
+      data: {
+        onboardingData: buildProfileDataPatch(existingData, {
+          jobSessionJobIds: jobIds,
+          alertState: {
+            notifiedJobIds: mergeNotifiedJobIds(state.notifiedJobIds, jobIds),
+          },
+        }),
+      },
+    });
   }
 
   private async loadJobSession(profileId: number): Promise<JobSession | null> {
@@ -1933,5 +2304,20 @@ export class CareerBotService {
   private parseCoverLetterIndex(lower: string): number | null {
     const match = lower.match(/^(?:generate\s+)?cover\s+letter\s*#?\s*(\d+)\s*$/);
     return match ? parseInt(match[1], 10) : null;
+  }
+
+  private parseJobDetailIndex(lower: string): number | null {
+    const match =
+      lower.match(/^job\s*#?\s*(\d+)\s*$/) ||
+      lower.match(/^view\s+job\s*#?\s*(\d+)\s*$/);
+    return match ? parseInt(match[1], 10) : null;
+  }
+
+  private normalizeEmploymentTypes(text: string): string[] {
+    const parts = text.split(',').map((s) => s.trim()).filter(Boolean);
+    const normalized = parts
+      .map((part) => normalizeContractType(part) ?? part.toLowerCase().replace(/\s+/g, '_'))
+      .filter(Boolean);
+    return normalized.length > 0 ? normalized : ['full_time'];
   }
 }

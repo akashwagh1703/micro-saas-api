@@ -9,8 +9,8 @@ export const JOB_SKILL_LIST = [
   'figma', 'excel', 'tally', 'salesforce', 'sap', 'photoshop',
 ];
 
-export function extractSkillsFromDescription(description: string): string[] {
-  const lower = description.toLowerCase();
+export function extractSkillsFromDescription(description: string, title = ''): string[] {
+  const lower = `${title} ${description}`.toLowerCase();
   return JOB_SKILL_LIST.filter((s) => lower.includes(s));
 }
 

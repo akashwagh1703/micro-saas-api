@@ -12,6 +12,7 @@ const ONBOARDING_FIELD_ORDER: Array<{
   { step: 'follow_up_current_salary', field: 'currentSalary' },
   { step: 'follow_up_expected_salary', field: 'expectedSalary' },
   { step: 'follow_up_notice_period', field: 'noticePeriod' },
+  { step: 'follow_up_employment_type', field: 'preferredJobTypes' },
   { step: 'follow_up_job_type', field: 'workPreference' },
   { step: 'follow_up_roles', field: 'preferredRoles' },
 ];

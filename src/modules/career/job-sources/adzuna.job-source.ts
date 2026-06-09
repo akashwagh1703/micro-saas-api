@@ -7,6 +7,7 @@ import {
   formatHttpError,
   formatSalaryInr,
   formatUpsertError,
+  extractSkillsFromDescription,
   normalizeContractType,
   parseExperienceRange,
 } from './job-source.utils';
@@ -117,10 +118,11 @@ export class AdzunaJobSource implements CareerJobSource {
     const tags: string[] = [];
     if (job.category?.label) tags.push(job.category.label);
     if (job.contract_type) tags.push(job.contract_type);
+    const title = job.title?.trim() || 'Untitled role';
 
     return {
       externalId: String(job.id),
-      title: job.title?.trim() || 'Untitled role',
+      title,
       company: job.company?.display_name?.trim() || 'Unknown company',
       location: job.location?.display_name ?? null,
       city: job.location?.area?.[1] ?? job.location?.display_name ?? null,
@@ -133,6 +135,7 @@ export class AdzunaJobSource implements CareerJobSource {
       postedAt: job.created ? new Date(job.created) : null,
       industry: job.category?.label ?? null,
       tags,
+      requiredSkills: extractSkillsFromDescription(description, title),
       minExperience: expRange.min ?? null,
       experienceMax: expRange.max ?? null,
     };

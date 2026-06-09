@@ -1,10 +1,14 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../../prisma/prisma.service';
-import { CareerMatchingService } from './career-matching.service';
+import { CareerMatchingService, formatMatchScoreLabel } from './career-matching.service';
 import { CareerJobService } from './career-job.service';
-import { InboxService } from '../../inbox/inbox.service';
-import { buildJobActionButtons, CAREER_BOT_MESSAGE_SOURCE } from '../career.constants';
+import { buildJobActionButtons } from '../career.constants';
+import {
+  buildProfileDataPatch,
+  mergeNotifiedJobIds,
+  readAlertState,
+} from '../career-alert-state.util';
+import { CareerAlertChannelService } from './career-alert-channel.service';
 
 export interface DigestBatchResult {
   sent: number;
@@ -22,12 +26,11 @@ export class CareerDigestService {
     private readonly prisma: PrismaService,
     private readonly matching: CareerMatchingService,
     private readonly jobs: CareerJobService,
-    private readonly inbox: InboxService,
+    private readonly channels: CareerAlertChannelService,
   ) {}
 
   /**
-   * Sends the daily digest for one profile. Returns true only when a WhatsApp
-   * message was actually delivered.
+   * Sends the daily digest for one profile across enabled channels.
    */
   async sendDailyDigestForProfile(profileId: number): Promise<DigestProfileOutcome> {
     const profile = await this.prisma.careerProfile.findUnique({
@@ -71,92 +74,129 @@ export class CareerDigestService {
       const matches = this.matching.filterQualityMatches(allMatches);
 
       if (matches.length === 0) {
-        await this.recordNotification(profile, 'skipped', {
-          reason: allMatches.length > 0 ? 'low_match_scores' : 'no_matches',
-          matchCount: 0,
-          totalScored: allMatches.length,
+        await this.prisma.careerNotification.create({
+          data: {
+            userId: profile.userId,
+            profileId: profile.id,
+            contactId: profile.contactId,
+            type: 'daily_digest',
+            status: 'skipped',
+            payload: {
+              reason: allMatches.length > 0 ? 'low_match_scores' : 'no_matches',
+              matchCount: 0,
+              totalScored: allMatches.length,
+            },
+          },
         });
         return 'skipped';
       }
 
-      const top = matches.slice(0, 3);
+      const alertState = readAlertState(profile.onboardingData);
+      const notifiedSet = new Set(alertState.notifiedJobIds);
+      const unseenMatches = matches.filter((m) => !notifiedSet.has(m.job.id));
+      const digestPool = unseenMatches.length > 0 ? unseenMatches : matches;
+      const top = digestPool.slice(0, 3);
       const name = profile.fullName ?? profile.contact.name ?? 'there';
+      const showingNew = unseenMatches.length > 0;
 
       const lines = [
         `Hi ${name} 👋 Your daily job matches are ready!`,
         '',
-        `*${matches.length} jobs* match your profile today.`,
+        showingNew
+          ? `*${unseenMatches.length} new job${unseenMatches.length === 1 ? '' : 's'}* match your profile (70%+ fit).`
+          : `*${matches.length} jobs* match your profile today.`,
         '',
-        '*Top Matches:*',
+        showingNew ? '*New Matches:*' : '*Top Matches:*',
       ];
 
       top.forEach((m, i) => {
         lines.push(
           `${i + 1}. *${m.job.title}* @ ${m.job.company}`,
-          `   📍 ${m.job.location ?? '—'} | 💰 ${m.job.salaryText ?? '—'} | ${m.score}% match`,
+          `   📍 ${m.job.location ?? '—'} | 💰 ${m.job.salaryText ?? '—'} | ${m.score}% — ${formatMatchScoreLabel(m.score)}`,
         );
       });
-
-      await this.saveJobSession(profile.id, profile.onboardingData, top.map((t) => t.job.id));
 
       lines.push(
         '',
         'Reply:',
         '• *APPLY 1* — save & get apply link',
         '• *RESUME 1* — tailor CV for a job',
+        '• *JOB 1* — full job details',
         '• *VIEW JOBS* — see all matches',
-        '• *FIND JOBS {keyword}* — search by role',
-        '• *STOP DIGEST* — unsubscribe from daily updates',
+        '• *PORTAL LINK* — open your web dashboard',
+        '• *STOP DIGEST* — pause all job alerts',
       );
 
       const conversation = await this.prisma.conversation.findUnique({
         where: { contactId: profile.contactId },
       });
-      if (!conversation) {
-        await this.recordNotification(profile, 'failed', {
-          reason: 'no_conversation',
-          matchCount: matches.length,
-        });
-        return 'failed';
-      }
 
-      const sendResult = await this.inbox.sendOutgoingMessage(
-        profile.userId,
-        conversation.id,
-        lines.join('\n'),
+      const emailContent = this.channels.buildDigestEmailContent(
+        profile,
+        top,
+        matches.length,
+        showingNew,
+        unseenMatches.length,
       );
 
-      if (!sendResult.success) {
-        await this.recordNotification(profile, 'failed', {
-          reason: 'whatsapp_send_failed',
-          error: sendResult.error,
-          matchCount: matches.length,
-        });
-        return 'failed';
+      const delivery = await this.channels.deliver(
+        profile,
+        {
+          notificationType: 'daily_digest',
+          title: 'Daily Job Digest',
+          whatsappBody: lines.join('\n'),
+          emailSubject: emailContent.emailSubject,
+          emailText: emailContent.emailText,
+          emailHtml: emailContent.emailHtml,
+          inAppSummary: emailContent.inAppSummary,
+          jobs: this.channels.buildJobSummaries(top),
+          payloadExtras: {
+            matchCount: matches.length,
+            newMatchCount: unseenMatches.length,
+            topJobIds: top.map((t) => t.job.id),
+            showingNew,
+          },
+        },
+        {
+          conversationId: conversation?.id,
+          buttons: buildJobActionButtons(top.length),
+          buttonPrompt: 'Quick actions for today\'s top matches:',
+        },
+      );
+
+      if (!delivery.primarySuccess) {
+        return delivery.whatsapp === 'failed' && delivery.email === 'failed' ? 'failed' : 'skipped';
       }
 
-      const jobButtons = buildJobActionButtons(top.length);
-      if (jobButtons.length > 0) {
-        await this.inbox.sendInteractiveButtons(
-          profile.userId,
-          conversation.id,
-          'Quick actions for today\'s top matches:',
-          jobButtons,
-          { source: CAREER_BOT_MESSAGE_SOURCE },
-        );
-      }
-
-      await this.recordNotification(profile, 'sent', {
-        matchCount: matches.length,
-        topJobIds: top.map((t) => t.job.id),
+      await this.prisma.careerProfile.update({
+        where: { id: profile.id },
+        data: {
+          onboardingData: buildProfileDataPatch(profile.onboardingData, {
+            alertState: {
+              notifiedJobIds: mergeNotifiedJobIds(
+                alertState.notifiedJobIds,
+                top.map((t) => t.job.id),
+              ),
+              lastDigestAt: new Date().toISOString(),
+            },
+            jobSessionJobIds: top.map((t) => t.job.id),
+          }),
+        },
       });
 
       return 'sent';
-    } catch (e: any) {
-      this.logger.error(`Daily digest failed for profile ${profileId}: ${e.message}`);
-      await this.recordNotification(profile, 'failed', {
-        reason: 'exception',
-        error: e.message,
+    } catch (e: unknown) {
+      const message = e instanceof Error ? e.message : String(e);
+      this.logger.error(`Daily digest failed for profile ${profileId}: ${message}`);
+      await this.prisma.careerNotification.create({
+        data: {
+          userId: profile.userId,
+          profileId: profile.id,
+          contactId: profile.contactId,
+          type: 'daily_digest',
+          status: 'failed',
+          payload: { reason: 'exception', error: message },
+        },
       });
       return 'failed';
     }
@@ -201,47 +241,13 @@ export class CareerDigestService {
         this.logger.log(
           `Digest userId=${userId}: sent=${r.sent} skipped=${r.skipped} failed=${r.failed}`,
         );
-      } catch (e: any) {
-        this.logger.error(`Digest batch failed for userId=${userId}: ${e.message}`);
+      } catch (e: unknown) {
+        const message = e instanceof Error ? e.message : String(e);
+        this.logger.error(`Digest batch failed for userId=${userId}: ${message}`);
         totals.failed++;
       }
     }
 
     return totals;
-  }
-
-  private async recordNotification(
-    profile: { userId: number; id: number; contactId: number },
-    status: 'sent' | 'skipped' | 'failed',
-    payload: Record<string, unknown>,
-  ): Promise<void> {
-    await this.prisma.careerNotification.create({
-      data: {
-        userId: profile.userId,
-        profileId: profile.id,
-        contactId: profile.contactId,
-        type: 'daily_digest',
-        status,
-        sentAt: status === 'sent' ? new Date() : null,
-        payload: payload as Prisma.InputJsonValue,
-      },
-    });
-  }
-
-  private async saveJobSession(
-    profileId: number,
-    existingData: unknown,
-    jobIds: number[],
-  ): Promise<void> {
-    const existing = (existingData as Record<string, unknown>) ?? {};
-    await this.prisma.careerProfile.update({
-      where: { id: profileId },
-      data: {
-        onboardingData: {
-          ...existing,
-          job_session: { jobIds, listedAt: new Date().toISOString() },
-        } as Prisma.InputJsonValue,
-      },
-    });
   }
 }

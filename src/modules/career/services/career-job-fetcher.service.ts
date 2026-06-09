@@ -99,6 +99,19 @@ export class CareerJobFetcherService {
     };
   }
 
+  /** Job rows created during a refresh/fetch window (for instant match alerts). */
+  async findJobsCreatedSince(userId: number, since: Date): Promise<number[]> {
+    const rows = await this.prisma.careerJob.findMany({
+      where: {
+        userId,
+        isActive: true,
+        createdAt: { gte: since },
+      },
+      select: { id: true },
+    });
+    return rows.map((r) => r.id);
+  }
+
   async expireStaleJobs(olderThanDays = 30): Promise<number> {
     const cutoff = new Date();
     cutoff.setDate(cutoff.getDate() - olderThanDays);

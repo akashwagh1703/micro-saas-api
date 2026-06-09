@@ -2,6 +2,7 @@ import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CareerJobFetcherService } from './services/career-job-fetcher.service';
+import { CareerJobAlertService } from './services/career-job-alert.service';
 
 /**
  * Keywords fetched on each refresh cycle.
@@ -37,6 +38,7 @@ export class CareerJobRefreshScheduler implements OnModuleInit {
     private readonly config: ConfigService,
     private readonly prisma: PrismaService,
     private readonly fetcher: CareerJobFetcherService,
+    private readonly alerts: CareerJobAlertService,
   ) {}
 
   onModuleInit(): void {
@@ -97,6 +99,7 @@ export class CareerJobRefreshScheduler implements OnModuleInit {
     bySource: Record<string, number>;
   }> {
     this.logger.log(`Job refresh starting for userId=${userId}…`);
+    const refreshStartedAt = new Date();
     const expired = await this.fetcher.expireStaleJobs(30);
 
     const bySource: Record<string, number> = {};
@@ -122,6 +125,10 @@ export class CareerJobRefreshScheduler implements OnModuleInit {
         .map(([k, v]) => `${k}:${v}`)
         .join(', ')})`,
     );
+
+    const newJobIds = await this.fetcher.findJobsCreatedSince(userId, refreshStartedAt);
+    await this.alerts.processNewJobsForUser(userId, newJobIds);
+
     return { expired, fetched, bySource };
   }
 
@@ -140,6 +147,7 @@ export class CareerJobRefreshScheduler implements OnModuleInit {
     let fetched = 0;
 
     for (const { userId } of settings) {
+      const refreshStartedAt = new Date();
       for (let i = 0; i < REFRESH_KEYWORDS.length; i += KEYWORD_BATCH_SIZE) {
         const batch = REFRESH_KEYWORDS.slice(i, i + KEYWORD_BATCH_SIZE);
         const batchResults = await Promise.all(
@@ -154,6 +162,9 @@ export class CareerJobRefreshScheduler implements OnModuleInit {
           }
         }
       }
+
+      const newJobIds = await this.fetcher.findJobsCreatedSince(userId, refreshStartedAt);
+      await this.alerts.processNewJobsForUser(userId, newJobIds);
     }
 
     this.logger.log(

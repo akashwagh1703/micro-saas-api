@@ -17,6 +17,13 @@ import { CareerResumeParserService } from './services/career-resume-parser.servi
 import { CareerStorageService } from './services/career-storage.service';
 import { CareerApplicationService } from './services/career-application.service';
 import { CareerDigestService } from './services/career-digest.service';
+import { CareerJobAlertService } from './services/career-job-alert.service';
+import { CareerInterviewService } from './services/career-interview.service';
+import { CareerGuidanceService } from './services/career-guidance.service';
+import { CareerEmailService } from './services/career-email.service';
+import { CareerAlertChannelService } from './services/career-alert-channel.service';
+import { CareerPortalShareService } from './services/career-portal-share.service';
+import { CareerPortalService } from './services/career-portal.service';
 import { CareerDigestScheduler } from './career-digest.scheduler';
 import { CareerPgBossScheduler } from './career-pgboss.scheduler';
 import { CareerAiUsageService } from './services/career-ai-usage.service';
@@ -31,6 +38,7 @@ import { CareerJobSourceRegistry } from './job-sources/career-job-source.registr
 import { CareerJobUpsertService } from './job-sources/career-job-upsert.service';
 import { CareerDocumentShareService } from './services/career-document-share.service';
 import { CareerDocxService } from './services/career-docx.service';
+import { CareerPdfService } from './services/career-pdf.service';
 import { CareerResumeBuilderService } from './services/career-resume-builder.service';
 
 @Module({
@@ -49,6 +57,13 @@ import { CareerResumeBuilderService } from './services/career-resume-builder.ser
     CareerStorageService,
     CareerApplicationService,
     CareerDigestService,
+    CareerJobAlertService,
+    CareerInterviewService,
+    CareerGuidanceService,
+    CareerEmailService,
+    CareerAlertChannelService,
+    CareerPortalShareService,
+    CareerPortalService,
     CareerDigestScheduler,
     CareerPgBossScheduler,
     CareerAiUsageService,
@@ -63,8 +78,9 @@ import { CareerResumeBuilderService } from './services/career-resume-builder.ser
     CareerJobSourceRegistry,
     CareerDocumentShareService,
     CareerDocxService,
+    CareerPdfService,
     CareerResumeBuilderService,
   ],
-  exports: [CareerIncomingHandler, CareerDigestService, CareerBotService],
+  exports: [CareerIncomingHandler, CareerDigestService, CareerJobAlertService, CareerBotService],
 })
 export class CareerModule {}

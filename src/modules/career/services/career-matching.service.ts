@@ -12,20 +12,30 @@ export interface JobMatchResult {
 /**
  * Scoring weights — must sum to 100.
  *
- *  Skills       40 pts  — primary technical fit signal
- *  Experience   20 pts  — years vs job minimum requirement
- *  Salary       15 pts  — candidate expectation vs job range
- *  Location     15 pts  — preferred locations vs job city / remote flag
- *  Role title   10 pts  — preferred roles vs job title
+ *  Skills         40 pts  — primary technical fit signal
+ *  Experience     20 pts  — years vs job minimum requirement
+ *  Salary         15 pts  — candidate expectation vs job range
+ *  Location       15 pts  — preferred locations vs job city / remote flag
+ *  Role title      5 pts  — preferred roles vs job title
+ *  Notice period   5 pts  — candidate availability vs job urgency
  */
 const W_SKILLS     = 40;
 const W_EXPERIENCE = 20;
 const W_SALARY     = 15;
 const W_LOCATION   = 15;
-const W_ROLE       = 10;
+const W_ROLE       = 5;
+const W_NOTICE     = 5;
 
 /** Minimum score shown to job seekers (VIEW JOBS, digest, APPLY/RESUME lists). */
 export const CAREER_MIN_MATCH_SCORE = 70;
+
+/** Human-readable match band aligned with CareerAI.md Step 6. */
+export function formatMatchScoreLabel(score: number): string {
+  if (score >= 95) return 'Excellent Match';
+  if (score >= 80) return 'Good Match';
+  if (score >= 60) return 'Partial Match';
+  return 'Low Match';
+}
 
 const CITY_ALIASES: Record<string, string[]> = {
   bangalore: ['bangalore', 'bengaluru'],
@@ -54,6 +64,7 @@ export class CareerMatchingService {
     const profileExpYears  = this.calcExperienceYears(profile.experience);
     const expectedSalaryL  = this.parseSalaryLPA(profile.expectedSalary);
     const workPref         = (profile.workPreference ?? '').toLowerCase();
+    const noticeDays       = this.parseNoticePeriodDays(profile.noticePeriod);
 
     return jobs
       .map((job) => {
@@ -69,8 +80,8 @@ export class CareerMatchingService {
           hits.forEach((s) => matched.push(`✓ ${this.cap(s)}`));
           required.filter((s) => !hits.includes(s)).forEach((s) => missing.push(this.cap(s)));
         } else {
-          // No required skills listed — award half credit so the job still appears.
-          score += W_SKILLS * 0.5;
+          // No required skills listed — minimal credit (avoids inflated Adzuna scores).
+          score += W_SKILLS * 0.25;
         }
 
         // ── 2. Experience (20 pts) ───────────────────────────────────────────
@@ -165,6 +176,19 @@ export class CareerMatchingService {
         } else {
           // No role preference — half credit.
           score += W_ROLE * 0.5;
+        }
+
+        // ── 6. Notice period (5 pts) ─────────────────────────────────────────
+        const jobNoticeMax = this.extractJobNoticeRequirement(job.description ?? '');
+        if (noticeDays !== null && jobNoticeMax !== null) {
+          if (noticeDays <= jobNoticeMax) {
+            score += W_NOTICE;
+            matched.push(`✓ Notice period OK (${profile.noticePeriod ?? 'immediate'})`);
+          } else {
+            missing.push(`Notice: role prefers ≤${jobNoticeMax} days`);
+          }
+        } else {
+          score += W_NOTICE * 0.5;
         }
 
         return {
@@ -301,5 +325,44 @@ export class CareerMatchingService {
 
   private cap(s: string): string {
     return s.charAt(0).toUpperCase() + s.slice(1);
+  }
+
+  /** Parses "30 days", "2 months", "Immediate" into approximate days. */
+  private parseNoticePeriodDays(raw: string | null | undefined): number | null {
+    if (!raw?.trim()) return null;
+    const t = raw.toLowerCase();
+    if (/immediate|no\s*notice|zero|0\s*day|serving|n\/a|none/i.test(t)) {
+      return 0;
+    }
+    const months = t.match(/(\d+(?:\.\d+)?)\s*months?/);
+    if (months) {
+      return Math.round(parseFloat(months[1]) * 30);
+    }
+    const days = t.match(/(\d+)\s*days?/);
+    if (days) {
+      return parseInt(days[1], 10);
+    }
+    const num = t.match(/(\d+)/);
+    if (num) {
+      return parseInt(num[1], 10);
+    }
+    return null;
+  }
+
+  /** Reads notice urgency from job description when present. */
+  private extractJobNoticeRequirement(description: string): number | null {
+    const d = description.toLowerCase();
+    if (/immediate joiner|join immediately|immediate joining|no notice period|can join immediately/i.test(d)) {
+      return 0;
+    }
+    const maxNotice = d.match(/(?:max|maximum|upto|up to|within)\s*(\d+)\s*days?\s*(?:notice|np)/i);
+    if (maxNotice) {
+      return parseInt(maxNotice[1], 10);
+    }
+    const noticeUpTo = d.match(/(\d+)\s*days?\s*notice/i);
+    if (noticeUpTo) {
+      return parseInt(noticeUpTo[1], 10);
+    }
+    return null;
   }
 }
