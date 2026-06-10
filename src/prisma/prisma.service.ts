@@ -1,9 +1,14 @@
 import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
-import { PrismaClient } from '@prisma/client';
+import { Prisma, PrismaClient } from '@prisma/client';
 
 @Injectable()
 export class PrismaService extends PrismaClient implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(PrismaService.name);
+
+  /** Generated delegate — explicit accessor keeps TS/IDE in sync after schema changes. */
+  get billingTransaction(): Prisma.BillingTransactionDelegate {
+    return super.billingTransaction;
+  }
 
   async onModuleInit(): Promise<void> {
     await this.$connect();
