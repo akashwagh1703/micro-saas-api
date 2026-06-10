@@ -3,6 +3,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { CryptoService } from '../../common/crypto/crypto.service';
 import { serializeUser } from '../../common/serializers';
 import { BillingService } from '../billing/billing.service';
+import { SuperAdminService } from '../../common/super-admin.service';
 import { ForgotPasswordDto, LoginDto, RegisterDto } from './dto/auth.dto';
 
 @Injectable()
@@ -11,6 +12,7 @@ export class AuthService {
     private readonly prisma: PrismaService,
     private readonly crypto: CryptoService,
     private readonly billing: BillingService,
+    private readonly superAdmin: SuperAdminService,
   ) {}
 
   async register(dto: RegisterDto) {
@@ -40,7 +42,10 @@ export class AuthService {
     });
 
     const token = await this.createToken(user.id);
-    return { user: serializeUser(user), token };
+    return {
+      user: serializeUser(user, { isSuperAdmin: this.superAdmin.isSuperAdmin(user.email) }),
+      token,
+    };
   }
 
   async login(dto: LoginDto) {
@@ -55,7 +60,10 @@ export class AuthService {
     }
 
     const token = await this.createToken(user.id);
-    return { user: serializeUser(user), token };
+    return {
+      user: serializeUser(user, { isSuperAdmin: this.superAdmin.isSuperAdmin(user.email) }),
+      token,
+    };
   }
 
   async logout(accessTokenId: number | undefined) {

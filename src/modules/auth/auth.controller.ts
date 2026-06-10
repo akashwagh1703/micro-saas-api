@@ -5,11 +5,15 @@ import { TokenAuthGuard } from '../../common/guards/token-auth.guard';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { serializeUser } from '../../common/serializers';
 import { AuthService } from './auth.service';
+import { SuperAdminService } from '../../common/super-admin.service';
 import { ForgotPasswordDto, LoginDto, RegisterDto } from './dto/auth.dto';
 
 @Controller('auth')
 export class AuthController {
-  constructor(private readonly auth: AuthService) {}
+  constructor(
+    private readonly auth: AuthService,
+    private readonly superAdmin: SuperAdminService,
+  ) {}
 
   @Post('register')
   @HttpCode(201)
@@ -39,6 +43,8 @@ export class AuthController {
   @Get('profile')
   @UseGuards(TokenAuthGuard)
   profile(@CurrentUser() user: User) {
-    return { user: serializeUser(user) };
+    return {
+      user: serializeUser(user, { isSuperAdmin: this.superAdmin.isSuperAdmin(user.email) }),
+    };
   }
 }

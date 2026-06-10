@@ -16,7 +16,7 @@ function dt(value: Date | null | undefined): string | null {
   return value ? value.toISOString() : null;
 }
 
-export function serializeUser(u: User) {
+export function serializeUser(u: User, options?: { isSuperAdmin?: boolean }) {
   return {
     id: u.id,
     name: u.name,
@@ -24,6 +24,7 @@ export function serializeUser(u: User) {
     email_verified_at: dt(u.emailVerifiedAt),
     created_at: dt(u.createdAt),
     updated_at: dt(u.updatedAt),
+    is_super_admin: !!options?.isSuperAdmin,
   };
 }
 

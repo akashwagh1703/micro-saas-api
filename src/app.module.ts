@@ -18,11 +18,14 @@ import { WebhooksModule } from './modules/webhooks/webhooks.module';
 import { BillingModule } from './modules/billing/billing.module';
 import { JobsModule } from './modules/jobs/jobs.module';
 import { CareerModule } from './modules/career/career.module';
+import { SuperAdminModule } from './common/super-admin.module';
+import { AdminModule } from './modules/admin/admin.module';
 import { AppController } from './app.controller';
 
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true, validate: validateEnv }),
+    SuperAdminModule,
     PrismaModule,
     CryptoModule,
     ActivityLoggerModule,
@@ -40,6 +43,7 @@ import { AppController } from './app.controller';
     WebhooksModule,
     JobsModule,
     CareerModule,
+    AdminModule,
   ],
   controllers: [AppController],
 })

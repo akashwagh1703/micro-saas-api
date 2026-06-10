@@ -10,6 +10,7 @@ import { User } from '@prisma/client';
 import * as crypto from 'crypto';
 import Razorpay from 'razorpay';
 import { PrismaService } from '../../prisma/prisma.service';
+import { SuperAdminService } from '../../common/super-admin.service';
 
 export type BillingPlan = 'monthly' | 'yearly';
 export type BillingStatusKind = 'trial' | 'active' | 'expired' | 'cancelled';
@@ -35,6 +36,7 @@ export class BillingService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly config: ConfigService,
+    private readonly superAdmin: SuperAdminService,
   ) {}
 
   isEnabled(): boolean {
@@ -99,6 +101,19 @@ export class BillingService {
     const razorpay_configured = this.isRazorpayConfigured();
     const razorpay_webhook_url = this.getRazorpayWebhookUrl();
     const base = { prices, razorpay_configured, razorpay_webhook_url };
+
+    if (this.superAdmin.isSuperAdmin(user.email)) {
+      return {
+        billing_enabled: false,
+        status: 'active',
+        plan: null,
+        has_access: true,
+        trial_ends_at: null,
+        current_period_end: null,
+        days_left: null,
+        ...base,
+      };
+    }
 
     if (!this.isEnabled()) {
       return {
@@ -177,8 +192,9 @@ export class BillingService {
   }
 
   async hasPlatformAccess(userId: number): Promise<boolean> {
-    if (!this.isEnabled()) return true;
     const user = await this.getUser(userId);
+    if (this.superAdmin.isSuperAdmin(user.email)) return true;
+    if (!this.isEnabled()) return true;
     return this.resolveStatus(user).has_access;
   }
 
