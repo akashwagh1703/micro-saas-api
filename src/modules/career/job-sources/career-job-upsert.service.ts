@@ -1,12 +1,18 @@
 import { Injectable } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { NormalizedJobListing } from './job-source.types';
 import {
   clipField,
+  detectSeniority,
+  detectWorkMode,
   extractSkillsFromDescription,
   formatSalaryInr,
+  mergeJobTags,
   normalizeContractType,
+  normalizeSkillList,
   parseExperienceRange,
+  parseSalaryFromText,
   thirtyDaysFromNow,
 } from './job-source.utils';
 
@@ -22,28 +28,47 @@ export class CareerJobUpsertService {
 
     const storageKey = this.toStorageKey(source, rawExternalId);
 
+    const title = job.title?.trim() || 'Untitled role';
     const description = (job.description ?? '').slice(0, 3000);
-    const skills = job.requiredSkills?.length
+    const rawSkills = job.requiredSkills?.length
       ? job.requiredSkills
-      : extractSkillsFromDescription(description, job.title ?? '');
+      : extractSkillsFromDescription(description, title);
+    const skills = normalizeSkillList(rawSkills.map(String));
     const expRange = parseExperienceRange(description);
-    const salaryMin = job.salaryMin ?? null;
-    const salaryMax = job.salaryMax ?? null;
+
+    let salaryMin = job.salaryMin ?? null;
+    let salaryMax = job.salaryMax ?? null;
+    const salaryText = job.salaryText ?? formatSalaryInr(salaryMin, salaryMax);
+    if (!salaryMin && !salaryMax) {
+      const parsed = parseSalaryFromText(salaryText ?? description);
+      salaryMin = parsed.min;
+      salaryMax = parsed.max;
+    }
+
+    const workMode = detectWorkMode(
+      title,
+      description,
+      job.location ?? '',
+      job.jobType ?? '',
+    );
+    const seniority = detectSeniority(title, description);
+
+    const enrichmentTags = mergeJobTags(job.tags, { workMode, seniority }) as Prisma.InputJsonValue;
 
     const shared = {
-      title: job.title?.trim() || 'Untitled role',
+      title,
       company: job.company?.trim() || 'Unknown company',
       location: job.location ?? null,
       city: clipField(job.city, 80),
       salaryMin,
       salaryMax,
-      salaryText: job.salaryText ?? formatSalaryInr(salaryMin, salaryMax),
+      salaryText: salaryText ?? formatSalaryInr(salaryMin, salaryMax),
       jobType: clipField(normalizeContractType(job.jobType), 30),
       description,
       requiredSkills: skills,
       minExperience: job.minExperience ?? expRange.min ?? null,
       experienceMax: job.experienceMax ?? expRange.max ?? null,
-      tags: job.tags ?? [],
+      tags: enrichmentTags,
       applyUrl: job.applyUrl ?? null,
       postedAt: job.postedAt ?? null,
       expiresAt: thirtyDaysFromNow(),
@@ -55,21 +80,23 @@ export class CareerJobUpsertService {
 
     let existing = await this.prisma.careerJob.findFirst({
       where: { userId, externalId: storageKey },
-      select: { id: true },
+      select: { id: true, tags: true },
     });
 
-    // Legacy rows stored raw Adzuna ids without source prefix — migrate on update.
     if (!existing) {
       existing = await this.prisma.careerJob.findFirst({
         where: { userId, source, externalId: rawExternalId },
-        select: { id: true },
+        select: { id: true, tags: true },
       });
     }
 
     if (existing) {
       await this.prisma.careerJob.update({
         where: { id: existing.id },
-        data: shared,
+        data: {
+          ...shared,
+          tags: mergeJobTags(existing.tags, { workMode, seniority }) as Prisma.InputJsonValue,
+        },
       });
       return;
     }
@@ -82,7 +109,6 @@ export class CareerJobUpsertService {
     });
   }
 
-  /** Prevents Adzuna/JSearch id collisions in @@unique([userId, externalId]). */
   private toStorageKey(source: string, externalId: string): string {
     const key = `${source}::${externalId}`;
     return key.length > 190 ? key.slice(0, 190) : key;

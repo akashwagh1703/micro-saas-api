@@ -75,7 +75,7 @@ export class CareerAlertChannelService {
       '',
       totalNewMatches === 1
         ? 'A new opening matches your profile:'
-        : `${totalNewMatches} new jobs match your profile (70%+ fit).`,
+        : `${totalNewMatches} new jobs match your profile (80%+ fit).`,
       '',
     ];
 
@@ -95,7 +95,7 @@ export class CareerAlertChannelService {
     const text = lines.join('\n');
     const html = [
       `<p>Hi ${name},</p>`,
-      `<p>${totalNewMatches === 1 ? 'A new opening matches your profile:' : `${totalNewMatches} new jobs match your profile (70%+ fit).`}</p>`,
+      `<p>${totalNewMatches === 1 ? 'A new opening matches your profile:' : `${totalNewMatches} new jobs match your profile (80%+ fit).`}</p>`,
       '<ul>',
       ...top.map(
         (m) =>

@@ -153,7 +153,7 @@ export function welcomeMessage(name?: string | null): string {
     `${greeting}Welcome to *CareerAI* 🎯`,
     '',
     'Your personal career coach on WhatsApp — I\'ll:',
-    '✨ Match you with 70%+ fit jobs',
+    '✨ Match you with jobs tailored to your profile',
     '📝 Generate cover letters',
     '🎤 Run mock interviews & career guidance',
     '',

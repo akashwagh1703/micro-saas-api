@@ -7,7 +7,7 @@ import { InboxService } from '../../inbox/inbox.service';
 import { CAREER_COMMANDS, CAREER_MAX_INBOUND_CHARS, CAREER_BOT_MESSAGE_SOURCE, CAREER_WORK_MODE_BUTTONS, CAREER_EMPLOYMENT_TYPE_BUTTONS, buildJobActionButtons } from '../career.constants';
 import { CareerProfileService } from './career-profile.service';
 import { CareerJobService } from './career-job.service';
-import { CareerMatchingService, JobMatchResult, CAREER_MIN_MATCH_SCORE, formatMatchScoreLabel } from './career-matching.service';
+import { CareerMatchingService, JobMatchResult, CAREER_MATCH_TIER_GOOD, formatMatchScoreLabel } from './career-matching.service';
 import { CareerAiService, ConvTurn, ParsedCareerProfile } from './career-ai.service';
 import { CareerResumeParserService } from './career-resume-parser.service';
 import { CareerStorageService } from './career-storage.service';
@@ -498,25 +498,20 @@ export class CareerBotService {
     profile: CareerProfile,
   ): Promise<void> {
     await this.profiles.markComplete(profile.id);
-    let jobList = await this.jobs.listActive(message.userId);
-    jobList = this.jobs.relevantJobsForProfile(jobList, profile);
-    const allMatches = this.matching.matchProfileToJobs(profile, jobList);
-    await this.matching.persistMatches(
+    const { allMatches, shownMatches: matches } = await this.matching.matchAndPersistForProfile(
       message.userId,
-      profile.id,
-      message.contactId,
-      allMatches,
+      profile,
+      { tier: 'good' },
     );
-    const matches = this.matching.filterQualityMatches(allMatches);
     const intro =
       matches.length > 0
-        ? `🎉 *Profile complete!* ✅\n\nI found *${matches.length}* strong matches (70%+ fit) tailored to your role, skills & location.`
+        ? `🎉 *Profile complete!* ✅\n\nI found *${matches.length}* strong matches (65%+ fit) tailored to your role, skills & location.`
         : '🎉 *Profile complete!* ✅\n\nYour career profile is ready — let\'s find the right opportunities for you.';
     if (matches.length === 0) {
       await this.reply(
         message,
         allMatches.length > 0
-          ? `${intro}\n\nNo jobs scored 70%+ for your profile yet. Try *FIND JOBS {skill}* or update your location/roles, or ask your operator to fetch more listings.`
+          ? `${intro}\n\nNo jobs scored 65%+ for your profile yet. Try *FIND JOBS {skill}* or update your location/roles, or ask your operator to fetch more listings.`
           : `${intro}\n\nNo jobs in the system yet. Reply *VIEW JOBS* after your operator fetches listings.`,
       );
       return;
@@ -723,21 +718,15 @@ export class CareerBotService {
       await this.clearReuploadPending(profile.id);
       if (parsed) {
         const updated = await this.profiles.applyParsedResumeUpdate(profile.id, parsed);
-        let jobList = await this.jobs.listActive(message.userId);
-        jobList = this.jobs.relevantJobsForProfile(jobList, updated);
-        const allMatches = this.matching.matchProfileToJobs(updated, jobList);
-        await this.matching.persistMatches(
-          message.userId,
-          updated.id,
-          message.contactId,
-          allMatches,
-        );
-        const matches = this.matching.filterQualityMatches(allMatches);
+        const { allMatches, shownMatches: matches } =
+          await this.matching.matchAndPersistForProfile(message.userId, updated, {
+            tier: 'good',
+          });
         if (matches.length === 0) {
           await this.reply(
             message,
             allMatches.length > 0
-              ? 'Resume updated! ✅ No jobs scored 70%+ for your profile yet. Try *FIND JOBS {skill}* or *VIEW JOBS* after more listings are fetched.'
+              ? 'Resume updated! ✅ No jobs scored 65%+ for your profile yet. Try *FIND JOBS {skill}* or *VIEW JOBS* after more listings are fetched.'
               : 'Resume updated! ✅ No matching jobs in the system yet. Reply *VIEW JOBS* later.',
           );
           return;
@@ -746,7 +735,7 @@ export class CareerBotService {
           message,
           updated,
           matches,
-          `Resume updated! ✅ I found *${matches.length}* strong matches (70%+ fit).`,
+          `Resume updated! ✅ I found *${matches.length}* matches (65%+ fit).`,
         );
       } else {
         await this.reply(
@@ -827,35 +816,27 @@ export class CareerBotService {
     profile: CareerProfile,
     text: string,
   ): Promise<void> {
-    let jobList = await this.jobs.listActive(message.userId);
-
     const keyword = this.extractJobKeyword(text);
-    if (keyword && keyword !== 'all' && keyword.length > 1) {
-      jobList = this.jobs.searchByKeyword(jobList, keyword);
-    } else {
-      jobList = this.jobs.relevantJobsForProfile(jobList, profile);
-    }
+    const searchTerm =
+      keyword && keyword !== 'all' && keyword.length > 1 ? keyword : undefined;
 
-    const allMatches = this.matching.matchProfileToJobs(profile, jobList);
-    await this.matching.persistMatches(
+    const { allMatches, shownMatches: matches } = await this.matching.matchAndPersistForProfile(
       message.userId,
-      profile.id,
-      message.contactId,
-      allMatches,
+      profile,
+      { tier: 'good', keyword: searchTerm },
     );
-    const matches = this.matching.filterQualityMatches(allMatches);
 
     if (matches.length === 0) {
       await this.reply(
         message,
         allMatches.length > 0
-          ? `No jobs scored *70%+* for your profile${keyword && keyword !== 'all' ? ` for "${keyword}"` : ''}. Try another keyword, update your profile, or ask your operator to fetch more listings.`
+          ? `No jobs scored *65%+* for your profile${searchTerm ? ` for "${searchTerm}"` : ''}. Try another keyword, update your profile, or ask your operator to fetch more listings.`
           : 'No matching jobs found. Try *FIND JOBS react* or *FIND JOBS sales*, or ask your operator to fetch live jobs.',
       );
       return;
     }
 
-    const intro = `Found *${matches.length}* jobs with *70%+* match${keyword && keyword !== 'all' ? ` for "${keyword}"` : ''}:`;
+    const intro = `Found *${matches.length}* jobs with *65%+* match${searchTerm ? ` for "${searchTerm}"` : ''}:`;
 
     await this.presentTopJobs(message, profile, matches, intro, 8);
   }
@@ -1040,7 +1021,7 @@ export class CareerBotService {
 
     if (!job) {
       const topMatch = await this.prisma.careerJobMatch.findFirst({
-        where: { profileId: profile.id, score: { gte: CAREER_MIN_MATCH_SCORE } },
+        where: { profileId: profile.id, score: { gte: CAREER_MATCH_TIER_GOOD } },
         orderBy: { score: 'desc' },
         include: { job: true },
       });
@@ -1090,7 +1071,7 @@ export class CareerBotService {
 
     if (!job) {
       const topMatch = await this.prisma.careerJobMatch.findFirst({
-        where: { profileId: profile.id, score: { gte: CAREER_MIN_MATCH_SCORE } },
+        where: { profileId: profile.id, score: { gte: CAREER_MATCH_TIER_GOOD } },
         orderBy: { score: 'desc' },
         include: { job: true },
       });
@@ -1196,11 +1177,11 @@ export class CareerBotService {
       return null;
     }
 
-    const jobList = await this.jobs.listActive(userId);
-    const relevant = this.jobs.relevantJobsForProfile(jobList, profile);
-    const allMatches = this.matching.matchProfileToJobs(profile, relevant);
-    await this.matching.persistMatches(userId, profileId, profile.contactId, allMatches);
-    const quality = this.matching.filterQualityMatches(allMatches);
+    const { allMatches, shownMatches: quality } = await this.matching.matchAndPersistForProfile(
+      userId,
+      profile,
+      { tier: 'good' },
+    );
 
     return {
       matchCount: quality.length,
@@ -1995,7 +1976,7 @@ export class CareerBotService {
     }
 
     const matches = await this.prisma.careerJobMatch.findMany({
-      where: { profileId: profile.id, userId, score: { gte: CAREER_MIN_MATCH_SCORE } },
+      where: { profileId: profile.id, userId, score: { gte: CAREER_MATCH_TIER_GOOD } },
       orderBy: { score: 'desc' },
       take: 10,
       include: { job: true },

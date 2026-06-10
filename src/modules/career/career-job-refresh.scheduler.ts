@@ -3,22 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CareerJobFetcherService } from './services/career-job-fetcher.service';
 import { CareerJobAlertService } from './services/career-job-alert.service';
-
-/**
- * Keywords fetched on each refresh cycle.
- * Covers the most common job categories searched by Indian job seekers.
- * Each keyword runs all enabled sources (Adzuna + JSearch when configured).
- */
-const REFRESH_KEYWORDS = [
-  'software developer',
-  'frontend developer',
-  'backend developer',
-  'full stack developer',
-  'data analyst',
-  'digital marketing',
-  'sales executive',
-  'business development',
-];
+import { CareerProfileKeywordsService } from './services/career-profile-keywords.service';
 
 /** How often to refresh (ms). Default 6 hours. */
 const REFRESH_INTERVAL_MS = 6 * 60 * 60 * 1000;
@@ -39,6 +24,7 @@ export class CareerJobRefreshScheduler implements OnModuleInit {
     private readonly prisma: PrismaService,
     private readonly fetcher: CareerJobFetcherService,
     private readonly alerts: CareerJobAlertService,
+    private readonly profileKeywords: CareerProfileKeywordsService,
   ) {}
 
   onModuleInit(): void {
@@ -47,8 +33,6 @@ export class CareerJobRefreshScheduler implements OnModuleInit {
       return;
     }
 
-    // Per-tenant job sources are configured in Settings → CareerAI; run() skips tenants without keys.
-    // First run after startup delay, then every REFRESH_INTERVAL_MS.
     setTimeout(() => {
       void this.run();
       setInterval(() => void this.run(), REFRESH_INTERVAL_MS);
@@ -59,10 +43,6 @@ export class CareerJobRefreshScheduler implements OnModuleInit {
     );
   }
 
-  /**
-   * Portal manual refresh — returns immediately so nginx does not 504.
-   * Work continues in-process (1–3 min for all keywords × sources).
-   */
   startForUser(userId: number): { status: 'started' | 'already_running'; message: string } {
     if (this.activeUserRefreshes.has(userId)) {
       return {
@@ -88,21 +68,22 @@ export class CareerJobRefreshScheduler implements OnModuleInit {
     };
   }
 
-  /** Refresh jobs for a single tenant. */
   async runForUser(userId: number): Promise<{
     expired: number;
     fetched: number;
     bySource: Record<string, number>;
+    keywords: string[];
   }> {
     this.logger.log(`Job refresh starting for userId=${userId}…`);
     const refreshStartedAt = new Date();
     const expired = await this.fetcher.expireStaleJobs(30);
+    const keywords = await this.profileKeywords.buildFetchKeywordsForUser(userId);
 
     const bySource: Record<string, number> = {};
     let fetched = 0;
 
-    for (let i = 0; i < REFRESH_KEYWORDS.length; i += KEYWORD_BATCH_SIZE) {
-      const batch = REFRESH_KEYWORDS.slice(i, i + KEYWORD_BATCH_SIZE);
+    for (let i = 0; i < keywords.length; i += KEYWORD_BATCH_SIZE) {
+      const batch = keywords.slice(i, i + KEYWORD_BATCH_SIZE);
       const batchResults = await Promise.all(
         batch.map((keyword) =>
           this.fetcher.fetchAndStoreDetailed(userId, keyword, 'india', 1),
@@ -117,7 +98,7 @@ export class CareerJobRefreshScheduler implements OnModuleInit {
     }
 
     this.logger.log(
-      `Job refresh complete userId=${userId} — expired=${expired} fetched=${fetched} (${Object.entries(bySource)
+      `Job refresh complete userId=${userId} — expired=${expired} fetched=${fetched} keywords=${keywords.length} (${Object.entries(bySource)
         .map(([k, v]) => `${k}:${v}`)
         .join(', ')})`,
     );
@@ -125,11 +106,14 @@ export class CareerJobRefreshScheduler implements OnModuleInit {
     const newJobIds = await this.fetcher.findJobsCreatedSince(userId, refreshStartedAt);
     await this.alerts.processNewJobsForUser(userId, newJobIds);
 
-    return { expired, fetched, bySource };
+    return { expired, fetched, bySource, keywords };
   }
 
-  /** Scheduled refresh for all career_ai tenants. */
-  async run(): Promise<{ expired: number; fetched: number; bySource: Record<string, number> }> {
+  async run(): Promise<{
+    expired: number;
+    fetched: number;
+    bySource: Record<string, number>;
+  }> {
     this.logger.log('Job refresh cycle starting…');
 
     const expired = await this.fetcher.expireStaleJobs(30);
@@ -144,8 +128,10 @@ export class CareerJobRefreshScheduler implements OnModuleInit {
 
     for (const { userId } of settings) {
       const refreshStartedAt = new Date();
-      for (let i = 0; i < REFRESH_KEYWORDS.length; i += KEYWORD_BATCH_SIZE) {
-        const batch = REFRESH_KEYWORDS.slice(i, i + KEYWORD_BATCH_SIZE);
+      const keywords = await this.profileKeywords.buildFetchKeywordsForUser(userId);
+
+      for (let i = 0; i < keywords.length; i += KEYWORD_BATCH_SIZE) {
+        const batch = keywords.slice(i, i + KEYWORD_BATCH_SIZE);
         const batchResults = await Promise.all(
           batch.map((keyword) =>
             this.fetcher.fetchAndStoreDetailed(userId, keyword, 'india', 1),

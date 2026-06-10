@@ -1,7 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { CareerMatchingService, formatMatchScoreLabel } from './career-matching.service';
-import { CareerJobService } from './career-job.service';
 import { buildJobActionButtons } from '../career.constants';
 import {
   buildProfileDataPatch,
@@ -26,7 +25,6 @@ export class CareerDigestService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly matching: CareerMatchingService,
-    private readonly jobs: CareerJobService,
     private readonly channels: CareerAlertChannelService,
     private readonly seekerBilling: CareerSeekerBillingService,
   ) {}
@@ -70,15 +68,11 @@ export class CareerDigestService {
     }
 
     try {
-      const jobList = await this.jobs.listActive(profile.userId);
-      const allMatches = this.matching.matchProfileToJobs(profile, jobList);
-      await this.matching.persistMatches(
+      const { allMatches, shownMatches: matches } = await this.matching.matchAndPersistForProfile(
         profile.userId,
-        profile.id,
-        profile.contactId,
-        allMatches,
+        profile,
+        { tier: 'strong' },
       );
-      const matches = this.matching.filterQualityMatches(allMatches);
 
       if (matches.length === 0) {
         await this.prisma.careerNotification.create({
@@ -110,7 +104,7 @@ export class CareerDigestService {
         `Hi ${name} 👋 Your daily job matches are ready!`,
         '',
         showingNew
-          ? `*${unseenMatches.length} new job${unseenMatches.length === 1 ? '' : 's'}* match your profile (70%+ fit).`
+          ? `*${unseenMatches.length} new job${unseenMatches.length === 1 ? '' : 's'}* match your profile (80%+ fit).`
           : `*${matches.length} jobs* match your profile today.`,
         '',
         showingNew ? '*New Matches:*' : '*Top Matches:*',

@@ -27,7 +27,7 @@ type AlertOutcome = 'sent' | 'skipped' | 'failed';
 
 /**
  * Instant alerts when a job refresh ingests new listings that match
- * a seeker profile at 70%+ (CareerAI.md Step 10 — Smart Job Alerts).
+ * a seeker profile at 80%+ (CareerAI.md Step 10 — Smart Job Alerts).
  */
 @Injectable()
 export class CareerJobAlertService {
@@ -111,7 +111,8 @@ export class CareerJobAlertService {
     }
 
     try {
-      const allMatches = this.matching.matchProfileToJobs(profile, candidateJobs);
+      const relevantJobs = this.jobs.relevantJobsForProfile(candidateJobs, profile);
+      const allMatches = this.matching.matchProfileToJobs(profile, relevantJobs);
       await this.matching.persistMatches(
         profile.userId,
         profile.id,
@@ -120,7 +121,7 @@ export class CareerJobAlertService {
       );
 
       const matches = this.matching
-        .filterQualityMatches(allMatches)
+        .filterMatchesByTier(allMatches, 'strong')
         .filter((m) => !notifiedSet.has(m.job.id));
 
       if (matches.length === 0) {
@@ -210,7 +211,7 @@ export class CareerJobAlertService {
       '',
       totalNewMatches === 1
         ? 'A new opening matches your profile:'
-        : `*${totalNewMatches} new jobs* match your profile (70%+ fit).`,
+        : `*${totalNewMatches} new jobs* match your profile (80%+ fit).`,
       '',
     ];
 

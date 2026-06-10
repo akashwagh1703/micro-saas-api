@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { CareerProfile, Contact, Message } from '@prisma/client';
 import { PrismaService } from '../../../prisma/prisma.service';
+import { CAREER_MATCH_TIER_GOOD } from './career-matching.service';
 import { InboxService } from '../../inbox/inbox.service';
 import {
   CAREER_BOT_MESSAGE_SOURCE,
@@ -443,7 +444,7 @@ export class CareerInterviewService {
     }
 
     const matches = await this.prisma.careerJobMatch.findMany({
-      where: { profileId: profile.id, userId, score: { gte: 70 } },
+      where: { profileId: profile.id, userId, score: { gte: CAREER_MATCH_TIER_GOOD } },
       orderBy: { score: 'desc' },
       take: 10,
       include: { job: true },

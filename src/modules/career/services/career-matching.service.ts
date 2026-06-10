@@ -1,12 +1,48 @@
 import { Injectable } from '@nestjs/common';
 import { CareerJob, CareerProfile } from '@prisma/client';
 import { PrismaService } from '../../../prisma/prisma.service';
+import { normalizeSkillToken } from '../job-sources/job-source.utils';
+import { CareerJobService } from './career-job.service';
 
 export interface JobMatchResult {
   job: CareerJob;
   score: number;
   matchFactors: string[];
   missingSkills: string[];
+}
+
+export type MatchTier = 'strong' | 'good' | 'stretch';
+
+/** Instant alerts & daily digest (high-confidence only). */
+export const CAREER_MATCH_TIER_STRONG = 80;
+
+/** VIEW JOBS, FIND JOBS, onboarding. */
+export const CAREER_MATCH_TIER_GOOD = 65;
+
+/** Optional explore band — not pushed via alerts. */
+export const CAREER_MATCH_TIER_STRETCH = 50;
+
+export function minScoreForTier(tier: MatchTier): number {
+  switch (tier) {
+    case 'strong':
+      return CAREER_MATCH_TIER_STRONG;
+    case 'good':
+      return CAREER_MATCH_TIER_GOOD;
+    case 'stretch':
+      return CAREER_MATCH_TIER_STRETCH;
+  }
+}
+
+export interface MatchPipelineOptions {
+  /** Keyword search instead of profile-based pre-filter. */
+  keyword?: string;
+  /** Minimum score to return in `shown` (default: good tier). */
+  tier?: MatchTier;
+}
+
+export interface MatchPipelineResult {
+  allMatches: JobMatchResult[];
+  shownMatches: JobMatchResult[];
 }
 
 /**
@@ -26,14 +62,15 @@ const W_LOCATION   = 15;
 const W_ROLE       = 5;
 const W_NOTICE     = 5;
 
-/** Minimum score shown to job seekers (VIEW JOBS, digest, APPLY/RESUME lists). */
-export const CAREER_MIN_MATCH_SCORE = 70;
+/** Minimum score shown to job seekers in VIEW JOBS / FIND JOBS. */
+export const CAREER_MIN_MATCH_SCORE = CAREER_MATCH_TIER_GOOD;
 
 /** Human-readable match band aligned with CareerAI.md Step 6. */
 export function formatMatchScoreLabel(score: number): string {
   if (score >= 95) return 'Excellent Match';
-  if (score >= 80) return 'Good Match';
-  if (score >= 60) return 'Partial Match';
+  if (score >= CAREER_MATCH_TIER_STRONG) return 'Strong Match';
+  if (score >= CAREER_MATCH_TIER_GOOD) return 'Good Match';
+  if (score >= CAREER_MATCH_TIER_STRETCH) return 'Partial Match';
   return 'Low Match';
 }
 
@@ -51,10 +88,45 @@ const CITY_ALIASES: Record<string, string[]> = {
 
 @Injectable()
 export class CareerMatchingService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly jobs: CareerJobService,
+  ) {}
 
+  filterMatchesByTier(results: JobMatchResult[], tier: MatchTier = 'good'): JobMatchResult[] {
+    const min = minScoreForTier(tier);
+    return results.filter((r) => r.score >= min);
+  }
+
+  /** @deprecated Use filterMatchesByTier(results, 'good') */
   filterQualityMatches(results: JobMatchResult[]): JobMatchResult[] {
-    return results.filter((r) => r.score >= CAREER_MIN_MATCH_SCORE);
+    return this.filterMatchesByTier(results, 'good');
+  }
+
+  /**
+   * Unified matching pipeline: pre-filter → score → persist top 100.
+   * Used by bot, digest, alerts, and portal rematch.
+   */
+  async matchAndPersistForProfile(
+    userId: number,
+    profile: CareerProfile,
+    options: MatchPipelineOptions = {},
+  ): Promise<MatchPipelineResult> {
+    const tier = options.tier ?? 'good';
+    let jobList = await this.jobs.listActive(userId);
+
+    const keyword = options.keyword?.trim();
+    if (keyword && keyword.length > 1 && keyword.toLowerCase() !== 'all') {
+      jobList = this.jobs.searchByKeyword(jobList, keyword);
+    } else {
+      jobList = this.jobs.relevantJobsForProfile(jobList, profile);
+    }
+
+    const allMatches = this.matchProfileToJobs(profile, jobList);
+    await this.persistMatches(userId, profile.id, profile.contactId, allMatches);
+    const shownMatches = this.filterMatchesByTier(allMatches, tier);
+
+    return { allMatches, shownMatches };
   }
 
   matchProfileToJobs(profile: CareerProfile, jobs: CareerJob[]): JobMatchResult[] {
@@ -127,12 +199,15 @@ export class CareerMatchingService {
 
         // ── 4. Location (15 pts) ─────────────────────────────────────────────
         const jobCity   = (job.city ?? job.location ?? '').toLowerCase();
-        const jobType   = (job.jobType ?? '').toLowerCase();
-        const isRemote  = jobType.includes('remote') || jobCity.includes('remote');
+        const workMode  = this.getJobWorkMode(job);
+        const isRemote  =
+          workMode === 'remote' ||
+          workMode === 'hybrid' ||
+          jobCity.includes('remote');
 
         if (workPref === 'remote' && isRemote) {
           score += W_LOCATION;
-          matched.push('✓ Remote role');
+          matched.push(workMode === 'hybrid' ? '✓ Hybrid / remote option' : '✓ Remote role');
         } else if (workPref === 'remote' && !isRemote) {
           // Candidate wants remote, job is not.
           missing.push('Remote role required');
@@ -313,9 +388,21 @@ export class CareerMatchingService {
     return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   }
 
+  private getJobWorkMode(job: CareerJob): string {
+    const tags = job.tags as { workMode?: string } | null;
+    if (tags?.workMode && tags.workMode !== 'unknown') {
+      return tags.workMode;
+    }
+    const city = (job.city ?? job.location ?? '').toLowerCase();
+    if (city.includes('remote')) return 'remote';
+    return 'unknown';
+  }
+
   private normalizeSkills(raw: unknown): string[] {
     if (!raw || !Array.isArray(raw)) return [];
-    return raw.map((s) => String(s).toLowerCase().trim()).filter(Boolean);
+    return raw
+      .map((s) => normalizeSkillToken(String(s)))
+      .filter(Boolean);
   }
 
   private normalizeArray(raw: unknown): string[] {
