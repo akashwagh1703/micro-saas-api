@@ -10,6 +10,8 @@ const ENCRYPTED_KEYS = [
   'career_jsearch_rapidapi_key',
   'career_linkedin_jobs_api_key',
   'career_naukri_jobs_api_key',
+  'career_razorpay_key_secret',
+  'career_razorpay_webhook_secret',
 ];
 
 /** Per-user key/value settings, with at-rest encryption for API keys. */

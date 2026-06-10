@@ -5,7 +5,6 @@ import {
   ServiceUnavailableException,
   UnprocessableEntityException,
 } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
 import { CareerProfile } from '@prisma/client';
 import * as crypto from 'crypto';
 import Razorpay from 'razorpay';
@@ -30,11 +29,9 @@ export interface SeekerBillingStatus {
 @Injectable()
 export class CareerSeekerBillingService {
   private readonly logger = new Logger(CareerSeekerBillingService.name);
-  private razorpay: Razorpay | null = null;
 
   constructor(
     private readonly prisma: PrismaService,
-    private readonly config: ConfigService,
     private readonly tenantSettings: CareerTenantSettingsService,
   ) {}
 
@@ -45,31 +42,93 @@ export class CareerSeekerBillingService {
     return ends;
   }
 
-  private getRazorpay(): Razorpay | null {
-    const keyId = this.config.get<string>('RAZORPAY_KEY_ID');
-    const keySecret = this.config.get<string>('RAZORPAY_KEY_SECRET');
-    if (!keyId || !keySecret) {
+  private async getRazorpayForTenant(tenantUserId: number): Promise<Razorpay | null> {
+    const cfg = await this.tenantSettings.getSeekerBillingConfig(tenantUserId);
+    if (!cfg.razorpayKeyId || !cfg.razorpayKeySecret) {
       return null;
     }
-    if (!this.razorpay) {
-      this.razorpay = new Razorpay({ key_id: keyId, key_secret: keySecret });
-    }
-    return this.razorpay;
-  }
-
-  private isPlatformRazorpayReady(): boolean {
-    return !!(
-      this.config.get<string>('RAZORPAY_KEY_ID') &&
-      this.config.get<string>('RAZORPAY_KEY_SECRET')
-    );
+    return new Razorpay({
+      key_id: cfg.razorpayKeyId,
+      key_secret: cfg.razorpayKeySecret,
+    });
   }
 
   private async isRazorpayConfiguredForTenant(tenantUserId: number): Promise<boolean> {
     const cfg = await this.tenantSettings.getSeekerBillingConfig(tenantUserId);
-    return (
-      this.isPlatformRazorpayReady() &&
-      !!(cfg.razorpayPlanMonthly && cfg.razorpayPlanYearly)
-    );
+    return this.tenantSettings.isSeekerRazorpayConfigured(cfg);
+  }
+
+  private async tenantKeySecret(tenantUserId: number): Promise<string | null> {
+    const cfg = await this.tenantSettings.getSeekerBillingConfig(tenantUserId);
+    return cfg.razorpayKeySecret || null;
+  }
+
+  private async tenantKeyId(tenantUserId: number): Promise<string | null> {
+    const cfg = await this.tenantSettings.getSeekerBillingConfig(tenantUserId);
+    return cfg.razorpayKeyId || null;
+  }
+
+  verifyWebhookSignature(body: Buffer | string, signature: string, secret: string): boolean {
+    if (!secret) {
+      return false;
+    }
+    const payload = typeof body === 'string' ? body : body.toString('utf8');
+    const expected = crypto.createHmac('sha256', secret).update(payload).digest('hex');
+    return expected === signature;
+  }
+
+  /** Verify tenant CareerAI webhook and apply subscription events. */
+  async handleWebhookWithSignature(
+    body: Buffer | string,
+    signature: string,
+    payload: Record<string, unknown>,
+  ): Promise<boolean> {
+    const entity =
+      ((payload.payload as Record<string, unknown>)?.subscription as Record<string, unknown>)
+        ?.entity ??
+      ((payload.payload as Record<string, unknown>)?.payment as Record<string, unknown>)?.entity ??
+      {};
+
+    const tenantUserId = await this.resolveTenantFromWebhook(entity as Record<string, unknown>);
+    if (!tenantUserId) {
+      return false;
+    }
+
+    const cfg = await this.tenantSettings.getSeekerBillingConfig(tenantUserId);
+    if (!cfg.razorpayWebhookSecret) {
+      return false;
+    }
+
+    if (!this.verifyWebhookSignature(body, signature, cfg.razorpayWebhookSecret)) {
+      return false;
+    }
+
+    const event = payload.event as string;
+    await this.handleWebhookEvent(event, entity as Record<string, unknown>);
+    return true;
+  }
+
+  private async resolveTenantFromWebhook(entity: Record<string, unknown>): Promise<number | null> {
+    const subscriptionId = entity.id as string | undefined;
+    if (subscriptionId) {
+      const profile = await this.prisma.careerProfile.findFirst({
+        where: { razorpaySubscriptionId: subscriptionId },
+        select: { userId: true },
+      });
+      if (profile) {
+        return profile.userId;
+      }
+    }
+
+    const notes = (entity.notes as Record<string, string>) ?? {};
+    if (notes.product === 'career_seeker' && notes.user_id) {
+      const userId = Number(notes.user_id);
+      if (userId > 0) {
+        return userId;
+      }
+    }
+
+    return null;
   }
 
   async resolveStatus(profile: CareerProfile): Promise<SeekerBillingStatus> {
@@ -188,10 +247,10 @@ export class CareerSeekerBillingService {
       throw new UnprocessableEntityException('CareerAI seeker billing is not enabled for this account.');
     }
 
-    const razorpay = this.getRazorpay();
+    const razorpay = await this.getRazorpayForTenant(tenantUserId);
     if (!razorpay || !(await this.isRazorpayConfiguredForTenant(tenantUserId))) {
       throw new ServiceUnavailableException(
-        'Online payments are not configured. Contact support to subscribe.',
+        'Online payments are not configured. Add Razorpay credentials in Settings → CareerAI.',
       );
     }
 
@@ -250,18 +309,19 @@ export class CareerSeekerBillingService {
 
     return {
       subscription_id: subscription.id,
-      key_id: this.config.get<string>('RAZORPAY_KEY_ID'),
+      key_id: (await this.tenantKeyId(tenantUserId)) ?? '',
       plan,
       amount_inr: plan === 'monthly' ? billingCfg.priceMonthlyInr : billingCfg.priceYearlyInr,
     };
   }
 
-  verifySubscriptionSignature(
+  async verifySubscriptionSignatureAsync(
+    tenantUserId: number,
     paymentId: string,
     subscriptionId: string,
     signature: string,
-  ): boolean {
-    const secret = this.config.get<string>('RAZORPAY_KEY_SECRET');
+  ): Promise<boolean> {
+    const secret = await this.tenantKeySecret(tenantUserId);
     if (!secret) {
       return false;
     }
@@ -279,7 +339,12 @@ export class CareerSeekerBillingService {
     subscriptionId: string,
     signature: string,
   ): Promise<SeekerBillingStatus> {
-    if (!this.verifySubscriptionSignature(paymentId, subscriptionId, signature)) {
+    if (!(await this.verifySubscriptionSignatureAsync(
+      tenantUserId,
+      paymentId,
+      subscriptionId,
+      signature,
+    ))) {
       throw new ForbiddenException('Invalid payment signature.');
     }
 

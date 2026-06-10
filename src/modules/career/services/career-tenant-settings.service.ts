@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { SettingsService } from '../../settings/settings.service';
 import { UpdateCareerSettingsDto } from '../dto/career-settings.dto';
 
@@ -19,6 +20,9 @@ export const CAREER_TENANT_KEYS = {
   SEEKER_PRICE_YEARLY_INR: 'career_seeker_price_yearly_inr',
   RAZORPAY_PLAN_SEEKER_MONTHLY: 'career_razorpay_plan_seeker_monthly',
   RAZORPAY_PLAN_SEEKER_YEARLY: 'career_razorpay_plan_seeker_yearly',
+  RAZORPAY_KEY_ID: 'career_razorpay_key_id',
+  RAZORPAY_KEY_SECRET: 'career_razorpay_key_secret',
+  RAZORPAY_WEBHOOK_SECRET: 'career_razorpay_webhook_secret',
 } as const;
 
 export interface CareerJobSourcesConfig {
@@ -38,6 +42,9 @@ export interface CareerSeekerBillingConfig {
   trialDays: number;
   priceMonthlyInr: number;
   priceYearlyInr: number;
+  razorpayKeyId: string;
+  razorpayKeySecret: string;
+  razorpayWebhookSecret: string;
   razorpayPlanMonthly: string;
   razorpayPlanYearly: string;
 }
@@ -59,8 +66,12 @@ export interface CareerOperatorSettingsResponse {
     trial_days: number;
     price_monthly_inr: number;
     price_yearly_inr: number;
+    razorpay_key_id: string;
+    has_razorpay_key_secret: boolean;
+    has_razorpay_webhook_secret: boolean;
     razorpay_plan_seeker_monthly: string;
     razorpay_plan_seeker_yearly: string;
+    razorpay_webhook_url: string;
     razorpay_configured: boolean;
   };
 }
@@ -81,6 +92,9 @@ const SETTINGS_FIELD_MAP = {
   seeker_price_yearly_inr: CAREER_TENANT_KEYS.SEEKER_PRICE_YEARLY_INR,
   razorpay_plan_seeker_monthly: CAREER_TENANT_KEYS.RAZORPAY_PLAN_SEEKER_MONTHLY,
   razorpay_plan_seeker_yearly: CAREER_TENANT_KEYS.RAZORPAY_PLAN_SEEKER_YEARLY,
+  razorpay_key_id: CAREER_TENANT_KEYS.RAZORPAY_KEY_ID,
+  razorpay_key_secret: CAREER_TENANT_KEYS.RAZORPAY_KEY_SECRET,
+  razorpay_webhook_secret: CAREER_TENANT_KEYS.RAZORPAY_WEBHOOK_SECRET,
 } as const;
 
 type SettingsField = keyof typeof SETTINGS_FIELD_MAP;
@@ -89,7 +103,15 @@ const ALL_KEYS = Object.values(CAREER_TENANT_KEYS);
 
 @Injectable()
 export class CareerTenantSettingsService {
-  constructor(private readonly settings: SettingsService) {}
+  constructor(
+    private readonly settings: SettingsService,
+    private readonly config: ConfigService,
+  ) {}
+
+  getRazorpayWebhookUrl(): string {
+    const appUrl = (this.config.get<string>('APP_URL') ?? 'http://localhost:3000').replace(/\/$/, '');
+    return `${appUrl}/api/webhook/razorpay`;
+  }
 
   async getJobSourcesConfig(userId: number): Promise<CareerJobSourcesConfig> {
     const raw = await this.settings.getMany(userId, [
@@ -128,6 +150,9 @@ export class CareerTenantSettingsService {
       CAREER_TENANT_KEYS.SEEKER_TRIAL_DAYS,
       CAREER_TENANT_KEYS.SEEKER_PRICE_MONTHLY_INR,
       CAREER_TENANT_KEYS.SEEKER_PRICE_YEARLY_INR,
+      CAREER_TENANT_KEYS.RAZORPAY_KEY_ID,
+      CAREER_TENANT_KEYS.RAZORPAY_KEY_SECRET,
+      CAREER_TENANT_KEYS.RAZORPAY_WEBHOOK_SECRET,
       CAREER_TENANT_KEYS.RAZORPAY_PLAN_SEEKER_MONTHLY,
       CAREER_TENANT_KEYS.RAZORPAY_PLAN_SEEKER_YEARLY,
     ]);
@@ -141,9 +166,22 @@ export class CareerTenantSettingsService {
       trialDays: Number.isNaN(trialDays) ? 14 : Math.min(Math.max(trialDays, 1), 90),
       priceMonthlyInr: Number.isNaN(monthly) ? 199 : Math.max(monthly, 1),
       priceYearlyInr: Number.isNaN(yearly) ? 1999 : Math.max(yearly, 1),
+      razorpayKeyId: (raw[CAREER_TENANT_KEYS.RAZORPAY_KEY_ID] ?? '').trim(),
+      razorpayKeySecret: (raw[CAREER_TENANT_KEYS.RAZORPAY_KEY_SECRET] ?? '').trim(),
+      razorpayWebhookSecret: (raw[CAREER_TENANT_KEYS.RAZORPAY_WEBHOOK_SECRET] ?? '').trim(),
       razorpayPlanMonthly: (raw[CAREER_TENANT_KEYS.RAZORPAY_PLAN_SEEKER_MONTHLY] ?? '').trim(),
       razorpayPlanYearly: (raw[CAREER_TENANT_KEYS.RAZORPAY_PLAN_SEEKER_YEARLY] ?? '').trim(),
     };
+  }
+
+  isSeekerRazorpayConfigured(cfg: CareerSeekerBillingConfig): boolean {
+    return !!(
+      cfg.razorpayKeyId &&
+      cfg.razorpayKeySecret &&
+      cfg.razorpayWebhookSecret &&
+      cfg.razorpayPlanMonthly &&
+      cfg.razorpayPlanYearly
+    );
   }
 
   async getOperatorSettingsResponse(userId: number): Promise<CareerOperatorSettingsResponse> {
@@ -168,9 +206,13 @@ export class CareerTenantSettingsService {
         trial_days: billing.trialDays,
         price_monthly_inr: billing.priceMonthlyInr,
         price_yearly_inr: billing.priceYearlyInr,
+        razorpay_key_id: billing.razorpayKeyId,
+        has_razorpay_key_secret: !!billing.razorpayKeySecret,
+        has_razorpay_webhook_secret: !!billing.razorpayWebhookSecret,
         razorpay_plan_seeker_monthly: billing.razorpayPlanMonthly,
         razorpay_plan_seeker_yearly: billing.razorpayPlanYearly,
-        razorpay_configured: !!(billing.razorpayPlanMonthly && billing.razorpayPlanYearly),
+        razorpay_webhook_url: this.getRazorpayWebhookUrl(),
+        razorpay_configured: this.isSeekerRazorpayConfigured(billing),
       },
     };
   }
