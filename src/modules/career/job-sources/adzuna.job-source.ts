@@ -1,8 +1,8 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
 import axios from 'axios';
 import { CareerJobSource, JobSourceStatus, NormalizedJobListing } from './job-source.types';
 import { CareerJobUpsertService } from './career-job-upsert.service';
+import { CareerTenantSettingsService } from '../services/career-tenant-settings.service';
 import {
   formatHttpError,
   formatSalaryInr,
@@ -32,31 +32,26 @@ export class AdzunaJobSource implements CareerJobSource {
   readonly name = 'Adzuna India';
 
   private readonly logger = new Logger(AdzunaJobSource.name);
-  private readonly appId: string;
-  private readonly appKey: string;
-  private readonly enabled: boolean;
 
   constructor(
-    private readonly config: ConfigService,
+    private readonly tenantSettings: CareerTenantSettingsService,
     private readonly upsert: CareerJobUpsertService,
-  ) {
-    this.appId = config.get<string>('ADZUNA_APP_ID') ?? '';
-    this.appKey = config.get<string>('ADZUNA_APP_KEY') ?? '';
-    this.enabled = !!(this.appId && this.appKey);
+  ) {}
+
+  async isEnabled(userId: number): Promise<boolean> {
+    const cfg = await this.tenantSettings.getJobSourcesConfig(userId);
+    return !!(cfg.adzunaAppId && cfg.adzunaAppKey);
   }
 
-  isEnabled(): boolean {
-    return this.enabled;
-  }
-
-  getStatus(): JobSourceStatus {
+  async getStatus(userId: number): Promise<JobSourceStatus> {
+    const enabled = await this.isEnabled(userId);
     return {
       id: this.id,
       name: this.name,
-      enabled: this.enabled,
-      message: this.enabled
+      enabled,
+      message: enabled
         ? 'Live job listings via Adzuna API'
-        : 'Set ADZUNA_APP_ID and ADZUNA_APP_KEY in API env',
+        : 'Add Adzuna App ID & Key in Settings → CareerAI',
     };
   }
 
@@ -66,7 +61,10 @@ export class AdzunaJobSource implements CareerJobSource {
     location = 'india',
     pages = 2,
   ): Promise<number> {
-    if (!this.enabled) return 0;
+    const cfg = await this.tenantSettings.getJobSourcesConfig(userId);
+    if (!cfg.adzunaAppId || !cfg.adzunaAppKey) {
+      return 0;
+    }
 
     let stored = 0;
     let lastError: string | null = null;
@@ -77,8 +75,8 @@ export class AdzunaJobSource implements CareerJobSource {
           `https://api.adzuna.com/v1/api/jobs/in/search/${page}`,
           {
             params: {
-              app_id: this.appId,
-              app_key: this.appKey,
+              app_id: cfg.adzunaAppId,
+              app_key: cfg.adzunaAppKey,
               results_per_page: 20,
               what: keyword,
               where: location,

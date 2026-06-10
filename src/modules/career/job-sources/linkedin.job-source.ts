@@ -1,12 +1,12 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
 import axios from 'axios';
 import { CareerJobSource, JobSourceStatus, NormalizedJobListing } from './job-source.types';
 import { CareerJobUpsertService } from './career-job-upsert.service';
+import { CareerTenantSettingsService } from '../services/career-tenant-settings.service';
 
 /**
- * LinkedIn Jobs adapter — requires a partner/scraper HTTP endpoint (LinkedIn has no public job search API).
- * Set LINKEDIN_JOBS_API_URL + LINKEDIN_JOBS_API_KEY when available.
+ * LinkedIn Jobs adapter — requires a partner/scraper HTTP endpoint.
+ * Configure URL + API key per operator in Settings → CareerAI.
  */
 @Injectable()
 export class LinkedInJobSource implements CareerJobSource {
@@ -14,29 +14,27 @@ export class LinkedInJobSource implements CareerJobSource {
   readonly name = 'LinkedIn Jobs';
 
   private readonly logger = new Logger(LinkedInJobSource.name);
-  private readonly apiUrl: string;
-  private readonly apiKey: string;
 
   constructor(
-    private readonly config: ConfigService,
+    private readonly tenantSettings: CareerTenantSettingsService,
     private readonly upsert: CareerJobUpsertService,
-  ) {
-    this.apiUrl = config.get<string>('LINKEDIN_JOBS_API_URL')?.trim() ?? '';
-    this.apiKey = config.get<string>('LINKEDIN_JOBS_API_KEY')?.trim() ?? '';
+  ) {}
+
+  async isEnabled(userId: number): Promise<boolean> {
+    const cfg = await this.tenantSettings.getJobSourcesConfig(userId);
+    return !!(cfg.linkedinApiUrl && cfg.linkedinApiKey);
   }
 
-  isEnabled(): boolean {
-    return !!(this.apiUrl && this.apiKey);
-  }
-
-  getStatus(): JobSourceStatus {
+  async getStatus(userId: number): Promise<JobSourceStatus> {
+    const cfg = await this.tenantSettings.getJobSourcesConfig(userId);
+    const enabled = !!(cfg.linkedinApiUrl && cfg.linkedinApiKey);
     return {
       id: this.id,
       name: this.name,
-      enabled: this.isEnabled(),
-      message: this.isEnabled()
-        ? `Connected to ${this.apiUrl}`
-        : 'Set LINKEDIN_JOBS_API_URL and LINKEDIN_JOBS_API_KEY (partner/scraper feed)',
+      enabled,
+      message: enabled
+        ? `Connected to ${cfg.linkedinApiUrl}`
+        : 'Add LinkedIn Jobs API URL & key in Settings → CareerAI',
     };
   }
 
@@ -46,12 +44,15 @@ export class LinkedInJobSource implements CareerJobSource {
     location = 'india',
     pages = 1,
   ): Promise<number> {
-    if (!this.isEnabled()) return 0;
+    const cfg = await this.tenantSettings.getJobSourcesConfig(userId);
+    if (!cfg.linkedinApiUrl || !cfg.linkedinApiKey) {
+      return 0;
+    }
 
     try {
-      const { data } = await axios.get<{ jobs?: Record<string, unknown>[] }>(this.apiUrl, {
+      const { data } = await axios.get<{ jobs?: Record<string, unknown>[] }>(cfg.linkedinApiUrl, {
         params: { keyword, location, pages },
-        headers: { Authorization: `Bearer ${this.apiKey}` },
+        headers: { Authorization: `Bearer ${cfg.linkedinApiKey}` },
         timeout: 20_000,
       });
 
@@ -71,24 +72,23 @@ export class LinkedInJobSource implements CareerJobSource {
       return stored;
     } catch (e: any) {
       this.logger.warn(`LinkedIn fetch failed: ${e.message}`);
-      return 0;
+      throw e;
     }
   }
 
   private normalize(raw: Record<string, unknown>): NormalizedJobListing | null {
     const id = String(raw.id ?? raw.job_id ?? '').trim();
-    const title = String(raw.title ?? '').trim();
+    const title = String(raw.title ?? raw.job_title ?? '').trim();
     const company = String(raw.company ?? raw.company_name ?? '').trim();
     if (!id || !title || !company) return null;
 
     return {
-      externalId: `linkedin_${id}`,
+      externalId: id,
       title,
       company,
       location: raw.location ? String(raw.location) : null,
       description: raw.description ? String(raw.description) : null,
-      applyUrl: raw.apply_url ? String(raw.apply_url) : raw.url ? String(raw.url) : null,
-      tags: ['linkedin'],
+      applyUrl: raw.apply_url ? String(raw.apply_url) : null,
     };
   }
 }

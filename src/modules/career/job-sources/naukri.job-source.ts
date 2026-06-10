@@ -1,14 +1,12 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
 import axios from 'axios';
 import { CareerJobSource, JobSourceStatus, NormalizedJobListing } from './job-source.types';
 import { CareerJobUpsertService } from './career-job-upsert.service';
+import { CareerTenantSettingsService } from '../services/career-tenant-settings.service';
 
 /**
  * Naukri adapter — calls a configurable HTTP JSON API (your scraper, partner feed, or RapidAPI proxy).
- * Set NAUKRI_JOBS_API_URL + NAUKRI_JOBS_API_KEY when you have an integration endpoint.
- *
- * Expected response shape: { jobs: Array<{ id, title, company, location?, description?, apply_url?, salary_text? }> }
+ * Configure URL + API key per operator in Settings → CareerAI.
  */
 @Injectable()
 export class NaukriJobSource implements CareerJobSource {
@@ -16,29 +14,27 @@ export class NaukriJobSource implements CareerJobSource {
   readonly name = 'Naukri';
 
   private readonly logger = new Logger(NaukriJobSource.name);
-  private readonly apiUrl: string;
-  private readonly apiKey: string;
 
   constructor(
-    private readonly config: ConfigService,
+    private readonly tenantSettings: CareerTenantSettingsService,
     private readonly upsert: CareerJobUpsertService,
-  ) {
-    this.apiUrl = config.get<string>('NAUKRI_JOBS_API_URL')?.trim() ?? '';
-    this.apiKey = config.get<string>('NAUKRI_JOBS_API_KEY')?.trim() ?? '';
+  ) {}
+
+  async isEnabled(userId: number): Promise<boolean> {
+    const cfg = await this.tenantSettings.getJobSourcesConfig(userId);
+    return !!(cfg.naukriApiUrl && cfg.naukriApiKey);
   }
 
-  isEnabled(): boolean {
-    return !!(this.apiUrl && this.apiKey);
-  }
-
-  getStatus(): JobSourceStatus {
+  async getStatus(userId: number): Promise<JobSourceStatus> {
+    const cfg = await this.tenantSettings.getJobSourcesConfig(userId);
+    const enabled = !!(cfg.naukriApiUrl && cfg.naukriApiKey);
     return {
       id: this.id,
       name: this.name,
-      enabled: this.isEnabled(),
-      message: this.isEnabled()
-        ? `Connected to ${this.apiUrl}`
-        : 'Set NAUKRI_JOBS_API_URL and NAUKRI_JOBS_API_KEY for Naukri listings',
+      enabled,
+      message: enabled
+        ? `Connected to ${cfg.naukriApiUrl}`
+        : 'Add Naukri API URL & key in Settings → CareerAI',
     };
   }
 
@@ -48,12 +44,15 @@ export class NaukriJobSource implements CareerJobSource {
     location = 'india',
     pages = 1,
   ): Promise<number> {
-    if (!this.isEnabled()) return 0;
+    const cfg = await this.tenantSettings.getJobSourcesConfig(userId);
+    if (!cfg.naukriApiUrl || !cfg.naukriApiKey) {
+      return 0;
+    }
 
     try {
-      const { data } = await axios.get<{ jobs?: Record<string, unknown>[] }>(this.apiUrl, {
+      const { data } = await axios.get<{ jobs?: Record<string, unknown>[] }>(cfg.naukriApiUrl, {
         params: { keyword, location, pages },
-        headers: { Authorization: `Bearer ${this.apiKey}` },
+        headers: { Authorization: `Bearer ${cfg.naukriApiKey}` },
         timeout: 20_000,
       });
 
@@ -73,25 +72,24 @@ export class NaukriJobSource implements CareerJobSource {
       return stored;
     } catch (e: any) {
       this.logger.warn(`Naukri fetch failed: ${e.message}`);
-      return 0;
+      throw e;
     }
   }
 
   private normalize(raw: Record<string, unknown>): NormalizedJobListing | null {
     const id = String(raw.id ?? raw.job_id ?? '').trim();
-    const title = String(raw.title ?? '').trim();
+    const title = String(raw.title ?? raw.job_title ?? '').trim();
     const company = String(raw.company ?? raw.company_name ?? '').trim();
     if (!id || !title || !company) return null;
 
     return {
-      externalId: `naukri_${id}`,
+      externalId: id,
       title,
       company,
       location: raw.location ? String(raw.location) : null,
       description: raw.description ? String(raw.description) : null,
-      applyUrl: raw.apply_url ? String(raw.apply_url) : raw.url ? String(raw.url) : null,
       salaryText: raw.salary_text ? String(raw.salary_text) : null,
-      tags: ['naukri'],
+      applyUrl: raw.apply_url ? String(raw.apply_url) : null,
     };
   }
 }

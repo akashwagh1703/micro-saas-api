@@ -12,7 +12,7 @@ export interface FetchJobsResult {
 }
 
 /**
- * Orchestrates job fetching across Adzuna, JSearch, Naukri, LinkedIn (and future sources).
+ * Orchestrates job fetching across Adzuna, JSearch, Naukri, LinkedIn (per-tenant credentials).
  */
 @Injectable()
 export class CareerJobFetcherService {
@@ -23,12 +23,12 @@ export class CareerJobFetcherService {
     private readonly registry: CareerJobSourceRegistry,
   ) {}
 
-  isEnabled(): boolean {
-    return this.registry.anyEnabled();
+  async isEnabled(userId: number): Promise<boolean> {
+    return this.registry.anyEnabled(userId);
   }
 
-  listSources(): JobSourceStatus[] {
-    return this.registry.statuses();
+  async listSources(userId: number): Promise<JobSourceStatus[]> {
+    return this.registry.statuses(userId);
   }
 
   async fetchAndStore(
@@ -49,9 +49,13 @@ export class CareerJobFetcherService {
     pages = 2,
     sourceId?: string,
   ): Promise<FetchJobsResult> {
-    const sources = sourceId
-      ? [this.registry.get(sourceId)].filter((s): s is NonNullable<typeof s> => !!s?.isEnabled())
-      : this.registry.enabled();
+    let sources = await this.registry.enabled(userId);
+
+    if (sourceId) {
+      const one = this.registry.get(sourceId);
+      sources =
+        one && (await one.isEnabled(userId)) ? [one] : [];
+    }
 
     const bySource: Record<string, number> = {};
     const errors: Record<string, string> = {};
@@ -79,17 +83,8 @@ export class CareerJobFetcherService {
       const message =
         outcome.reason instanceof Error ? outcome.reason.message : String(outcome.reason);
       errors[source.id] = message;
-      bySource[source.id] = 0;
-      this.logger.error(
-        `Job source "${source.id}" failed for userId=${userId} keyword="${keyword}": ${message}`,
-      );
+      this.logger.warn(`Source ${source.id} failed for userId=${userId}: ${message}`);
     }
-
-    this.logger.log(
-      `Fetched ${total} jobs for userId=${userId} keyword="${keyword}" — ${sources
-        .map((s) => `${s.id}:${bySource[s.id] ?? 0}`)
-        .join(', ')}`,
-    );
 
     return {
       total,
@@ -99,35 +94,32 @@ export class CareerJobFetcherService {
     };
   }
 
-  /** Job rows created during a refresh/fetch window (for instant match alerts). */
+  async expireStaleJobs(days: number): Promise<number> {
+    const cutoff = new Date();
+    cutoff.setDate(cutoff.getDate() - days);
+
+    const result = await this.prisma.careerJob.updateMany({
+      where: {
+        isActive: true,
+        source: { in: [...EXTERNAL_JOB_SOURCES] },
+        updatedAt: { lt: cutoff },
+      },
+      data: { isActive: false },
+    });
+
+    return result.count;
+  }
+
   async findJobsCreatedSince(userId: number, since: Date): Promise<number[]> {
     const rows = await this.prisma.careerJob.findMany({
       where: {
         userId,
         isActive: true,
         createdAt: { gte: since },
+        source: { in: [...EXTERNAL_JOB_SOURCES] },
       },
       select: { id: true },
     });
     return rows.map((r) => r.id);
-  }
-
-  async expireStaleJobs(olderThanDays = 30): Promise<number> {
-    const cutoff = new Date();
-    cutoff.setDate(cutoff.getDate() - olderThanDays);
-
-    const result = await this.prisma.careerJob.updateMany({
-      where: {
-        source: { in: [...EXTERNAL_JOB_SOURCES] },
-        isActive: true,
-        createdAt: { lt: cutoff },
-      },
-      data: { isActive: false },
-    });
-
-    if (result.count > 0) {
-      this.logger.log(`Expired ${result.count} stale external jobs`);
-    }
-    return result.count;
   }
 }

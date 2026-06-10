@@ -1,12 +1,16 @@
 import { Controller, Headers, Logger, Post, Req, Res } from '@nestjs/common';
 import { Request, Response } from 'express';
 import { BillingService } from './billing.service';
+import { CareerSeekerBillingService } from '../career/services/career-seeker-billing.service';
 
 @Controller('webhook/razorpay')
 export class BillingWebhookController {
   private readonly logger = new Logger(BillingWebhookController.name);
 
-  constructor(private readonly billing: BillingService) {}
+  constructor(
+    private readonly billing: BillingService,
+    private readonly seekerBilling: CareerSeekerBillingService,
+  ) {}
 
   @Post()
   async receive(
@@ -28,7 +32,10 @@ export class BillingWebhookController {
     const entity = payload.payload?.subscription?.entity ?? payload.payload?.payment?.entity ?? {};
 
     try {
-      await this.billing.handleWebhookEvent(event, entity);
+      const handledPlatform = await this.billing.handleWebhookEvent(event, entity);
+      if (!handledPlatform) {
+        await this.seekerBilling.handleWebhookEvent(event, entity);
+      }
       res.status(200).json({ ok: true });
     } catch (err) {
       this.logger.error('Webhook handling failed', err);

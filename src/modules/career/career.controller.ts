@@ -44,6 +44,8 @@ import { readGuidanceHistory } from './career-guidance-state.util';
 import { readAlertPreferences, mergeAlertPreferencesPatch } from './career-alert-preferences.util';
 import { CareerGuidanceService } from './services/career-guidance.service';
 import { CareerPortalShareService } from './services/career-portal-share.service';
+import { CareerTenantSettingsService } from './services/career-tenant-settings.service';
+import { UpdateCareerSettingsDto } from './dto/career-settings.dto';
 import { CAREER_APPLICATION_STATUSES } from './career.constants';
 import { IsArray, IsBoolean, IsIn, IsOptional, IsString } from 'class-validator';
 
@@ -171,7 +173,22 @@ export class CareerController {
     private readonly pdf: CareerPdfService,
     private readonly guidance: CareerGuidanceService,
     private readonly portalShare: CareerPortalShareService,
+    private readonly careerSettings: CareerTenantSettingsService,
   ) {}
+
+  @Get('settings')
+  async getSettings(@CurrentUser('id') userId: number) {
+    return this.careerSettings.getOperatorSettingsResponse(userId);
+  }
+
+  @Patch('settings')
+  async updateSettings(
+    @CurrentUser('id') userId: number,
+    @Body() dto: UpdateCareerSettingsDto,
+  ) {
+    await this.careerSettings.saveOperatorSettings(userId, dto);
+    return this.careerSettings.getOperatorSettingsResponse(userId);
+  }
 
   @Get('storage/status')
   async storageStatus() {
@@ -223,8 +240,8 @@ export class CareerController {
   }
 
   @Get('job-sources')
-  listJobSources() {
-    return { sources: this.fetcher.listSources() };
+  async listJobSources(@CurrentUser('id') userId: number) {
+    return { sources: await this.fetcher.listSources(userId) };
   }
 
   @Get('profiles')
@@ -537,11 +554,11 @@ export class CareerController {
     @Body() dto: FetchJobsDto,
     @Query('source') source?: string,
   ) {
-    const statuses = this.fetcher.listSources();
-    if (!this.fetcher.isEnabled()) {
+    const statuses = await this.fetcher.listSources(userId);
+    if (!(await this.fetcher.isEnabled(userId))) {
       return {
         message:
-          'No job sources configured. Set ADZUNA_APP_ID/KEY and/or JSEARCH_RAPIDAPI_KEY in API env.',
+          'No job sources configured. Add Adzuna and/or JSearch keys in Settings → CareerAI.',
         count: 0,
         by_source: {},
         sources: statuses,
@@ -586,10 +603,10 @@ export class CareerController {
   @Post('jobs/refresh')
   @HttpCode(202)
   async refreshJobs(@CurrentUser('id') userId: number) {
-    if (!this.fetcher.isEnabled()) {
+    if (!(await this.fetcher.isEnabled(userId))) {
       return {
         status: 'unconfigured',
-        message: 'Job fetcher not configured. Set ADZUNA_APP_ID/KEY and/or JSEARCH_RAPIDAPI_KEY.',
+        message: 'Job fetcher not configured. Add keys in Settings → CareerAI.',
         expired: 0,
         fetched: 0,
         by_source: {},

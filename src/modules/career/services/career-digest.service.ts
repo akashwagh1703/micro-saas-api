@@ -9,6 +9,7 @@ import {
   readAlertState,
 } from '../career-alert-state.util';
 import { CareerAlertChannelService } from './career-alert-channel.service';
+import { CareerSeekerBillingService } from './career-seeker-billing.service';
 
 export interface DigestBatchResult {
   sent: number;
@@ -27,6 +28,7 @@ export class CareerDigestService {
     private readonly matching: CareerMatchingService,
     private readonly jobs: CareerJobService,
     private readonly channels: CareerAlertChannelService,
+    private readonly seekerBilling: CareerSeekerBillingService,
   ) {}
 
   /**
@@ -44,6 +46,11 @@ export class CareerDigestService {
 
     if (profile.digestOptOut) {
       this.logger.debug(`Digest skipped — profile ${profileId} opted out`);
+      return 'skipped';
+    }
+
+    if (!(await this.seekerBilling.hasAccess(profile))) {
+      this.logger.debug(`Digest skipped — profile ${profileId} subscription inactive`);
       return 'skipped';
     }
 

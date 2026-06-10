@@ -24,6 +24,8 @@ import { CareerEmailService } from './services/career-email.service';
 import { CareerAlertChannelService } from './services/career-alert-channel.service';
 import { CareerPortalShareService } from './services/career-portal-share.service';
 import { CareerPortalService } from './services/career-portal.service';
+import { CareerSeekerBillingService } from './services/career-seeker-billing.service';
+import { CareerTenantSettingsService } from './services/career-tenant-settings.service';
 import { CareerDigestScheduler } from './career-digest.scheduler';
 import { CareerPgBossScheduler } from './career-pgboss.scheduler';
 import { CareerAiUsageService } from './services/career-ai-usage.service';
@@ -64,6 +66,8 @@ import { CareerResumeBuilderService } from './services/career-resume-builder.ser
     CareerAlertChannelService,
     CareerPortalShareService,
     CareerPortalService,
+    CareerSeekerBillingService,
+    CareerTenantSettingsService,
     CareerDigestScheduler,
     CareerPgBossScheduler,
     CareerAiUsageService,
@@ -81,6 +85,12 @@ import { CareerResumeBuilderService } from './services/career-resume-builder.ser
     CareerPdfService,
     CareerResumeBuilderService,
   ],
-  exports: [CareerIncomingHandler, CareerDigestService, CareerJobAlertService, CareerBotService],
+  exports: [
+    CareerIncomingHandler,
+    CareerDigestService,
+    CareerJobAlertService,
+    CareerBotService,
+    CareerSeekerBillingService,
+  ],
 })
 export class CareerModule {}

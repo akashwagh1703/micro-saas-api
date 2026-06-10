@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { CareerProfile, Contact, Prisma } from '@prisma/client';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { ParsedCareerProfile } from '../career-parsed-profile.types';
+import { CareerSeekerBillingService } from './career-seeker-billing.service';
 
 const ONBOARDING_FIELD_ORDER: Array<{
   step: string;
@@ -19,7 +20,10 @@ const ONBOARDING_FIELD_ORDER: Array<{
 
 @Injectable()
 export class CareerProfileService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly seekerBilling: CareerSeekerBillingService,
+  ) {}
 
   async getOrCreate(userId: number, contact: Contact): Promise<CareerProfile> {
     const existing = await this.prisma.careerProfile.findUnique({
@@ -35,6 +39,8 @@ export class CareerProfileService {
         phone: contact.phone,
         fullName: contact.name,
         onboardingStep: 'welcome',
+        trialEndsAt: await this.seekerBilling.trialEndsAtForNewProfile(userId),
+        subscriptionStatus: 'trial',
       },
     });
   }

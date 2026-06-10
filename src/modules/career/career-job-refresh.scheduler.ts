@@ -47,11 +47,7 @@ export class CareerJobRefreshScheduler implements OnModuleInit {
       return;
     }
 
-    if (!this.fetcher.isEnabled()) {
-      this.logger.log('Job refresh scheduler inactive — no job sources configured');
-      return;
-    }
-
+    // Per-tenant job sources are configured in Settings → CareerAI; run() skips tenants without keys.
     // First run after startup delay, then every REFRESH_INTERVAL_MS.
     setTimeout(() => {
       void this.run();

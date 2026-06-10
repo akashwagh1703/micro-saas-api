@@ -68,6 +68,8 @@ export const CAREER_COMMANDS = {
   ALERT_EMAIL_ON: ['alert email on', 'email alerts on', 'enable email alerts'],
   ALERT_EMAIL_OFF: ['alert email off', 'email alerts off', 'disable email alerts'],
   PORTAL_LINK: ['portal link', 'my portal', 'candidate portal', 'web portal'],
+  SUBSCRIBE: ['subscribe', 'pay now', 'upgrade', 'buy plan', 'get subscription'],
+  MY_PLAN: ['my plan', 'plan status', 'subscription', 'subscription status'],
   SCHEDULE_INTERVIEW: ['schedule interview', 'book interview', 'interview slot'],
 } as const;
 

@@ -309,7 +309,7 @@ export class BillingService {
     return expected === signature;
   }
 
-  async handleWebhookEvent(event: string, payload: Record<string, unknown>) {
+  async handleWebhookEvent(event: string, payload: Record<string, unknown>): Promise<boolean> {
     this.logger.log(`Razorpay webhook: ${event}`);
 
     const entity = (payload?.entity as Record<string, unknown>) ?? payload;
@@ -321,7 +321,7 @@ export class BillingService {
 
     if (!subscriptionId) {
       this.logger.warn('Webhook missing subscription id');
-      return;
+      return false;
     }
 
     const user = await this.prisma.user.findFirst({
@@ -333,13 +333,14 @@ export class BillingService {
       const userId = notes.user_id ? Number(notes.user_id) : null;
       if (!userId) {
         this.logger.warn(`No user for subscription ${subscriptionId}`);
-        return;
+        return false;
       }
       await this.applySubscriptionEvent(userId, event, entity, subscriptionId);
-      return;
+      return true;
     }
 
     await this.applySubscriptionEvent(user.id, event, entity, subscriptionId);
+    return true;
   }
 
   private async applySubscriptionEvent(

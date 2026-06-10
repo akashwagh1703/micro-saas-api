@@ -4,12 +4,14 @@ import { readAlertPreferences } from '../career-alert-preferences.util';
 import { readGuidanceHistory } from '../career-guidance-state.util';
 import { readInterviewHistory } from '../career-interview-state.util';
 import { CareerPortalShareService } from './career-portal-share.service';
+import { CareerSeekerBillingService } from './career-seeker-billing.service';
 
 @Injectable()
 export class CareerPortalService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly portalShare: CareerPortalShareService,
+    private readonly seekerBilling: CareerSeekerBillingService,
   ) {}
 
   async getPortalData(token: string) {
@@ -98,6 +100,7 @@ export class CareerPortalService {
       interview_sessions: readInterviewHistory(profile.onboardingData),
       guidance_history: readGuidanceHistory(profile.onboardingData).slice(0, 5),
       portal_expires_at: new Date(payload.exp).toISOString(),
+      billing: await this.seekerBilling.resolveStatus(profile),
     };
   }
 }

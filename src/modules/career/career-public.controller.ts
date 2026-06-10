@@ -1,7 +1,9 @@
 import {
+  Body,
   Controller,
   Get,
   NotFoundException,
+  Post,
   Query,
   StreamableFile,
 } from '@nestjs/common';
@@ -20,6 +22,9 @@ import {
 } from './career-document.util';
 
 import { CareerPortalService } from './services/career-portal.service';
+import { CareerSeekerBillingService } from './services/career-seeker-billing.service';
+import { CareerPortalShareService } from './services/career-portal-share.service';
+import { SeekerSubscribeDto, SeekerVerifySubscriptionDto } from './dto/career-seeker-billing.dto';
 
 /** Public document downloads and candidate portal (signed token — no login). */
 @Controller('career/public')
@@ -31,6 +36,8 @@ export class CareerPublicController {
     private readonly docx: CareerDocxService,
     private readonly pdf: CareerPdfService,
     private readonly portalService: CareerPortalService,
+    private readonly seekerBilling: CareerSeekerBillingService,
+    private readonly portalShare: CareerPortalShareService,
   ) {}
 
   @Get('portal')
@@ -39,6 +46,37 @@ export class CareerPublicController {
       throw new NotFoundException('Invalid or expired link');
     }
     return this.portalService.getPortalData(token);
+  }
+
+  @Get('billing/status')
+  async billingStatus(@Query('token') token?: string) {
+    const payload = this.requirePortalToken(token);
+    const profile = await this.prisma.careerProfile.findFirst({
+      where: { id: payload.profileId, userId: payload.userId },
+    });
+    if (!profile) {
+      throw new NotFoundException('Profile not found');
+    }
+    return this.seekerBilling.resolveStatus(profile);
+  }
+
+  @Post('billing/subscribe')
+  async billingSubscribe(@Body() dto: SeekerSubscribeDto) {
+    const payload = this.requirePortalToken(dto.token);
+    return this.seekerBilling.createSubscription(payload.profileId, payload.userId, dto.plan);
+  }
+
+  @Post('billing/verify')
+  async billingVerify(@Body() dto: SeekerVerifySubscriptionDto) {
+    const payload = this.requirePortalToken(dto.token);
+    const status = await this.seekerBilling.activateFromCheckout(
+      payload.profileId,
+      payload.userId,
+      dto.razorpay_payment_id,
+      dto.razorpay_subscription_id,
+      dto.razorpay_signature,
+    );
+    return { status };
   }
 
   @Get('download')
@@ -104,6 +142,17 @@ export class CareerPublicController {
     }
 
     throw new NotFoundException('Invalid or expired link');
+  }
+
+  private requirePortalToken(token?: string) {
+    if (!token?.trim()) {
+      throw new NotFoundException('Invalid or expired link');
+    }
+    const payload = this.portalShare.verifyToken(token.trim());
+    if (!payload) {
+      throw new NotFoundException('Invalid or expired link');
+    }
+    return payload;
   }
 
   private async streamGeneratedDocument(

@@ -22,19 +22,23 @@ export class CareerJobSourceRegistry {
     return this.sources;
   }
 
-  enabled(): CareerJobSource[] {
-    return this.sources.filter((s) => s.isEnabled());
+  async enabled(userId: number): Promise<CareerJobSource[]> {
+    const checks = await Promise.all(
+      this.sources.map(async (source) => ((await source.isEnabled(userId)) ? source : null)),
+    );
+    return checks.filter((s): s is CareerJobSource => s !== null);
   }
 
   get(id: string): CareerJobSource | undefined {
     return this.sources.find((s) => s.id === id);
   }
 
-  statuses(): JobSourceStatus[] {
-    return this.sources.map((s) => s.getStatus());
+  async statuses(userId: number): Promise<JobSourceStatus[]> {
+    return Promise.all(this.sources.map((s) => s.getStatus(userId)));
   }
 
-  anyEnabled(): boolean {
-    return this.enabled().length > 0;
+  async anyEnabled(userId: number): Promise<boolean> {
+    const list = await this.enabled(userId);
+    return list.length > 0;
   }
 }

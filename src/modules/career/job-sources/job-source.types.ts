@@ -29,8 +29,8 @@ export interface JobSourceStatus {
 export interface CareerJobSource {
   readonly id: string;
   readonly name: string;
-  isEnabled(): boolean;
-  getStatus(): JobSourceStatus;
+  isEnabled(userId: number): Promise<boolean>;
+  getStatus(userId: number): Promise<JobSourceStatus>;
   fetchAndStore(
     userId: number,
     keyword: string,

@@ -1,8 +1,8 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
 import axios from 'axios';
 import { CareerJobSource, JobSourceStatus, NormalizedJobListing } from './job-source.types';
 import { CareerJobUpsertService } from './career-job-upsert.service';
+import { CareerTenantSettingsService } from '../services/career-tenant-settings.service';
 import {
   extractSkillsFromDescription,
   formatHttpError,
@@ -43,35 +43,27 @@ export class JSearchJobSource implements CareerJobSource {
   readonly name = 'JSearch (Google Jobs)';
 
   private readonly logger = new Logger(JSearchJobSource.name);
-  private readonly apiKey: string;
-  private readonly defaultCountry: string;
-  private readonly maxPages: number;
 
   constructor(
-    private readonly config: ConfigService,
+    private readonly tenantSettings: CareerTenantSettingsService,
     private readonly upsert: CareerJobUpsertService,
-  ) {
-    this.apiKey = config.get<string>('JSEARCH_RAPIDAPI_KEY')?.trim() ?? '';
-    this.defaultCountry = (config.get<string>('JSEARCH_DEFAULT_COUNTRY') ?? 'in')
-      .trim()
-      .toLowerCase()
-      .slice(0, 2);
-    const maxPagesRaw = parseInt(config.get<string>('JSEARCH_MAX_PAGES') ?? '1', 10);
-    this.maxPages = Number.isNaN(maxPagesRaw) ? 1 : Math.min(Math.max(maxPagesRaw, 1), 3);
+  ) {}
+
+  async isEnabled(userId: number): Promise<boolean> {
+    const cfg = await this.tenantSettings.getJobSourcesConfig(userId);
+    return !!cfg.jsearchApiKey;
   }
 
-  isEnabled(): boolean {
-    return !!this.apiKey;
-  }
-
-  getStatus(): JobSourceStatus {
+  async getStatus(userId: number): Promise<JobSourceStatus> {
+    const cfg = await this.tenantSettings.getJobSourcesConfig(userId);
+    const enabled = !!cfg.jsearchApiKey;
     return {
       id: this.id,
       name: this.name,
-      enabled: this.isEnabled(),
-      message: this.isEnabled()
-        ? `RapidAPI JSearch · default country ${this.defaultCountry.toUpperCase()}`
-        : 'Set JSEARCH_RAPIDAPI_KEY in API env (RapidAPI → JSearch)',
+      enabled,
+      message: enabled
+        ? `RapidAPI JSearch · default country ${cfg.jsearchDefaultCountry.toUpperCase()}`
+        : 'Add JSearch RapidAPI key in Settings → CareerAI',
     };
   }
 
@@ -81,11 +73,14 @@ export class JSearchJobSource implements CareerJobSource {
     location = 'india',
     pages = 1,
   ): Promise<number> {
-    if (!this.isEnabled()) return 0;
+    const cfg = await this.tenantSettings.getJobSourcesConfig(userId);
+    if (!cfg.jsearchApiKey) {
+      return 0;
+    }
 
-    const country = this.resolveCountry(location);
+    const country = this.resolveCountry(location, cfg.jsearchDefaultCountry);
     const query = this.buildQuery(keyword, location, country);
-    const numPages = Math.min(Math.max(pages, 1), this.maxPages);
+    const numPages = Math.min(Math.max(pages, 1), cfg.jsearchMaxPages);
 
     let stored = 0;
     try {
@@ -98,7 +93,7 @@ export class JSearchJobSource implements CareerJobSource {
           date_posted: 'month',
         },
         headers: {
-          'x-rapidapi-key': this.apiKey,
+          'x-rapidapi-key': cfg.jsearchApiKey,
           'x-rapidapi-host': JSEARCH_HOST,
         },
         timeout: 25_000,
@@ -127,14 +122,14 @@ export class JSearchJobSource implements CareerJobSource {
   }
 
   /** Maps portal location input to JSearch ISO country code. */
-  private resolveCountry(location: string): string {
+  private resolveCountry(location: string, defaultCountry: string): string {
     const lower = (location ?? '').trim().toLowerCase();
     if (!lower || lower === 'india' || lower === 'in') return 'in';
     if (lower === 'us' || lower === 'usa' || lower.includes('united states')) return 'us';
     if (lower === 'uk' || lower.includes('united kingdom')) return 'gb';
     if (lower.length === 2) return lower;
     if (lower.includes('india')) return 'in';
-    return this.defaultCountry;
+    return defaultCountry;
   }
 
   /** e.g. "React Developer" + "Pune" → "React Developer in Pune". */

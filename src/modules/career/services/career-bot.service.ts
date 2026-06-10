@@ -19,6 +19,7 @@ import { CareerPdfService } from './career-pdf.service';
 import { CareerInterviewService } from './career-interview.service';
 import { CareerGuidanceService } from './career-guidance.service';
 import { CareerPortalShareService } from './career-portal-share.service';
+import { CareerSeekerBillingService } from './career-seeker-billing.service';
 import {
   formatAlertPreferencesWhatsApp,
   mergeAlertPreferencesPatch,
@@ -83,6 +84,7 @@ export class CareerBotService {
     private readonly interview: CareerInterviewService,
     private readonly guidance: CareerGuidanceService,
     private readonly portalShare: CareerPortalShareService,
+    private readonly seekerBilling: CareerSeekerBillingService,
     @Inject(JOB_DISPATCHER) private readonly dispatcher: JobDispatcher,
   ) {}
 
@@ -130,6 +132,16 @@ export class CareerBotService {
       return true;
     }
 
+    if (this.matchesCommand(lower, CAREER_COMMANDS.SUBSCRIBE)) {
+      await this.cmdSubscribe(message, profile);
+      return true;
+    }
+
+    if (this.matchesCommand(lower, CAREER_COMMANDS.MY_PLAN)) {
+      await this.reply(message, await this.seekerBilling.formatWhatsAppStatus(profile));
+      return true;
+    }
+
     if (this.matchesCommand(lower, CAREER_COMMANDS.RESET_PROFILE)) {
       await this.cmdResetProfile(message, profile);
       return true;
@@ -142,6 +154,11 @@ export class CareerBotService {
 
     if (!profile.isComplete) {
       await this.handleOnboarding(message, profile, text);
+      return true;
+    }
+
+    if (!(await this.seekerBilling.hasAccess(profile)) && !this.isFreeSeekerCommand(lower)) {
+      await this.cmdSubscribeRequired(message, profile);
       return true;
     }
 
@@ -1505,6 +1522,73 @@ export class CareerBotService {
     }
   }
 
+  private isFreeSeekerCommand(lower: string): boolean {
+    return (
+      this.matchesCommand(lower, CAREER_COMMANDS.HELP) ||
+      this.matchesCommand(lower, CAREER_COMMANDS.SUBSCRIBE) ||
+      this.matchesCommand(lower, CAREER_COMMANDS.MY_PLAN) ||
+      this.matchesCommand(lower, CAREER_COMMANDS.PORTAL_LINK) ||
+      this.matchesCommand(lower, CAREER_COMMANDS.DELETE_MY_DATA) ||
+      this.matchesCommand(lower, CAREER_COMMANDS.STOP_DIGEST) ||
+      lower === 'start digest' ||
+      lower === 'subscribe digest'
+    );
+  }
+
+  private async cmdSubscribeRequired(
+    message: Message & { contact: Contact },
+    profile: CareerProfile,
+  ): Promise<void> {
+    const status = await this.seekerBilling.resolveStatus(profile);
+    const portalUrl = this.portalShare.buildPortalUrl(profile.id, profile.userId);
+    const lines = [
+      '⏰ *CareerAI subscription required*',
+      '',
+      status.status === 'trial'
+        ? 'Your trial has ended.'
+        : 'Your plan is not active.',
+      '',
+      `• Monthly — ₹${status.prices.monthly_inr}/mo`,
+      `• Yearly — ₹${status.prices.yearly_inr}/yr`,
+      '',
+      `Pay securely on your portal:\n${portalUrl}`,
+      '',
+      'Reply *MY PLAN* for status · *SUBSCRIBE* for this link again.',
+    ];
+    await this.reply(message, lines.join('\n'));
+  }
+
+  private async cmdSubscribe(
+    message: Message & { contact: Contact },
+    profile: CareerProfile,
+  ): Promise<void> {
+    const status = await this.seekerBilling.resolveStatus(profile);
+    if (status.status === 'active') {
+      await this.reply(message, await this.seekerBilling.formatWhatsAppStatus(profile));
+      return;
+    }
+
+    if (!status.billing_enabled) {
+      await this.reply(message, 'CareerAI is free on this account — no subscription needed.');
+      return;
+    }
+
+    const portalUrl = this.portalShare.buildPortalUrl(profile.id, profile.userId);
+    await this.reply(
+      message,
+      [
+        '*Subscribe to CareerAI* 💳',
+        '',
+        `• Monthly — ₹${status.prices.monthly_inr}/mo`,
+        `• Yearly — ₹${status.prices.yearly_inr}/yr (best value)`,
+        '',
+        `Open your portal to pay securely:\n${portalUrl}`,
+        '',
+        'After payment, reply *MY PLAN* to confirm activation.',
+      ].join('\n'),
+    );
+  }
+
   private helpText(): string {
     return [
       '*Core commands:*',
@@ -1523,6 +1607,8 @@ export class CareerBotService {
       '• *ALERT SETTINGS* — WhatsApp / email alert preferences',
       '• *FIND JOBS react* — search by skill or role',
       '• *UPLOAD RESUME* — update your CV (PDF/DOCX)',
+      '• *MY PLAN* — subscription status',
+      '• *SUBSCRIBE* — pay & unlock CareerAI',
       '',
       '*Also:* *SHOW APPLICATIONS* · *RESET PROFILE* · *DELETE MY DATA*',
     ].join('\n');

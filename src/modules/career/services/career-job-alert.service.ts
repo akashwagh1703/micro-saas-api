@@ -15,6 +15,7 @@ import {
   readAlertState,
 } from '../career-alert-state.util';
 import { CareerAlertChannelService } from './career-alert-channel.service';
+import { CareerSeekerBillingService } from './career-seeker-billing.service';
 
 export interface JobAlertBatchResult {
   sent: number;
@@ -38,6 +39,7 @@ export class CareerJobAlertService {
     private readonly matching: CareerMatchingService,
     private readonly jobs: CareerJobService,
     private readonly channels: CareerAlertChannelService,
+    private readonly seekerBilling: CareerSeekerBillingService,
   ) {}
 
   isEnabled(): boolean {
@@ -83,6 +85,10 @@ export class CareerJobAlertService {
     newJobIds: number[],
   ): Promise<AlertOutcome> {
     if (!profile.contact || profile.digestOptOut) {
+      return 'skipped';
+    }
+
+    if (!(await this.seekerBilling.hasAccess(profile))) {
       return 'skipped';
     }
 
