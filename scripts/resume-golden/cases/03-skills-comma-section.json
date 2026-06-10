@@ -1,0 +1,15 @@
+{
+  "id": "03-skills-comma-section",
+  "description": "Dense comma-separated skills block",
+  "tags": ["skills", "it"],
+  "extracted_text": "Rahul Mehta\nrahul.mehta@outlook.com | 9876543210 | Hyderabad\n\nTECHNICAL SKILLS\nPython, Django, Flask, FastAPI, PostgreSQL, Redis, Celery, Linux, Git, REST APIs, Microservices\n\nWORK EXPERIENCE\nBackend Developer at CloudServe Solutions | 2020 - Present\nPython developer building APIs and background jobs.",
+  "expected": {
+    "full_name": "Rahul Mehta",
+    "email": "rahul.mehta@outlook.com",
+    "phone": "+919876543210",
+    "current_location": "Hyderabad",
+    "skills": ["Python", "Django", "PostgreSQL", "Redis", "FastAPI"],
+    "experience": [{ "title": "Backend Developer", "company": "CloudServe" }],
+    "preferred_roles": ["Backend Developer"]
+  }
+}

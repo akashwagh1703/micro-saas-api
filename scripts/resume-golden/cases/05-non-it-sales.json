@@ -1,0 +1,19 @@
+{
+  "id": "05-non-it-sales",
+  "description": "Sales resume — tests keyword-list gaps (expected lower skills recall)",
+  "tags": ["non-it", "sales", "known-gap"],
+  "extracted_text": "Anita Desai\nBusiness Development Manager\nanita.desai@company.com | +91 9123456789 | Mumbai\n\nCore Competencies\nB2B Sales, Lead Generation, CRM, Client Relationship, Negotiation, Team Leadership\n\nExperience\nBusiness Development Manager at SalesForce India Pvt Ltd\n2019 - Present\nAchieved 120% of quarterly targets.\n\nArea Sales Manager at FMCG Corp\n2016 - 2019",
+  "expected": {
+    "full_name": "Anita Desai",
+    "email": "anita.desai@company.com",
+    "phone": "+919123456789",
+    "current_location": "Mumbai",
+    "skills": ["B2B Sales", "Lead Generation", "CRM"],
+    "experience": [
+      { "title": "Business Development Manager", "company": "SalesForce India" },
+      { "title": "Area Sales Manager", "company": "FMCG Corp" }
+    ],
+    "preferred_roles": ["Business Development Manager"]
+  },
+  "optional_fields": ["skills"]
+}

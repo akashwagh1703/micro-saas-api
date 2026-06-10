@@ -384,6 +384,7 @@ model CareerResume {
   mimeType      String?   @map("mime_type")
   filePath      String?   @map("file_path")
   extractedText String?   @map("extracted_text") @db.Text
+  extractMeta   Json?     @map("extract_meta")
   isMaster      Boolean   @default(false) @map("is_master")
   createdAt     DateTime? @default(now()) @map("created_at")
   updatedAt     DateTime? @updatedAt @map("updated_at")

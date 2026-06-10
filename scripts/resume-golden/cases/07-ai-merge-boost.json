@@ -1,0 +1,31 @@
+{
+  "id": "07-ai-merge-boost",
+  "description": "Heuristic weak but mock AI provides structured experience",
+  "tags": ["merged", "ai-mock", "it"],
+  "extracted_text": "Neha Patel\nneha.p@email.com\n8888777766\nChennai\n\nSkills: Angular, TypeScript\n\nWorked at product companies.",
+  "mock_ai": {
+    "full_name": "Neha Patel",
+    "email": "neha.p@email.com",
+    "phone": "+918888777766",
+    "current_location": "Chennai",
+    "skills": ["Angular", "TypeScript", "RxJS", "HTML", "CSS"],
+    "experience": [
+      {
+        "title": "Frontend Developer",
+        "company": "ProductWorks India",
+        "years": "3",
+        "summary": "Built Angular enterprise apps"
+      }
+    ],
+    "preferred_roles": ["Frontend Developer", "Angular Developer"]
+  },
+  "expected": {
+    "full_name": "Neha Patel",
+    "email": "neha.p@email.com",
+    "phone": "+918888777766",
+    "current_location": "Chennai",
+    "skills": ["Angular", "TypeScript", "RxJS"],
+    "experience": [{ "title": "Frontend Developer", "company": "ProductWorks" }],
+    "preferred_roles": ["Frontend Developer"]
+  }
+}

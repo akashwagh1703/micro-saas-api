@@ -286,7 +286,8 @@ function scoreNameLine(line: string, index: number): number {
   return score;
 }
 
-function cleanName(name: string): string {
+function cleanName(name: string | undefined): string {
+  if (!name?.trim()) return '';
   return name
     .replace(/^(?:name|full name)[:\s]+/i, '')
     .replace(/\s*(?:resume|cv)$/i, '')
@@ -623,14 +624,14 @@ function pickBestName(sources: ParsedCareerProfile[], resumeText?: string): stri
   const candidates = [
     fromResume,
     ...sources.map((s) => s.full_name).filter(Boolean),
-  ] as string[];
+  ].filter((name): name is string => Boolean(name?.trim()));
 
   const scored = candidates
     .map((name) => ({
       name: cleanName(name),
       score: scoreNameLine(cleanName(name), 0) + (looksLikeJobTitle(name) ? -5 : 0),
     }))
-    .filter((c) => c.score > 0 && c.name.length >= 3);
+    .filter((c) => c.score > 0 && c.name.length >= 2);
 
   scored.sort((a, b) => b.score - a.score);
   return scored[0]?.name;

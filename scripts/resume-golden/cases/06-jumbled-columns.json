@@ -1,0 +1,14 @@
+{
+  "id": "06-jumbled-columns",
+  "description": "Simulated two-column PDF jumble — experience order may break",
+  "tags": ["layout", "known-gap"],
+  "extracted_text": "Vikram Singh vikram.s@gmail.com 9811112222 Delhi React Node.js 2022 Present TechCorp Pvt Ltd Senior Developer 2019 2021 DevHouse Junior Developer PostgreSQL AWS Docker",
+  "expected": {
+    "full_name": "Vikram Singh",
+    "email": "vikram.s@gmail.com",
+    "phone": "+919811112222",
+    "skills": ["React", "Node.js", "PostgreSQL", "AWS"],
+    "experience": [{ "title": "Senior Developer", "company": "TechCorp" }]
+  },
+  "optional_fields": ["current_location", "experience", "preferred_roles"]
+}

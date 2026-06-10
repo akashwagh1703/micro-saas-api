@@ -1,0 +1,18 @@
+{
+  "id": "02-headline-not-name",
+  "description": "First line is job title — name must not become full_name",
+  "tags": ["name-trap", "it"],
+  "extracted_text": "Full Stack Developer\nPriya Sharma\npriya.sharma@gmail.com\n+919812345678\nBangalore\n\nSkills: JavaScript, React, Node.js, MongoDB\n\nExperience\nFull Stack Developer at Infosys\n2021 - Present\n\nSoftware Developer at Wipro\n2019 - 2021",
+  "expected": {
+    "full_name": "Priya Sharma",
+    "email": "priya.sharma@gmail.com",
+    "phone": "+919812345678",
+    "current_location": "Bangalore",
+    "skills": ["JavaScript", "React", "Node.js", "MongoDB"],
+    "experience": [
+      { "title": "Full Stack Developer", "company": "Infosys" },
+      { "title": "Software Developer", "company": "Wipro" }
+    ],
+    "preferred_roles": ["Full Stack Developer"]
+  }
+}

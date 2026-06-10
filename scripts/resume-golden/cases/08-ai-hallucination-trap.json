@@ -1,0 +1,27 @@
+{
+  "id": "08-ai-hallucination-trap",
+  "description": "Mock AI invents employer not in text — merged mode should still be measurable",
+  "tags": ["ai-mock", "validation-gap", "known-gap"],
+  "extracted_text": "Karan Joshi\nkaran.j@gmail.com\n7777666655\nPune\n\nSkills: Java, Spring Boot\n\nExperience\nJava Developer at RealCorp Ltd\n2021 - Present",
+  "mock_ai": {
+    "full_name": "Karan Joshi",
+    "email": "karan.j@gmail.com",
+    "phone": "+917777666655",
+    "current_location": "Pune",
+    "skills": ["Java", "Spring Boot", "Kafka"],
+    "experience": [
+      { "title": "Java Developer", "company": "RealCorp Ltd", "years": "3" },
+      { "title": "Intern", "company": "FakeGoogle India", "years": "1" }
+    ],
+    "preferred_roles": ["Java Developer"]
+  },
+  "expected": {
+    "full_name": "Karan Joshi",
+    "email": "karan.j@gmail.com",
+    "phone": "+917777666655",
+    "current_location": "Pune",
+    "skills": ["Java", "Spring Boot"],
+    "experience": [{ "title": "Java Developer", "company": "RealCorp" }],
+    "preferred_roles": ["Java Developer"]
+  }
+}

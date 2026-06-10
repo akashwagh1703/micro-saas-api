@@ -51,6 +51,7 @@ import {
   readAlertState,
 } from '../career-alert-state.util';
 import { mergeParsedProfiles } from '../career-resume-parse.util';
+import { lowQualityUserHint } from '../career-resume-extract.util';
 import {
   employmentTypePromptBody,
   formatOnboardingAck,
@@ -659,7 +660,7 @@ export class CareerBotService {
     const mime = media.mime ?? 'application/pdf';
     const fileName = media.fileName ?? 'resume.pdf';
 
-    const { text: extracted, error: extractError, ocrUsed } = await this.resumeParser.extractText(
+    const { text: extracted, error: extractError, extractMeta } = await this.resumeParser.extractText(
       downloaded.buffer,
       mime,
       fileName,
@@ -681,10 +682,18 @@ export class CareerBotService {
       return;
     }
 
+    if (extractError === 'legacy_doc') {
+      await this.reply(
+        message,
+        'Old *.doc* Word files are not supported. Please save your resume as *PDF* or *DOCX* and upload again.',
+      );
+      return;
+    }
+
     if (extractError === 'scanned_pdf') {
       await this.reply(
         message,
-        'This PDF looks scanned (no readable text). Please send a *clear photo* of each page as JPEG/PNG, or a text-based PDF.',
+        'Could not extract enough text from this PDF (often scanned/image-only). Send a *clear photo* of each page (JPEG/PNG), or re-save from Word as a text-based *PDF* or *DOCX*.',
       );
       return;
     }
@@ -712,6 +721,8 @@ export class CareerBotService {
       data: { isMaster: false },
     });
 
+    const qualityHint = lowQualityUserHint(extractMeta);
+
     const resume = await this.prisma.careerResume.create({
       data: {
         userId: message.userId,
@@ -722,6 +733,9 @@ export class CareerBotService {
         mimeType: mime,
         filePath,
         extractedText: extracted,
+        extractMeta: extractMeta
+          ? (extractMeta as unknown as Prisma.InputJsonValue)
+          : undefined,
         isMaster: true,
       },
     });
@@ -790,7 +804,10 @@ export class CareerBotService {
         summary,
         '',
         '_Just a few quick questions to fine-tune your job matches…_',
-      ].join('\n');
+        qualityHint ?? '',
+      ]
+        .filter(Boolean)
+        .join('\n');
       if (
         updated.onboardingStep === 'follow_up_employment_type' ||
         updated.onboardingStep === 'follow_up_job_type'
@@ -821,8 +838,11 @@ export class CareerBotService {
           '',
           summary,
           '',
+          qualityHint,
           question ?? parsingResumeRecoveryMessage(),
-        ].join('\n\n'),
+        ]
+          .filter(Boolean)
+          .join('\n\n'),
       );
       return;
     }

@@ -20,6 +20,9 @@
     "prisma:migrate": "prisma migrate dev",
     "prisma:deploy": "prisma migrate deploy",
     "db:seed": "ts-node prisma/seed.ts",
+    "resume:eval": "ts-node scripts/resume-golden/run-eval.ts --pipeline=heuristic",
+    "resume:eval:merged": "ts-node scripts/resume-golden/run-eval.ts --pipeline=merged",
+    "resume:eval:ai": "ts-node scripts/resume-golden/run-eval.ts --pipeline=ai-only",
     "lint": "eslint \"{src,test}/**/*.ts\" --fix",
     "format": "prettier --write \"src/**/*.ts\""
   },
@@ -44,6 +47,8 @@
     "node-cron": "^4.2.1",
     "nodemailer": "^8.0.10",
     "pdf-parse": "^1.1.4",
+    "pdf-to-img": "^6.1.0",
+    "pdfjs-dist": "^6.0.227",
     "pdfkit": "^0.19.0",
     "pg-boss": "^10.1.5",
     "razorpay": "^2.9.6",

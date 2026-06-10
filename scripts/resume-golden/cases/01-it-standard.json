@@ -1,0 +1,22 @@
+{
+  "id": "01-it-standard",
+  "description": "Standard Indian IT resume with labeled sections",
+  "tags": ["it", "standard", "happy-path"],
+  "extracted_text": "Akash Wagh\nSenior React Developer\nakash.wagh@example.com | +91 98765 43210 | Pune, Maharashtra\n\nSUMMARY\nFull stack engineer with 4 years building web apps.\n\nSKILLS\nReact, Node.js, TypeScript, PostgreSQL, AWS, Docker, Git\n\nEXPERIENCE\nSenior React Developer at TechNova Pvt Ltd\nJan 2022 - Present\nBuilt customer dashboards and REST APIs.\n\nSoftware Engineer at StartUp Labs\nJun 2020 - Dec 2021\nDeveloped React components and Node.js services.\n\nEDUCATION\nB.Tech Computer Science — MIT Pune — 2020\n\nCurrent Salary: 12 LPA\nExpected Salary: 18 LPA\nNotice Period: 30 days",
+  "expected": {
+    "full_name": "Akash Wagh",
+    "email": "akash.wagh@example.com",
+    "phone": "+919876543210",
+    "current_location": "Pune",
+    "skills": ["React", "Node.js", "TypeScript", "PostgreSQL", "AWS", "Docker"],
+    "experience": [
+      { "title": "Senior React Developer", "company": "TechNova" },
+      { "title": "Software Engineer", "company": "StartUp Labs" }
+    ],
+    "preferred_roles": ["Senior React Developer"],
+    "current_salary": "12 LPA",
+    "expected_salary": "18 LPA",
+    "notice_period": "30 days"
+  },
+  "optional_fields": ["work_preference"]
+}

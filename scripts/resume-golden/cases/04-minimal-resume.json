@@ -1,0 +1,14 @@
+{
+  "id": "04-minimal-resume",
+  "description": "Sparse resume — many fields missing",
+  "tags": ["sparse", "edge"],
+  "extracted_text": "Suresh K\nsuresh.k@gmail.com\n9999988888\n\nSkills\nHTML CSS JavaScript\n\nExperience\nWeb Developer at Local IT Shop\n2023 - Present",
+  "expected": {
+    "full_name": "Suresh K",
+    "email": "suresh.k@gmail.com",
+    "phone": "+919999988888",
+    "skills": ["HTML", "CSS", "JavaScript"],
+    "experience": [{ "title": "Web Developer", "company": "Local IT Shop" }]
+  },
+  "optional_fields": ["current_location", "preferred_roles"]
+}
