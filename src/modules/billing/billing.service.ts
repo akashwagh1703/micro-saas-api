@@ -24,6 +24,7 @@ export interface BillingStatus {
   days_left: number | null;
   prices: { monthly_inr: number; yearly_inr: number };
   razorpay_configured: boolean;
+  razorpay_webhook_url: string;
 }
 
 @Injectable()
@@ -53,8 +54,8 @@ export class BillingService {
   }
 
   private getRazorpay(): Razorpay | null {
-    const keyId = this.config.get<string>('RAZORPAY_KEY_ID');
-    const keySecret = this.config.get<string>('RAZORPAY_KEY_SECRET');
+    const keyId = this.env('RAZORPAY_KEY_ID');
+    const keySecret = this.env('RAZORPAY_KEY_SECRET');
     if (!keyId || !keySecret) return null;
     if (!this.razorpay) {
       this.razorpay = new Razorpay({ key_id: keyId, key_secret: keySecret });
@@ -64,11 +65,20 @@ export class BillingService {
 
   isRazorpayConfigured(): boolean {
     return !!(
-      this.config.get<string>('RAZORPAY_KEY_ID') &&
-      this.config.get<string>('RAZORPAY_KEY_SECRET') &&
-      this.config.get<string>('RAZORPAY_PLAN_MONTHLY') &&
-      this.config.get<string>('RAZORPAY_PLAN_YEARLY')
+      this.env('RAZORPAY_KEY_ID') &&
+      this.env('RAZORPAY_KEY_SECRET') &&
+      this.env('RAZORPAY_PLAN_MONTHLY') &&
+      this.env('RAZORPAY_PLAN_YEARLY')
     );
+  }
+
+  getRazorpayWebhookUrl(): string {
+    const appUrl = (this.config.get<string>('APP_URL') ?? 'http://localhost:3000').replace(/\/$/, '');
+    return `${appUrl}/api/webhook/razorpay`;
+  }
+
+  private env(key: string): string {
+    return (this.config.get<string>(key) ?? '').trim();
   }
 
   trialEndsAtForNewUser(): Date {
@@ -87,6 +97,8 @@ export class BillingService {
     const now = new Date();
     const prices = { monthly_inr: this.monthlyPriceInr(), yearly_inr: this.yearlyPriceInr() };
     const razorpay_configured = this.isRazorpayConfigured();
+    const razorpay_webhook_url = this.getRazorpayWebhookUrl();
+    const base = { prices, razorpay_configured, razorpay_webhook_url };
 
     if (!this.isEnabled()) {
       return {
@@ -97,8 +109,7 @@ export class BillingService {
         trial_ends_at: null,
         current_period_end: null,
         days_left: null,
-        prices,
-        razorpay_configured,
+        ...base,
       };
     }
 
@@ -118,8 +129,7 @@ export class BillingService {
         trial_ends_at: trialEnds.toISOString(),
         current_period_end: periodEnd.toISOString(),
         days_left: this.daysUntil(periodEnd),
-        prices,
-        razorpay_configured,
+        ...base,
       };
     }
 
@@ -132,8 +142,7 @@ export class BillingService {
         trial_ends_at: trialEnds.toISOString(),
         current_period_end: periodEnd ? periodEnd.toISOString() : null,
         days_left: 0,
-        prices,
-        razorpay_configured,
+        ...base,
       };
     }
 
@@ -146,8 +155,7 @@ export class BillingService {
         trial_ends_at: trialEnds.toISOString(),
         current_period_end: null,
         days_left: this.daysUntil(trialEnds),
-        prices,
-        razorpay_configured,
+        ...base,
       };
     }
 
@@ -159,8 +167,7 @@ export class BillingService {
       trial_ends_at: trialEnds.toISOString(),
       current_period_end: periodEnd ? periodEnd.toISOString() : null,
       days_left: 0,
-      prices,
-      razorpay_configured,
+      ...base,
     };
   }
 
@@ -190,11 +197,30 @@ export class BillingService {
 
   private planId(plan: BillingPlan): string {
     const key = plan === 'monthly' ? 'RAZORPAY_PLAN_MONTHLY' : 'RAZORPAY_PLAN_YEARLY';
-    const id = this.config.get<string>(key);
+    const id = this.env(key);
     if (!id) {
-      throw new ServiceUnavailableException('Subscription plans are not configured yet.');
+      throw new ServiceUnavailableException(
+        'Subscription plans are not configured. Set RAZORPAY_PLAN_MONTHLY and RAZORPAY_PLAN_YEARLY in server env.',
+      );
     }
     return id;
+  }
+
+  private razorpayErrorMessage(err: unknown, fallback: string): string {
+    const e = err as { error?: { description?: string; code?: string }; statusCode?: number };
+    if (e?.statusCode === 401) {
+      return 'Razorpay authentication failed. Check RAZORPAY_KEY_ID and RAZORPAY_KEY_SECRET in server env.';
+    }
+    return e?.error?.description ?? fallback;
+  }
+
+  private isRazorpayRetryableCustomerError(err: unknown): boolean {
+    const e = err as { statusCode?: number; error?: { code?: string; description?: string } };
+    if (e?.statusCode !== 400 || e?.error?.code !== 'BAD_REQUEST_ERROR') {
+      return false;
+    }
+    const desc = (e.error.description ?? '').toLowerCase();
+    return desc.includes('customer') || desc.includes('id provided is invalid');
   }
 
   async createSubscription(userId: number, plan: BillingPlan) {
@@ -205,16 +231,55 @@ export class BillingService {
     const razorpay = this.getRazorpay();
     if (!razorpay || !this.isRazorpayConfigured()) {
       throw new ServiceUnavailableException(
-        'Online payments are not configured. Contact support to subscribe.',
+        'Online payments are not configured. Set RAZORPAY_KEY_ID, RAZORPAY_KEY_SECRET, and plan IDs in server env.',
       );
     }
 
-    const user = await this.getUser(userId);
+    let user = await this.getUser(userId);
     const status = this.resolveStatus(user);
     if (status.status === 'active') {
       throw new UnprocessableEntityException('You already have an active subscription.');
     }
 
+    try {
+      return await this.createSubscriptionCheckout(userId, plan, user, razorpay);
+    } catch (err) {
+      if (user.razorpayCustomerId && this.isRazorpayRetryableCustomerError(err)) {
+        this.logger.warn(
+          `Resetting stale Razorpay customer for userId=${userId}: ${this.razorpayErrorMessage(err, '')}`,
+        );
+        await this.prisma.user.update({
+          where: { id: userId },
+          data: { razorpayCustomerId: null, razorpaySubscriptionId: null },
+        });
+        user = await this.getUser(userId);
+        try {
+          return await this.createSubscriptionCheckout(userId, plan, user, razorpay);
+        } catch (retryErr) {
+          this.logger.error(
+            `Subscribe retry failed userId=${userId}: ${this.razorpayErrorMessage(retryErr, 'Unknown error')}`,
+          );
+          throw new ServiceUnavailableException(
+            this.razorpayErrorMessage(retryErr, 'Could not start subscription checkout.'),
+          );
+        }
+      }
+
+      this.logger.error(
+        `Subscribe failed userId=${userId}: ${this.razorpayErrorMessage(err, 'Unknown error')}`,
+      );
+      throw new ServiceUnavailableException(
+        this.razorpayErrorMessage(err, 'Could not start subscription checkout.'),
+      );
+    }
+  }
+
+  private async createSubscriptionCheckout(
+    userId: number,
+    plan: BillingPlan,
+    user: User,
+    razorpay: Razorpay,
+  ) {
     let customerId = user.razorpayCustomerId;
     if (!customerId) {
       const customer = await razorpay.customers.create({
@@ -233,7 +298,7 @@ export class BillingService {
       customer_id: customerId,
       customer_notify: 1,
       total_count: plan === 'yearly' ? 10 : 120,
-      notes: { user_id: String(userId), plan },
+      notes: { product: 'platform', user_id: String(userId), plan },
     } as Parameters<Razorpay['subscriptions']['create']>[0]);
 
     await this.prisma.user.update({
@@ -246,7 +311,7 @@ export class BillingService {
 
     return {
       subscription_id: subscription.id,
-      key_id: this.config.get<string>('RAZORPAY_KEY_ID'),
+      key_id: this.env('RAZORPAY_KEY_ID'),
       plan,
       amount_inr: plan === 'monthly' ? this.monthlyPriceInr() : this.yearlyPriceInr(),
     };
@@ -257,7 +322,7 @@ export class BillingService {
     subscriptionId: string,
     signature: string,
   ): boolean {
-    const secret = this.config.get<string>('RAZORPAY_KEY_SECRET');
+    const secret = this.env('RAZORPAY_KEY_SECRET');
     if (!secret) return false;
     const expected = crypto
       .createHmac('sha256', secret)
@@ -303,7 +368,7 @@ export class BillingService {
   }
 
   verifyWebhookSignature(body: Buffer | string, signature: string): boolean {
-    const secret = this.config.get<string>('RAZORPAY_WEBHOOK_SECRET');
+    const secret = this.env('RAZORPAY_WEBHOOK_SECRET');
     if (!secret) return false;
     const expected = crypto.createHmac('sha256', secret).update(body).digest('hex');
     return expected === signature;
@@ -330,6 +395,9 @@ export class BillingService {
 
     if (!user) {
       const notes = (entity?.notes as Record<string, string>) ?? {};
+      if (notes.product === 'career_seeker') {
+        return false;
+      }
       const userId = notes.user_id ? Number(notes.user_id) : null;
       if (!userId) {
         this.logger.warn(`No user for subscription ${subscriptionId}`);
