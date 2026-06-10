@@ -9,7 +9,7 @@ Run locally: `npm run resume:eval` and `npm run resume:eval:merged`
 | Pipeline | Overall | Notes |
 |----------|---------|--------|
 | **Heuristic only** (AI unavailable) | **87%** | Production fallback path |
-| **Merged** (AI + heuristics) | **91%** | Production happy path when AI works |
+| **Merged** (AI + heuristics + R2 validation) | **87%** | Post-R2 re-measured; case 08 improved to 98% |
 
 These scores are on a **small** golden set. They are directionally useful, not proof of 100% production accuracy. Add 30–50 real resumes (with manual truth labels) before treating targets as binding.
 
@@ -32,7 +32,7 @@ These scores are on a **small** golden set. They are directionally useful, not p
 | `06-jumbled-columns` | 71% | Simulates two-column PDF text jumble |
 | `02-headline-not-name` | 81% | Title before name |
 | `07-ai-merge-boost` | 63% heuristic / **97% merged** | Needs AI for sparse text |
-| `08-ai-hallucination-trap` | 96% merged | Extra fake job from mock AI still scores high — **validation gap for R2** |
+| `08-ai-hallucination-trap` | **98% merged** (was 96%) | R2 strips Kafka + FakeGoogle; junk lines filtered |
 
 ## Bug found during R0
 
@@ -48,6 +48,6 @@ These scores are on a **small** golden set. They are directionally useful, not p
 
 ## Next step
 
-**R1** — extraction hardening (scanned PDF OCR, jumbled text)  
-**R2** — field validation against source text (fix case 08 false positives)  
-**R3** — WhatsApp confirm before save
+**R1** — extraction hardening — **shipped**  
+**R2** — field validation against source text — **shipped** (`career-resume-validate.util.ts`)  
+**R3** — WhatsApp confirm before save/matching — **shipped** (`career-parse-review.util.ts`, step `parse_review`)

@@ -1,4 +1,12 @@
 import { ParsedCareerProfile } from './career-parsed-profile.types';
+import {
+  ParsedProfileValidation,
+  validateParsedProfile,
+  ValidateParsedOptions,
+} from './career-resume-validate.util';
+
+export type { ParsedProfileValidation } from './career-resume-validate.util';
+export { formatValidationHint, validateParsedProfile } from './career-resume-validate.util';
 
 const SKIP_NAME_PATTERNS =
   /^(resume|curriculum vitae|cv|profile|personal details|contact|objective|summary|about me|professional summary)/i;
@@ -79,12 +87,22 @@ export function mergeParsedProfiles(
   ai: ParsedCareerProfile | null,
   basic: ParsedCareerProfile | null,
   resumeText?: string,
+  validateOptions?: ValidateParsedOptions,
 ): ParsedCareerProfile | null {
+  return mergeParsedProfilesWithValidation(ai, basic, resumeText, validateOptions).profile;
+}
+
+export function mergeParsedProfilesWithValidation(
+  ai: ParsedCareerProfile | null,
+  basic: ParsedCareerProfile | null,
+  resumeText?: string,
+  validateOptions?: ValidateParsedOptions,
+): { profile: ParsedCareerProfile | null; validation: ParsedProfileValidation | null } {
   const sectionParsed = resumeText ? extractSectionFields(resumeText) : null;
   const sources = [ai, basic, sectionParsed].filter(Boolean) as ParsedCareerProfile[];
 
   if (sources.length === 0) {
-    return null;
+    return { profile: null, validation: null };
   }
 
   const merged: ParsedCareerProfile = {
@@ -106,7 +124,19 @@ export function mergeParsedProfiles(
     preferred_roles: mergePreferredRoles(sources, resumeText),
   };
 
-  return finalizeParsedProfile(merged, resumeText);
+  const finalized = finalizeParsedProfile(merged, resumeText);
+  if (!resumeText?.trim()) {
+    return { profile: finalized, validation: null };
+  }
+
+  const enabled =
+    validateOptions?.enabled ??
+    process.env.CAREER_PARSE_VALIDATION_ENABLED !== 'false';
+
+  const { profile, validation } = validateParsedProfile(finalized, resumeText, {
+    enabled,
+  });
+  return { profile, validation };
 }
 
 /** Heuristic extraction — used when AI fails and to enrich AI output. */

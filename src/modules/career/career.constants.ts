@@ -27,6 +27,7 @@ export const CAREER_ONBOARDING_STEPS = [
   'welcome',
   'awaiting_resume',
   'parsing_resume',
+  'parse_review',
   'follow_up_location',
   'follow_up_preferred_location',
   'follow_up_current_salary',

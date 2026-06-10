@@ -1,7 +1,7 @@
 {
   "id": "08-ai-hallucination-trap",
   "description": "Mock AI invents employer not in text — merged mode should still be measurable",
-  "tags": ["ai-mock", "validation-gap", "known-gap"],
+  "tags": ["ai-mock", "anti-hallucination", "known-gap"],
   "extracted_text": "Karan Joshi\nkaran.j@gmail.com\n7777666655\nPune\n\nSkills: Java, Spring Boot\n\nExperience\nJava Developer at RealCorp Ltd\n2021 - Present",
   "mock_ai": {
     "full_name": "Karan Joshi",

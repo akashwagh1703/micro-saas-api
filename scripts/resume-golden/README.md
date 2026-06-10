@@ -67,7 +67,7 @@ Overall case score = weighted average (skills & experience weighted 2×).
 ## Next phases (after R0)
 
 - **R1** — extraction hardening (scanned PDF OCR, pdfjs column order, DOCX HTML fallback) — **shipped**
-- **R2** — field validation against source text (case `08-ai-hallucination-trap` should score higher after anti-hallucination)
+- **R2** — field validation against source text — **shipped** (`validateParsedProfile` strips skills/jobs/roles not in `extractedText`)
 - **R3** — WhatsApp confirm step (not measured here)
 
 ### R1 extraction pipeline (production)
@@ -80,7 +80,26 @@ Legacy `.doc` → clear error asking for PDF/DOCX
 
 Quality stored on `career_resumes.extract_meta` (`method`, `quality`, `qualityScore`, `ocrUsed`, `warnings`).
 
-## Target metrics (suggested)
+### R2 validation (production)
+
+After merge, `validateParsedProfile()` keeps only fields with evidence in `extractedText`:
+
+- Contact (email, phone, name tokens) must appear in source
+- Skills must match text (aliases for Node.js, React, etc.)
+- Experience requires company or specific job title in source (generic titles like "Intern" rejected without company match)
+- Target roles must appear in text or match validated experience titles
+
+Disable with `CAREER_PARSE_VALIDATION_ENABLED=false`. Rejected items are surfaced in the WhatsApp parse summary.
+
+### R3 confirm step (production)
+
+After parse, users see a summary and must reply *YES* (or tap *Yes, confirm*) before parsed fields are saved or matching runs.
+
+Edit commands: `EDIT LOCATION …`, `EDIT ROLES …`, `EDIT SKILLS …`, `EDIT NAME …`, `EDIT EMAIL …`, `EDIT PHONE …`
+
+Staged parse stored in `onboarding_data.parseReview` until confirmed. Disable with `CAREER_PARSE_CONFIRM_ENABLED=false`.
+
+- **R3** — WhatsApp confirm step — **shipped** (not measured in golden eval)
 
 | Segment | Target overall |
 |---------|----------------|

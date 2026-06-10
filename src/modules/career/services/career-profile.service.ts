@@ -2,6 +2,8 @@ import { Injectable } from '@nestjs/common';
 import { CareerProfile, Contact, Prisma } from '@prisma/client';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { ParsedCareerProfile } from '../career-parsed-profile.types';
+import { ParsedProfileValidation } from '../career-resume-validate.util';
+import { StagedParseReview } from '../career-parse-review.util';
 import { CareerSeekerBillingService } from './career-seeker-billing.service';
 
 const ONBOARDING_FIELD_ORDER: Array<{
@@ -111,8 +113,108 @@ export class CareerProfileService {
         ...patch,
         isComplete: true,
         onboardingStep: 'complete',
+        onboardingData: await this.onboardingDataWithoutParseReview(profileId),
       },
     });
+  }
+
+  async stageParseReview(
+    profileId: number,
+    parsed: ParsedCareerProfile,
+    options: {
+      validation?: ParsedProfileValidation | null;
+      reupload?: boolean;
+      resumeId?: number;
+    } = {},
+  ): Promise<CareerProfile> {
+    const existing = await this.prisma.careerProfile.findUnique({
+      where: { id: profileId },
+      select: { onboardingData: true },
+    });
+    const data = (existing?.onboardingData as Record<string, unknown>) ?? {};
+    const staged: StagedParseReview = {
+      parsed,
+      validation: options.validation ?? null,
+      reupload: options.reupload ?? false,
+      resumeId: options.resumeId,
+      stagedAt: new Date().toISOString(),
+    };
+
+    return this.prisma.careerProfile.update({
+      where: { id: profileId },
+      data: {
+        onboardingStep: 'parse_review',
+        onboardingData: { ...data, parseReview: staged } as unknown as Prisma.InputJsonValue,
+      },
+    });
+  }
+
+  async updateStagedParseReview(profileId: number, parsed: ParsedCareerProfile): Promise<CareerProfile> {
+    const existing = await this.prisma.careerProfile.findUnique({
+      where: { id: profileId },
+      select: { onboardingData: true },
+    });
+    const data = (existing?.onboardingData as Record<string, unknown>) ?? {};
+    const current = data.parseReview as StagedParseReview | undefined;
+    if (!current) {
+      throw new Error(`No staged parse review for profile ${profileId}`);
+    }
+
+    return this.prisma.careerProfile.update({
+      where: { id: profileId },
+      data: {
+        onboardingData: {
+          ...data,
+          parseReview: { ...current, parsed },
+        } as unknown as Prisma.InputJsonValue,
+      },
+    });
+  }
+
+  async confirmStagedParse(
+    profileId: number,
+    parsed: ParsedCareerProfile,
+    reupload: boolean,
+  ): Promise<CareerProfile> {
+    const cleanedData = await this.onboardingDataWithoutParseReview(profileId);
+    const patch = this.parsedToPatch(parsed);
+
+    if (reupload) {
+      return this.prisma.careerProfile.update({
+        where: { id: profileId },
+        data: {
+          ...patch,
+          isComplete: true,
+          onboardingStep: 'complete',
+          onboardingData: cleanedData,
+        },
+      });
+    }
+
+    const updated = await this.prisma.careerProfile.update({
+      where: { id: profileId },
+      data: {
+        ...patch,
+        onboardingData: cleanedData,
+      },
+    });
+    const nextStep = this.computeNextOnboardingStep(updated);
+    return this.prisma.careerProfile.update({
+      where: { id: profileId },
+      data: { onboardingStep: nextStep },
+    });
+  }
+
+  private async onboardingDataWithoutParseReview(
+    profileId: number,
+  ): Promise<Prisma.InputJsonValue | typeof Prisma.DbNull> {
+    const existing = await this.prisma.careerProfile.findUnique({
+      where: { id: profileId },
+      select: { onboardingData: true },
+    });
+    const data = { ...((existing?.onboardingData as Record<string, unknown>) ?? {}) };
+    delete data.parseReview;
+    return Object.keys(data).length > 0 ? (data as Prisma.InputJsonValue) : Prisma.DbNull;
   }
 
   async resetProfile(profileId: number, contact: Contact): Promise<CareerProfile> {

@@ -1,5 +1,6 @@
 /** Maps CareerAI WhatsApp button ids to text commands the bot already understands. */
 const CAREER_BUTTON_REPLY_MAP: Record<string, string> = {
+  parse_confirm_yes: 'YES',
   work_remote: 'Remote',
   work_hybrid: 'Hybrid',
   work_onsite: 'Onsite',

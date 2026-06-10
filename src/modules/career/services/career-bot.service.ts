@@ -50,8 +50,19 @@ import {
   mergeNotifiedJobIds,
   readAlertState,
 } from '../career-alert-state.util';
-import { mergeParsedProfiles } from '../career-resume-parse.util';
+import { formatValidationHint, mergeParsedProfilesWithValidation } from '../career-resume-parse.util';
 import { lowQualityUserHint } from '../career-resume-extract.util';
+import {
+  applyParseReviewEdit,
+  formatParseReviewEditAck,
+  formatParseReviewPrompt,
+  isParseConfirmEnabled,
+  parseParseReviewReply,
+  parseReviewHelpMessage,
+  readParseReview,
+  type ParseReviewEditField,
+} from '../career-parse-review.util';
+import { ParsedProfileValidation } from '../career-resume-validate.util';
 import {
   employmentTypePromptBody,
   formatOnboardingAck,
@@ -163,6 +174,11 @@ export class CareerBotService {
 
     if (this.matchesCommand(lower, CAREER_COMMANDS.DELETE_MY_DATA)) {
       await this.cmdDeleteMyData(message, profile);
+      return true;
+    }
+
+    if (profile.onboardingStep === 'parse_review') {
+      await this.handleParseReview(message, profile, text);
       return true;
     }
 
@@ -421,15 +437,22 @@ export class CareerBotService {
     }
 
     if (profile.onboardingStep === 'parsing_resume') {
-      await this.profiles.updateOnboarding(profile.id, 'follow_up_location', {});
-      await this.reply(message, parsingResumeRecoveryMessage());
+      const staged = readParseReview(profile.onboardingData);
+      if (staged?.parsed) {
+        await this.handleParseReview(message, { ...profile, onboardingStep: 'parse_review' }, text);
+        return;
+      }
+      await this.reply(message, 'Still reading your resume… ⏳ Please wait a moment.');
       return;
     }
 
-    // FIX 2: The original steps map had questions and fields swapped.
-    const steps = this.getOnboardingSteps();
+    if (profile.onboardingStep === 'parse_review') {
+      await this.handleParseReview(message, profile, text);
+      return;
+    }
 
     // Skip questions already answered from resume AI parse — then prompt the next empty step.
+    const steps = this.getOnboardingSteps();
     let current = profile;
     let currentStepKey = profile.onboardingStep;
     while (true) {
@@ -757,47 +780,64 @@ export class CareerBotService {
         )
       : null;
     const basicParsed = extracted ? this.resumeParser.extractBasicFields(extracted) : null;
-    const parsed = mergeParsedProfiles(aiParsed, basicParsed, extracted ?? undefined);
+    const { profile: parsed, validation: parseValidation } = mergeParsedProfilesWithValidation(
+      aiParsed,
+      basicParsed,
+      extracted ?? undefined,
+    );
+
+    const confirmEnabled = isParseConfirmEnabled();
 
     if (reupload && profile.isComplete) {
-      await this.clearReuploadPending(profile.id);
-      if (parsed) {
-        const updated = await this.profiles.applyParsedResumeUpdate(profile.id, parsed);
-        const { allMatches, shownMatches: matches } =
-          await this.matching.matchAndPersistForProfile(message.userId, updated, {
-            tier: 'good',
-          });
-        if (matches.length === 0) {
-          await this.reply(
-            message,
-            allMatches.length > 0
-              ? 'Resume updated! ✅ No jobs scored 65%+ for your profile yet. Try *FIND JOBS {skill}* or *VIEW JOBS* after more listings are fetched.'
-              : 'Resume updated! ✅ No matching jobs in the system yet. Reply *VIEW JOBS* later.',
-          );
-          return;
-        }
-        await this.presentTopJobs(
-          message,
-          updated,
-          matches,
-          `Resume updated! ✅ I found *${matches.length}* matches (65%+ fit).`,
-        );
-      } else {
+      if (!parsed) {
+        await this.clearReuploadPending(profile.id);
         await this.reply(
           message,
           'Resume saved, but I could not auto-parse it. Please try a text-based PDF or DOCX.',
         );
+        return;
       }
+      if (confirmEnabled) {
+        await this.profiles.stageParseReview(profile.id, parsed, {
+          validation: parseValidation,
+          reupload: true,
+          resumeId: resume.id,
+        });
+        await this.promptParseReview(message, parsed, {
+          validation: parseValidation,
+          qualityHint,
+          reupload: true,
+        });
+        return;
+      }
+      await this.clearReuploadPending(profile.id);
+      const updated = await this.profiles.applyParsedResumeUpdate(profile.id, parsed);
+      await this.finishReuploadMatching(message, updated);
       return;
     }
 
     if (parsed) {
+      if (confirmEnabled) {
+        await this.profiles.stageParseReview(profile.id, parsed, {
+          validation: parseValidation,
+          reupload: false,
+          resumeId: resume.id,
+        });
+        await this.promptParseReview(message, parsed, {
+          validation: parseValidation,
+          qualityHint,
+          reupload: false,
+        });
+        return;
+      }
+
       const updated = await this.profiles.applyParsedResume(profile.id, parsed);
       if (updated.onboardingStep === 'complete') {
         await this.finishOnboarding(message, updated);
         return;
       }
       const summary = this.resumeBuilder.formatParsedSummary(updated);
+      const validationHint = formatValidationHint(parseValidation);
       const intro = [
         '✨ *Resume parsed successfully!*',
         '',
@@ -805,6 +845,7 @@ export class CareerBotService {
         '',
         '_Just a few quick questions to fine-tune your job matches…_',
         qualityHint ?? '',
+        validationHint ?? '',
       ]
         .filter(Boolean)
         .join('\n');
@@ -824,8 +865,21 @@ export class CareerBotService {
     // AI parse failed — use heuristic fields so onboarding can still continue.
     const fallbackParsed = extracted ? this.resumeParser.extractBasicFields(extracted) : null;
     if (fallbackParsed) {
+      if (confirmEnabled) {
+        await this.profiles.stageParseReview(profile.id, fallbackParsed, {
+          validation: null,
+          reupload: false,
+          resumeId: resume.id,
+        });
+        await this.promptParseReview(message, fallbackParsed, {
+          validation: null,
+          qualityHint,
+          reupload: false,
+        });
+        return;
+      }
+
       const updated = await this.profiles.applyParsedResume(profile.id, fallbackParsed);
-      const summary = this.resumeBuilder.formatParsedSummary(updated);
       if (updated.onboardingStep === 'complete') {
         await this.finishOnboarding(message, updated);
         return;
@@ -836,7 +890,7 @@ export class CareerBotService {
         [
           '✨ *Resume saved!*',
           '',
-          summary,
+          this.resumeBuilder.formatParsedSummary(updated),
           '',
           qualityHint,
           question ?? parsingResumeRecoveryMessage(),
@@ -857,6 +911,140 @@ export class CareerBotService {
         '',
         parsingResumeRecoveryMessage(),
       ].join('\n'),
+    );
+  }
+
+  private async handleParseReview(
+    message: Message & { contact: Contact },
+    profile: CareerProfile,
+    text: string,
+  ): Promise<void> {
+    const staged = readParseReview(profile.onboardingData);
+    if (!staged?.parsed) {
+      await this.profiles.updateOnboarding(profile.id, 'awaiting_resume', {});
+      await this.reply(
+        message,
+        'That review session expired. Please upload your resume again as *PDF*, *DOCX*, or a clear photo.',
+      );
+      return;
+    }
+
+    const reply = parseParseReviewReply(text);
+    if (reply.type === 'edit') {
+      const updatedParsed = applyParseReviewEdit(staged.parsed, reply);
+      await this.profiles.updateStagedParseReview(profile.id, updatedParsed);
+      await this.promptParseReview(message, updatedParsed, {
+        validation: staged.validation,
+        reupload: staged.reupload,
+        editAck: { field: reply.field, display: reply.value },
+      });
+      return;
+    }
+
+    if (reply.type === 'confirm') {
+      if (staged.reupload) {
+        await this.clearReuploadPending(profile.id);
+      }
+      const updated = await this.profiles.confirmStagedParse(
+        profile.id,
+        staged.parsed,
+        staged.reupload ?? false,
+      );
+      if (staged.reupload) {
+        await this.finishReuploadMatching(
+          message,
+          updated,
+          '✅ *Profile updated!* Running fresh job matches…',
+        );
+        return;
+      }
+      await this.continueOnboardingAfterParseConfirm(message, updated);
+      return;
+    }
+
+    await this.reply(message, parseReviewHelpMessage());
+  }
+
+  private async promptParseReview(
+    message: Message & { contact: Contact },
+    parsed: ParsedCareerProfile,
+    options: {
+      validation?: ParsedProfileValidation | null;
+      qualityHint?: string | null;
+      reupload?: boolean;
+      editAck?: { field: ParseReviewEditField; display: string };
+    },
+  ): Promise<void> {
+    const validationHint = formatValidationHint(options.validation ?? null);
+    const body = options.editAck
+      ? formatParseReviewEditAck(parsed, options.editAck.field, options.editAck.display, {
+          validationHint,
+          qualityHint: options.qualityHint,
+          reupload: options.reupload,
+          validation: options.validation,
+        })
+      : formatParseReviewPrompt(parsed, {
+          validationHint,
+          qualityHint: options.qualityHint,
+          reupload: options.reupload,
+          validation: options.validation,
+        });
+
+    await this.replyButtons(message, body, [{ id: 'parse_confirm_yes', title: 'Yes, confirm' }]);
+  }
+
+  private async continueOnboardingAfterParseConfirm(
+    message: Message & { contact: Contact },
+    profile: CareerProfile,
+  ): Promise<void> {
+    if (profile.onboardingStep === 'complete') {
+      await this.finishOnboarding(message, profile);
+      return;
+    }
+
+    const intro = [
+      '✅ *Profile details confirmed!*',
+      '',
+      '_Just a few quick questions to fine-tune your job matches…_',
+    ].join('\n');
+
+    if (
+      profile.onboardingStep === 'follow_up_employment_type' ||
+      profile.onboardingStep === 'follow_up_job_type'
+    ) {
+      await this.reply(message, `${intro}\n\nOne quick question:`);
+      await this.promptOnboardingStep(message, profile.onboardingStep);
+      return;
+    }
+
+    const question = this.getOnboardingSteps()[profile.onboardingStep]?.question;
+    await this.reply(message, question ? `${intro}\n\n${question}` : intro);
+  }
+
+  private async finishReuploadMatching(
+    message: Message & { contact: Contact },
+    profile: CareerProfile,
+    introPrefix = 'Resume updated! ✅',
+  ): Promise<void> {
+    const { allMatches, shownMatches: matches } = await this.matching.matchAndPersistForProfile(
+      message.userId,
+      profile,
+      { tier: 'good' },
+    );
+    if (matches.length === 0) {
+      await this.reply(
+        message,
+        allMatches.length > 0
+          ? `${introPrefix} No jobs scored 65%+ for your profile yet. Try *FIND JOBS {skill}* or *VIEW JOBS* after more listings are fetched.`
+          : `${introPrefix} No matching jobs in the system yet. Reply *VIEW JOBS* later.`,
+      );
+      return;
+    }
+    await this.presentTopJobs(
+      message,
+      profile,
+      matches,
+      `${introPrefix} I found *${matches.length}* matches (65%+ fit).`,
     );
   }
 
@@ -1974,7 +2162,7 @@ export class CareerBotService {
   }
 
   private shouldAcceptResumeUpload(profile: CareerProfile): boolean {
-    if (['welcome', 'awaiting_resume'].includes(profile.onboardingStep)) {
+    if (['welcome', 'awaiting_resume', 'parsing_resume', 'parse_review'].includes(profile.onboardingStep)) {
       return true;
     }
     const data = profile.onboardingData as Record<string, unknown> | null;
