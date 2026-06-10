@@ -4,7 +4,6 @@ import { CareerBotService } from '../career/services/career-bot.service';
 
 const TASK_FAILURE_LABELS: Record<CareerTaskJob['type'], string> = {
   parse_resume: 'resume reading',
-  generate_resume: 'resume generation',
   generate_cover_letter: 'cover letter generation',
 };
 
@@ -20,9 +19,6 @@ export class CareerTaskProcessor {
       switch (data.type) {
         case 'parse_resume':
           await this.bot.runParseResumeTask(data.messageId, !!data.reupload);
-          break;
-        case 'generate_resume':
-          await this.bot.runGenerateResumeTask(data.messageId, data.profileId, data.jobIndex);
           break;
         case 'generate_cover_letter':
           await this.bot.runGenerateCoverLetterTask(

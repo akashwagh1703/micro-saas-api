@@ -17,6 +17,7 @@ import {
   parseInterviewType,
   readActiveInterviewSession,
 } from '../career-interview-state.util';
+import { aggregateSessionTips, evaluateInterviewAnswerHeuristic } from '../career-interview-eval.util';
 import { CareerAiService } from './career-ai.service';
 import { CareerProfileService } from './career-profile.service';
 
@@ -141,7 +142,12 @@ export class CareerInterviewService {
     await this.reply(message, 'Evaluating your answer… ⏳');
 
     const snapshot = this.profiles.profileSnapshot(profile);
-    let evaluation = { score: 65, feedback: 'Good effort — try adding a specific example next time.' };
+    let evaluation = evaluateInterviewAnswerHeuristic({
+      interviewType: session.type ?? 'technical',
+      role: session.role,
+      question,
+      answer: text,
+    });
 
     try {
       evaluation = await this.careerAi.evaluateMockInterviewAnswer(
@@ -162,6 +168,8 @@ export class CareerInterviewService {
       answer: text,
       score: evaluation.score,
       feedback: evaluation.feedback,
+      tips: evaluation.tips,
+      breakdown: evaluation.breakdown,
     };
 
     const updatedSession: ActiveInterviewSession = {
@@ -174,6 +182,9 @@ export class CareerInterviewService {
       `*Score:* ${evaluation.score}/100`,
       evaluation.feedback,
     ];
+    if (evaluation.tips.length > 0) {
+      feedbackLines.push(`*Improve:* ${evaluation.tips[0]}`);
+    }
 
     if (updatedSession.currentIndex >= updatedSession.questions.length) {
       await this.saveSession(profile.id, profile.onboardingData, updatedSession);
@@ -370,6 +381,12 @@ export class CareerInterviewService {
     session.answers.slice(0, 3).forEach((a, i) => {
       lines.push(`${i + 1}. ${a.score}/100 — ${a.feedback.slice(0, 120)}${a.feedback.length > 120 ? '…' : ''}`);
     });
+
+    const sessionTips = aggregateSessionTips(session.answers, 3);
+    if (sessionTips.length > 0) {
+      lines.push('', '*Practice tips for next time:*');
+      sessionTips.forEach((tip, i) => lines.push(`${i + 1}. ${tip}`));
+    }
 
     lines.push(
       '',

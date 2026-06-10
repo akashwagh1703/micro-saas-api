@@ -89,7 +89,7 @@ export class CareerAlertChannelService {
     });
 
     lines.push(
-      'Reply on WhatsApp with APPLY 1, RESUME 1, or open your candidate portal for details.',
+      'Reply on WhatsApp with APPLY 1, COVER LETTER 1, or open your candidate portal for details.',
     );
 
     const text = lines.join('\n');

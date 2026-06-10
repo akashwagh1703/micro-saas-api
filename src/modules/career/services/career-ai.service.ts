@@ -8,6 +8,12 @@ import {
 } from '../career-guidance-state.util';
 import { ParsedCareerProfile } from '../career-parsed-profile.types';
 import { normalizeRawAiParse } from '../career-resume-parse.util';
+import {
+  evaluateInterviewAnswerHeuristic,
+  mergeInterviewEvaluation,
+  parseInterviewEvalJson,
+  type InterviewEvalResult,
+} from '../career-interview-eval.util';
 import { CareerAiUsageService } from './career-ai-usage.service';
 
 export type { ParsedCareerProfile } from '../career-parsed-profile.types';
@@ -54,58 +60,6 @@ export class CareerAiService {
     }
 
     return null;
-  }
-
-  // ─── Tailored resume ──────────────────────────────────────────────────────────
-
-  async generateTailoredResume(
-    userId: number,
-    profile: Record<string, unknown>,
-    job: { title: string; company: string; description?: string | null },
-    originalResumeText: string,
-  ): Promise<string | null> {
-    if (!originalResumeText.trim()) {
-      return null;
-    }
-
-    const messages: Array<{ role: 'system' | 'user'; content: string }> = [
-      {
-        role: 'system',
-        content:
-          'You tailor an EXISTING resume for a specific job application. ' +
-          'CRITICAL RULES:\n' +
-          '1. Use ONLY facts from the candidate\'s original resume text and profile — never invent employers, job titles, dates, degrees, certifications, or skills.\n' +
-          '2. Do NOT add experience, projects, or qualifications that are not in the source resume.\n' +
-          '3. You MAY reword bullet points, reorder sections, and mirror keywords from the job description when they honestly describe existing experience.\n' +
-          '4. You MAY write a short professional summary that reframes their real background for this role.\n' +
-          '5. Return plain text only with section headers: CONTACT | PROFESSIONAL SUMMARY | SKILLS | EXPERIENCE | EDUCATION | CERTIFICATIONS\n' +
-          '6. Minimum length: at least 350 words. Every section must contain real content from the source resume — never leave sections empty.',
-      },
-      {
-        role: 'user',
-        content: [
-          `Tailor this candidate's resume for: ${job.title} at ${job.company}`,
-          '',
-          '--- TARGET JOB ---',
-          `Title: ${job.title}`,
-          `Company: ${job.company}`,
-          `Description: ${(job.description ?? 'N/A').slice(0, 2500)}`,
-          '',
-          '--- CANDIDATE PROFILE (structured) ---',
-          JSON.stringify(profile).slice(0, 4000),
-          '',
-          '--- ORIGINAL RESUME (source of truth — do not add facts beyond this) ---',
-          originalResumeText.slice(0, 12000),
-        ].join('\n'),
-      },
-    ];
-
-    const result = await this.ai.completeWithMessages(userId, messages, {
-      max_tokens: 3000,
-      temperature: 0.2,
-    });
-    await this.track(userId, 'generate_resume', result);
-    return result.success ? (result.content ?? null) : null;
   }
 
   // ─── Cover letter ─────────────────────────────────────────────────────────────
@@ -286,13 +240,28 @@ export class CareerAiService {
     question: string,
     answer: string,
     profile: Record<string, unknown>,
-  ): Promise<{ score: number; feedback: string }> {
+  ): Promise<InterviewEvalResult> {
+    const heuristic = evaluateInterviewAnswerHeuristic({
+      interviewType,
+      role,
+      question,
+      answer,
+    });
+
+    if (answer.trim().length < 8) {
+      return heuristic;
+    }
+
     const messages: Array<{ role: 'system' | 'user'; content: string }> = [
       {
         role: 'system',
         content:
-          'You evaluate interview answers for WhatsApp. Return ONLY JSON: {"score":0-100,"feedback":"..."} ' +
-          'Feedback: 2-4 sentences, constructive, specific. Score fairly for the role level.',
+          'You are a strict interview evaluator for Indian job seekers on WhatsApp. ' +
+          'Score ONLY from the candidate answer text — not assumptions about their background. ' +
+          'Return ONLY JSON: {"score":0-100,"feedback":"2-3 sentences","improvements":["specific tip"]}. ' +
+          'Rubric: 0-25 off-topic or no real attempt; 26-45 vague with no example; 46-60 partial; ' +
+          '61-75 solid with minor gaps; 76-89 strong and specific; 90-100 excellent with structure and metrics. ' +
+          'Feedback must mention one strength OR gap tied to the actual answer. Do not inflate scores.',
       },
       {
         role: 'user',
@@ -300,33 +269,30 @@ export class CareerAiService {
           `Interview type: ${interviewType}`,
           `Role: ${role}`,
           `Question: ${question}`,
-          `Candidate answer: ${answer.slice(0, 2500)}`,
-          `Candidate background: ${JSON.stringify({
+          `Candidate answer (${answer.trim().split(/\s+/).length} words): ${answer.slice(0, 2500)}`,
+          `Background (context only — do not assume facts not in the answer): ${JSON.stringify({
             skills: profile['skills'],
             experience: profile['experience'],
           }).slice(0, 1200)}`,
+          `Heuristic baseline score: ${heuristic.score}/100 (completeness ${heuristic.breakdown.completeness}, specificity ${heuristic.breakdown.specificity}, relevance ${heuristic.breakdown.relevance}, structure ${heuristic.breakdown.structure}). Adjust only if clearly warranted.`,
         ].join('\n'),
       },
     ];
 
-    const result = await this.ai.completeWithMessages(userId, messages, {
-      max_tokens: 350,
-      temperature: 0.3,
-    });
-    await this.track(userId, 'mock_interview_eval', result);
+    let aiParsed: { score: number; feedback: string } | null = null;
 
-    const parsed = this.parseEvalJson(result.content ?? '');
-    if (parsed) {
-      return {
-        score: Math.min(100, Math.max(0, Math.round(parsed.score))),
-        feedback: parsed.feedback || 'Good effort — add more specific examples next time.',
-      };
+    try {
+      const result = await this.ai.completeWithMessages(userId, messages, {
+        max_tokens: 450,
+        temperature: 0.15,
+      });
+      await this.track(userId, 'mock_interview_eval', result);
+      aiParsed = parseInterviewEvalJson(result.content ?? '');
+    } catch {
+      // fall back to heuristic-only scoring
     }
 
-    return {
-      score: 65,
-      feedback: 'Thanks for your answer. Try adding a concrete example from your experience next time.',
-    };
+    return mergeInterviewEvaluation(heuristic, aiParsed);
   }
 
   private defaultMockQuestions(type: string, role: string, count: number): string[] {
@@ -833,23 +799,5 @@ export class CareerAiService {
     } catch {
       return null;
     }
-  }
-
-  private parseEvalJson(raw: string): { score: number; feedback: string } | null {
-    const cleaned = raw.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '');
-    const match = cleaned.match(/\{[\s\S]*\}/);
-    if (!match) return null;
-    try {
-      const obj = JSON.parse(match[0]) as { score?: unknown; feedback?: unknown };
-      if (typeof obj.score === 'number') {
-        return {
-          score: obj.score,
-          feedback: String(obj.feedback ?? '').trim(),
-        };
-      }
-    } catch {
-      return null;
-    }
-    return null;
   }
 }

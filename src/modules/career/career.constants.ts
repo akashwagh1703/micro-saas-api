@@ -41,7 +41,6 @@ export const CAREER_ONBOARDING_STEPS = [
 export const CAREER_COMMANDS = {
   FIND_JOBS: ['find jobs', 'find job', 'search jobs', 'job search'],
   SHOW_APPLICATIONS: ['show applications', 'applications', 'my applications'],
-  GENERATE_RESUME: ['generate resume', 'resume for job', 'tailor resume'],
   GENERATE_COVER_LETTER: ['generate cover letter', 'cover letter'],
   IMPROVE_RESUME: ['improve resume', 'resume tips'],
   CAREER_ADVICE: ['career advice', 'career tips'],
@@ -106,12 +105,10 @@ export function buildJobActionButtons(count: number): Array<{ id: string; title:
   const buttons: Array<{ id: string; title: string }> = [];
   if (count >= 1) {
     buttons.push({ id: 'apply_1', title: 'Apply #1' });
-    buttons.push({ id: 'resume_1', title: 'Resume #1' });
+    buttons.push({ id: 'cover_1', title: 'Cover #1' });
   }
   if (count >= 2) {
     buttons.push({ id: 'apply_2', title: 'Apply #2' });
-  } else if (count >= 1) {
-    buttons.push({ id: 'cover_1', title: 'Cover #1' });
   }
   return buttons.slice(0, 3);
 }

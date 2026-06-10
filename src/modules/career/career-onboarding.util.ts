@@ -154,7 +154,7 @@ export function welcomeMessage(name?: string | null): string {
     '',
     'Your personal career coach on WhatsApp — I\'ll:',
     '✨ Match you with 70%+ fit jobs',
-    '📝 Tailor resumes & cover letters',
+    '📝 Generate cover letters',
     '🎤 Run mock interviews & career guidance',
     '',
     '📄 *Let\'s start:* Upload your latest resume (*PDF* or *DOCX*)',

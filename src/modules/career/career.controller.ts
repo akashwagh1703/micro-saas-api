@@ -253,9 +253,6 @@ export class CareerController {
         resumes: {
           orderBy: { createdAt: 'desc' },
           take: 5,
-          include: {
-            versions: { orderBy: { createdAt: 'desc' }, take: 10, include: { job: true } },
-          },
         },
         jobMatches: { include: { job: true }, orderBy: { score: 'desc' }, take: 20 },
         applications: { include: { job: true } },
@@ -483,18 +480,6 @@ export class CareerController {
       message: `Re-matched profile — ${result.matchCount} strong matches (70%+ score)`,
       ...result,
     };
-  }
-
-  @Post('resume-versions/:id/send')
-  async sendResumeVersion(
-    @CurrentUser('id') userId: number,
-    @Param('id', ParseIntPipe) id: number,
-  ) {
-    const result = await this.bot.sendResumeVersionToContact(userId, id);
-    if (!result.success) {
-      throw new UnprocessableEntityException(result.error ?? 'Could not send resume on WhatsApp');
-    }
-    return { message: 'Resume sent on WhatsApp', success: true };
   }
 
   @Post('cover-letters/:id/send')
@@ -726,37 +711,6 @@ export class CareerController {
       type: resume.mimeType ?? 'application/octet-stream',
       disposition: `attachment; filename="${fileName.replace(/"/g, '')}"`,
     });
-  }
-
-  @Get('resume-versions/:id/download')
-  async downloadResumeVersion(
-    @CurrentUser('id') userId: number,
-    @Param('id', ParseIntPipe) id: number,
-    @Query('format') format?: string,
-  ): Promise<StreamableFile> {
-    const docFormat: CareerDocumentFormat =
-      format?.trim().toLowerCase() === 'docx' ? 'docx' : 'pdf';
-    const version = await this.prisma.careerResumeVersion.findFirst({
-      where: { id, userId },
-      include: { job: true },
-    });
-    if (!version?.filePathDocx && !version?.filePathPdf && !version?.filePath && !version?.content) {
-      throw new NotFoundException('Generated resume not found');
-    }
-
-    const title = version.job
-      ? `${version.job.title} — tailored`
-      : version.title ?? 'Tailored resume';
-    const baseName = version.title ?? version.job?.title ?? `resume-version-${id}`;
-
-    return this.streamGeneratedDocument(
-      version,
-      docFormat,
-      title,
-      baseName,
-      (t, body) => this.docx.resumeFromText(t, body),
-      (t, body) => this.pdf.fromText(t, body),
-    );
   }
 
   @Get('cover-letters/:id/download')

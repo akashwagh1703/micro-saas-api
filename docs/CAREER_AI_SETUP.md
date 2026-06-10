@@ -24,7 +24,7 @@ CareerAI is a **business type** inside AutoWave (`career_ai`), not a separate ap
 | VIEW JOBS | Top 10 matches (numbered) |
 | FIND JOBS {keyword} | Search and rank jobs |
 | APPLY 2 | Save job #2 + send apply link |
-| RESUME 2 | Tailored CV for job #2 (sent on WhatsApp) |
+| COVER LETTER 2 | Cover letter for job #2 (PDF + DOCX on WhatsApp) |
 | UPLOAD RESUME | Upload a new PDF/DOCX after onboarding |
 | SHOW APPLICATIONS | Application tracker |
 | GENERATE COVER LETTER | Role-specific letter |
@@ -45,7 +45,7 @@ CareerAI is a **business type** inside AutoWave (`career_ai`), not a separate ap
 **CareerAI** in the sidebar:
 
 - Overview analytics + **MinIO storage status**
-- Profiles (download uploaded + generated resumes)
+- Profiles (download uploaded resumes)
 - Jobs, matches, applications
 - Seed sample jobs / fetch Adzuna jobs / refresh
 - Run daily digest manually
@@ -59,7 +59,6 @@ CareerAI is a **business type** inside AutoWave (`career_ai`), not a separate ap
 - `GET /career/job-sources` — Adzuna / Naukri / LinkedIn connection status
 - `DELETE /career/profiles/:id` — permanent erasure (operator)
 - `GET /career/resumes/:id/download`
-- `GET /career/resume-versions/:id/download`
 - `GET|POST /career/jobs`, `POST /career/jobs/refresh` (tenant-scoped)
 - `GET /career/matches`, `GET /career/applications`
 - `PATCH /career/applications/:id/status`
@@ -139,12 +138,12 @@ Verify:
 2. Portal CareerAI page shows green MinIO status
 3. Upload a test resume on WhatsApp → download works in portal
 4. `VIEW JOBS` → numbered list with apply URLs
-5. `RESUME 1` → tailored text arrives on WhatsApp
+5. `COVER LETTER 1` → cover letter arrives on WhatsApp
 6. `POST /career/digest/run` twice same day → second run skips (dedup)
 
 ## P1 — Job seeker UX (shipped)
 
-- **WhatsApp reply buttons** for work mode (Remote / Hybrid / Onsite) and top job actions (Apply #1–3, Resume #1)
+- **WhatsApp reply buttons** for work mode (Remote / Hybrid / Onsite) and top job actions (Apply #1–3, Cover #1)
 - **`RESET PROFILE` / `START OVER`** — clears profile and restarts onboarding
 - **`HELP`** with practical examples (not a raw command wall)
 - **IST digest** — `CAREER_DIGEST_TIMEZONE=Asia/Kolkata` + `CAREER_DIGEST_HOUR=8` (8:00 AM local)
@@ -157,8 +156,7 @@ Verify:
 Heavy CareerAI work runs off the WhatsApp webhook path so users get an immediate reply:
 
 - Resume parse after upload
-- `GENERATE RESUME` / `RESUME N`
-- `GENERATE COVER LETTER`
+- `GENERATE COVER LETTER` / `COVER LETTER N`
 
 Users see “⏳ working…” on WhatsApp; the bot sends the result when the queue job finishes.
 
@@ -184,8 +182,8 @@ pg-boss job refresh scheduled: every 6 hours (UTC)
 ### Portal operator upgrades
 - **CareerAI nav** visible only when `business_category === career_ai`
 - Non–CareerAI tenants are redirected away from `/career-ai`
-- **Profile detail modal** — edit location, salary, roles; view cover letters and generated resumes
-- **Download** uploaded and tailored resumes from profile detail
+- **Profile detail modal** — edit location, salary, roles; view cover letters
+- **Download** uploaded resumes from profile detail
 
 ## P2 production deploy checklist
 
@@ -204,7 +202,7 @@ npm run build
 Verify:
 
 1. Upload resume on WhatsApp → immediate ack → profile completes in background
-2. `RESUME 1` → “Generating…” then tailored resume arrives within ~30s
+2. `COVER LETTER 1` → “Generating…” then cover letter arrives within ~30s
 3. Portal overview shows AI token count
 4. Edit a profile field in portal → saves via `PATCH /career/profiles/:id`
 5. Two API instances → digest runs once (check logs / notification dedup)

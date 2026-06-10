@@ -149,7 +149,7 @@ export class CareerJobAlertService {
         {
           conversationId: conversation?.id,
           buttons: buildJobActionButtons(top.length),
-          buttonPrompt: 'Apply or tailor your resume:',
+          buttonPrompt: 'Apply or get a cover letter:',
         },
       );
 
@@ -221,7 +221,7 @@ export class CareerJobAlertService {
     });
 
     lines.push(
-      'Reply *APPLY 1* to save & apply, *RESUME 1* for a tailored CV, or *JOB 1* for full details.',
+      'Reply *APPLY 1* to save & apply, *COVER LETTER 1* for a cover letter, or *JOB 1* for full details.',
       'Reply *PORTAL LINK* for your web dashboard · *STOP DIGEST* to pause alerts.',
     );
 

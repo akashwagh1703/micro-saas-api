@@ -2,7 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import * as crypto from 'crypto';
 
-export type CareerShareDocKind = 'resume-version' | 'cover-letter' | 'resume';
+export type CareerShareDocKind = 'cover-letter' | 'resume';
 
 export interface CareerSharePayload {
   kind: CareerShareDocKind;

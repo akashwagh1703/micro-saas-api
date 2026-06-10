@@ -185,22 +185,12 @@ export class CareerBotService {
       return true;
     }
 
-    const resumeIndex = this.parseResumeIndex(lower);
-    if (resumeIndex !== null) {
-      await this.cmdGenerateResume(message, profile, resumeIndex);
-      return true;
-    }
-
     if (this.matchesCommand(lower, CAREER_COMMANDS.FIND_JOBS)) {
       await this.cmdFindJobs(message, profile, text);
       return true;
     }
     if (this.matchesCommand(lower, CAREER_COMMANDS.SHOW_APPLICATIONS)) {
       await this.cmdShowApplications(message, profile);
-      return true;
-    }
-    if (this.matchesCommand(lower, CAREER_COMMANDS.GENERATE_RESUME)) {
-      await this.cmdGenerateResume(message, profile);
       return true;
     }
 
@@ -545,7 +535,6 @@ export class CareerBotService {
       'One tap next steps:',
       '• *JOB 1* — full job details',
       '• *APPLY 1* — save & get apply link',
-      '• *RESUME 1* — tailored resume (PDF + DOCX)',
       '• *COVER LETTER 1* — matching cover letter (PDF + DOCX)',
       '• *FIND JOBS python* — search more roles',
     );
@@ -955,7 +944,6 @@ export class CareerBotService {
       '',
       '*Actions:*',
       `• *APPLY ${index1Based}* — save & get apply link`,
-      `• *RESUME ${index1Based}* — tailored resume (PDF + DOCX)`,
       `• *COVER LETTER ${index1Based}* — cover letter (PDF + DOCX)`,
     );
 
@@ -995,7 +983,7 @@ export class CareerBotService {
     if (autoApply) {
       lines.push(
         '',
-        'Your operator will assist with submission using your tailored resume. Reply *DISABLE AUTO APPLY* to opt out.',
+        'Your operator will assist with submission using your profile and uploaded resume. Reply *DISABLE AUTO APPLY* to opt out.',
       );
     }
     if (job.applyUrl) {
@@ -1003,7 +991,7 @@ export class CareerBotService {
     } else {
       lines.push('', 'Search the company career page to submit your application.');
     }
-    lines.push('', `Reply *RESUME ${index1Based}* to generate a tailored CV for this role.`);
+    lines.push('', `Reply *COVER LETTER ${index1Based}* for a matching cover letter.`);
     await this.reply(message, lines.join('\n'));
   }
 
@@ -1022,194 +1010,6 @@ export class CareerBotService {
       lines.push(`${i + 1}. ${a.job.title} @ ${a.job.company} — ${a.status.toUpperCase()}`);
     });
     await this.reply(message, lines.join('\n'));
-  }
-
-  private async cmdGenerateResume(
-    message: Message & { contact: Contact },
-    profile: CareerProfile,
-    index1Based?: number,
-  ): Promise<void> {
-    let job = index1Based
-      ? await this.resolveJobByIndex(profile, message.userId, index1Based)
-      : await this.resolveJobByIndex(profile, message.userId, 1);
-
-    if (!job) {
-      const topMatch = await this.prisma.careerJobMatch.findFirst({
-        where: { profileId: profile.id },
-        orderBy: { score: 'desc' },
-        include: { job: true },
-      });
-      job = topMatch?.job ?? null;
-    }
-
-    if (!job) {
-      await this.reply(message, 'No job matches yet. Reply *FIND JOBS* or *VIEW JOBS* first.');
-      return;
-    }
-
-    const jobNum = index1Based ?? (await this.jobIndexInSession(profile.id, job.id)) ?? 1;
-
-    await this.reply(message, `Generating tailored resume for *${job.title}* @ ${job.company}… ⏳`);
-
-    await this.dispatcher.enqueueCareerTask({
-      type: 'generate_resume',
-      messageId: message.id,
-      profileId: profile.id,
-      userId: message.userId,
-      jobIndex: jobNum,
-    });
-  }
-
-  async runGenerateResumeTask(
-    messageId: number,
-    profileId: number,
-    jobIndex?: number,
-  ): Promise<void> {
-    const message = await this.loadIncomingMessage(messageId);
-    if (!message) {
-      return;
-    }
-    const profile = await this.prisma.careerProfile.findFirst({
-      where: { id: profileId, userId: message.userId },
-    });
-    if (!profile) {
-      return;
-    }
-    await this.processGenerateResume(message, profile, jobIndex);
-  }
-
-  private async processGenerateResume(
-    message: Message & { contact: Contact },
-    profile: CareerProfile,
-    index1Based?: number,
-  ): Promise<void> {
-    let job = index1Based
-      ? await this.resolveJobByIndex(profile, message.userId, index1Based)
-      : await this.resolveJobByIndex(profile, message.userId, 1);
-
-    if (!job) {
-      const topMatch = await this.prisma.careerJobMatch.findFirst({
-        where: { profileId: profile.id },
-        orderBy: { score: 'desc' },
-        include: { job: true },
-      });
-      job = topMatch?.job ?? null;
-    }
-
-    if (!job) {
-      await this.reply(message, 'No job matches yet. Reply *FIND JOBS* or *VIEW JOBS* first.');
-      return;
-    }
-
-    const jobNum = index1Based ?? (await this.jobIndexInSession(profile.id, job.id)) ?? 1;
-
-    const originalResumeText = await this.loadOriginalResumeText(profile);
-    if (!originalResumeText.trim()) {
-      await this.reply(
-        message,
-        'Please upload your resume first (*UPLOAD RESUME*) so I can tailor it using your real experience.',
-      );
-      return;
-    }
-
-    const aiContent = await this.safeAiCall(
-      message.userId,
-      () =>
-        this.careerAi.generateTailoredResume(
-          message.userId,
-          this.profiles.profileSnapshot(profile),
-          job!,
-          originalResumeText,
-        ),
-      null,
-      'generate_resume',
-    );
-    const snapshot = this.profiles.profileSnapshot(profile);
-    const content = this.resumeBuilder.ensureTailoredResume(
-      aiContent,
-      snapshot,
-      originalResumeText,
-      job!,
-    );
-
-    const master = profile.masterResumeId
-      ? await this.prisma.careerResume.findUnique({ where: { id: profile.masterResumeId } })
-      : null;
-
-    const resumeId =
-      master?.id ??
-      (
-        await this.prisma.careerResume.create({
-          data: {
-            userId: message.userId,
-            profileId: profile.id,
-            contactId: message.contactId,
-            type: 'master',
-            isMaster: true,
-          },
-        })
-      ).id;
-
-    const docxBuffer = await this.docx.resumeFromText('', content);
-    const pdfBuffer = await this.pdf.fromText(`${job.title} — tailored`, content);
-    const filePathDocx = await this.storage.saveBuffer(
-      message.userId,
-      'generated',
-      `resume_${job.id}.docx`,
-      docxBuffer,
-    );
-    const filePathPdf = await this.storage.saveBuffer(
-      message.userId,
-      'generated',
-      `resume_${job.id}.pdf`,
-      pdfBuffer,
-    );
-
-    const version = await this.prisma.careerResumeVersion.create({
-      data: {
-        userId: message.userId,
-        resumeId,
-        jobId: job.id,
-        title: `${job.title} — tailored`,
-        content,
-        filePathDocx,
-        filePathPdf,
-        filePath: filePathPdf,
-      },
-    });
-
-    await this.applications.upsertSaved(
-      message.userId,
-      profile.id,
-      message.contactId,
-      job.id,
-    );
-
-    const downloadUrl = this.share.buildShareUrl('resume-version', version.id, message.userId);
-    const pdfFileName = careerPdfFileName(`${job.title}-${job.company}`);
-    const docSent = await this.sendDocumentToContact(
-      message.userId,
-      message.contactId,
-      pdfBuffer,
-      pdfFileName,
-      PDF_MIME,
-      `Tailored resume for ${job.title} @ ${job.company}`,
-    );
-
-    if (docSent.success) {
-      await this.reply(
-        message,
-        `*Tailored resume sent* ✅ — ${job.title} @ ${job.company}\n\nPDF attached. DOCX also available:\n${downloadUrl}?format=docx\n\nReply *APPLY ${jobNum}* for the apply link, or *COVER LETTER ${jobNum}* for a matching cover letter.`,
-      );
-    } else {
-      this.logger.warn(
-        `Resume document send failed profileId=${profile.id}: ${docSent.error ?? 'unknown'}`,
-      );
-      await this.reply(
-        message,
-        `*Tailored resume ready* — ${job.title} @ ${job.company}\n\n📎 PDF: ${downloadUrl}\n📎 DOCX: ${downloadUrl}?format=docx\n(links valid 72 hours)`,
-      );
-    }
   }
 
   private async cmdGenerateCoverLetter(
@@ -1390,64 +1190,6 @@ export class CareerBotService {
       totalScored: allMatches.length,
       topScore: quality[0]?.score ?? 0,
     };
-  }
-
-  /** Send a generated resume to the job seeker on WhatsApp (portal operator action). */
-  async sendResumeVersionToContact(
-    userId: number,
-    versionId: number,
-  ): Promise<{ success: boolean; error?: string }> {
-    const version = await this.prisma.careerResumeVersion.findFirst({
-      where: { id: versionId, userId },
-      include: { job: true, resume: true },
-    });
-    if (!version?.content && !version?.filePathDocx && !version?.filePath) {
-      return { success: false, error: 'Resume version not found' };
-    }
-
-    const profileId = version.resume?.profileId;
-    if (!profileId) {
-      return { success: false, error: 'Profile not linked' };
-    }
-
-    const profile = await this.prisma.careerProfile.findFirst({
-      where: { id: profileId, userId },
-    });
-    if (!profile) {
-      return { success: false, error: 'Profile not found' };
-    }
-
-    const buffer = await readCareerDocumentBuffer(this.storage, version);
-    if (!buffer) {
-      return { success: false, error: 'Resume file unavailable' };
-    }
-
-    const fileName = careerDocxFileName(
-      version.job ? `${version.job.title}-${version.job.company}` : version.title ?? 'resume',
-    );
-    const caption = version.job
-      ? `Tailored resume — ${version.job.title} @ ${version.job.company}`
-      : 'Tailored resume';
-
-    const docSent = await this.sendDocumentToContact(
-      userId,
-      profile.contactId,
-      buffer,
-      fileName,
-      DOCX_MIME,
-      caption,
-    );
-
-    if (docSent.success) {
-      return { success: true };
-    }
-
-    const downloadUrl = this.share.buildShareUrl('resume-version', version.id, userId);
-    return this.sendTextToProfile(
-      userId,
-      profileId,
-      `${caption}\n\nDocument attach failed — download here (72h):\n${downloadUrl}`,
-    );
   }
 
   /** Send a cover letter to the job seeker on WhatsApp (portal operator action). */
@@ -1769,7 +1511,6 @@ export class CareerBotService {
       '• *VIEW JOBS* — jobs matched to your profile',
       '• *JOB 1* — full details for job #1',
       '• *APPLY 1* — save job & get apply link',
-      '• *RESUME 1* — tailored resume (PDF + DOCX) for job #1',
       '• *COVER LETTER 1* — cover letter (PDF + DOCX) for job #1',
       '• *MOCK INTERVIEW* — 5-question practice with readiness score',
       '• *MOCK INTERVIEW 1* — practice for job #1',
@@ -2187,11 +1928,6 @@ export class CareerBotService {
 
   private parseApplyIndex(lower: string): number | null {
     const match = lower.match(/^apply\s*#?\s*(\d+)\s*$/);
-    return match ? parseInt(match[1], 10) : null;
-  }
-
-  private parseResumeIndex(lower: string): number | null {
-    const match = lower.match(/^(?:generate\s+)?resume\s*#?\s*(\d+)\s*$/);
     return match ? parseInt(match[1], 10) : null;
   }
 

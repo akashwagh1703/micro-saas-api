@@ -57,32 +57,6 @@ export class CareerPublicController {
       throw new NotFoundException('Invalid or expired link');
     }
 
-    if (payload.kind === 'resume-version') {
-      const version = await this.prisma.careerResumeVersion.findFirst({
-        where: { id: payload.id, userId: payload.userId },
-        include: { job: true },
-      });
-      if (!version?.filePathDocx && !version?.filePathPdf && !version?.filePath && !version?.content) {
-        throw new NotFoundException('Document not found');
-      }
-
-      const title = version.job
-        ? `${version.job.title} — Resume`
-        : version.title ?? 'Tailored resume';
-      const baseName = version.job
-        ? `resume-${version.job.company}-${version.job.title}`
-        : `resume-version-${version.id}`;
-
-      return this.streamGeneratedDocument(
-        version,
-        docFormat,
-        title,
-        baseName,
-        (t, body) => this.docx.resumeFromText(t, body),
-        (t, body) => this.pdf.fromText(t, body),
-      );
-    }
-
     if (payload.kind === 'cover-letter') {
       const letter = await this.prisma.careerCoverLetter.findFirst({
         where: { id: payload.id, userId: payload.userId },

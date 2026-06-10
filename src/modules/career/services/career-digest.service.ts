@@ -120,7 +120,7 @@ export class CareerDigestService {
         '',
         'Reply:',
         '• *APPLY 1* — save & get apply link',
-        '• *RESUME 1* — tailor CV for a job',
+        '• *COVER LETTER 1* — cover letter for a job',
         '• *JOB 1* — full job details',
         '• *VIEW JOBS* — see all matches',
         '• *PORTAL LINK* — open your web dashboard',

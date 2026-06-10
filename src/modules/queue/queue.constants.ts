@@ -22,7 +22,7 @@ export interface SendMessageJob {
   content: string;
 }
 
-export type CareerTaskType = 'parse_resume' | 'generate_resume' | 'generate_cover_letter';
+export type CareerTaskType = 'parse_resume' | 'generate_cover_letter';
 
 export interface CareerTaskJob {
   type: CareerTaskType;

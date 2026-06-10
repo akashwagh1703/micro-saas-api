@@ -1,5 +1,6 @@
 import { Prisma } from '@prisma/client';
 import { CareerInterviewType } from './career.constants';
+import type { InterviewEvalBreakdown } from './career-interview-eval.util';
 
 export const INTERVIEW_SESSION_KEY = 'interview_session';
 export const INTERVIEW_HISTORY_KEY = 'interview_history';
@@ -11,6 +12,8 @@ export interface InterviewAnswerRecord {
   answer: string;
   score: number;
   feedback: string;
+  tips?: string[];
+  breakdown?: InterviewEvalBreakdown;
 }
 
 export interface ActiveInterviewSession {
