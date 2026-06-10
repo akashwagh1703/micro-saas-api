@@ -30,11 +30,10 @@ export class BillingWebhookController {
     const payload =
       typeof req.body === 'object' && req.body !== null ? req.body : JSON.parse(body.toString());
     const event = payload.event as string;
-    const entity = payload.payload?.subscription?.entity ?? payload.payload?.payment?.entity ?? {};
 
     try {
       if (this.billing.verifyWebhookSignature(body, signature)) {
-        await this.billing.handleWebhookEvent(event, entity);
+        await this.billing.handleWebhookEvent(event, payload);
         res.status(200).json({ ok: true });
         return;
       }

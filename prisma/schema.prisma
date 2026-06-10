@@ -50,6 +50,7 @@ model User {
   careerCoverLetters  CareerCoverLetter[]
   careerNotifications CareerNotification[]
   careerAuditLogs     CareerAuditLog[]
+  billingTransactions BillingTransaction[]
 
   @@map("users")
 }
@@ -546,4 +547,27 @@ model CareerAuditLog {
   @@index([userId, createdAt])
   @@index([userId, action])
   @@map("career_audit_logs")
+}
+
+model BillingTransaction {
+  id                     Int       @id @default(autoincrement())
+  userId                 Int       @map("user_id")
+  product                String    @default("platform") @db.VarChar(32)
+  eventType              String    @map("event_type") @db.VarChar(64)
+  razorpayPaymentId      String?   @map("razorpay_payment_id") @db.VarChar(64)
+  razorpaySubscriptionId String?   @map("razorpay_subscription_id") @db.VarChar(64)
+  plan                   String?   @db.VarChar(20)
+  amountInr              Int       @default(0) @map("amount_inr")
+  currency               String    @default("INR") @db.VarChar(8)
+  status                 String    @default("captured") @db.VarChar(32)
+  metadata               Json?
+  createdAt              DateTime  @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@index([createdAt])
+  @@index([product, createdAt])
+  @@index([razorpayPaymentId])
+  @@map("billing_transactions")
 }

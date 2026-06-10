@@ -23,9 +23,33 @@ export class AdminController {
     return this.admin.getOverview();
   }
 
+  @Get('analytics')
+  analytics(@Query('days') days = '30') {
+    return this.admin.getAnalytics(parseInt(days, 10) || 30);
+  }
+
+  @Get('transactions')
+  listTransactions(
+    @Query('page') page = '1',
+    @Query('search') search = '',
+    @Query('status') status = '',
+  ) {
+    return this.admin.listTransactions(parseInt(page, 10) || 1, search ?? '', status ?? '');
+  }
+
   @Get('users')
-  listUsers(@Query('page') page = '1', @Query('search') search = '') {
-    return this.admin.listUsers(parseInt(page, 10) || 1, search ?? '');
+  listUsers(
+    @Query('page') page = '1',
+    @Query('search') search = '',
+    @Query('status') status = '',
+    @Query('plan') plan = '',
+  ) {
+    return this.admin.listUsers(
+      parseInt(page, 10) || 1,
+      search ?? '',
+      status ?? '',
+      plan ?? '',
+    );
   }
 
   @Get('users/:id')

@@ -6,7 +6,7 @@ import {
   UnprocessableEntityException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { User } from '@prisma/client';
+import { Prisma, User } from '@prisma/client';
 import * as crypto from 'crypto';
 import Razorpay from 'razorpay';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -239,6 +239,51 @@ export class BillingService {
     return desc.includes('customer') || desc.includes('id provided is invalid');
   }
 
+  private async fetchRazorpayPaymentDetails(
+    paymentId: string,
+  ): Promise<{ amountInr: number; status: string } | null> {
+    const razorpay = this.getRazorpay();
+    if (!razorpay) return null;
+    try {
+      const payment = await razorpay.payments.fetch(paymentId);
+      return {
+        amountInr: Math.round(Number(payment.amount) / 100),
+        status: String(payment.status ?? 'captured'),
+      };
+    } catch (err) {
+      this.logger.warn(
+        `Could not fetch Razorpay payment ${paymentId}: ${this.razorpayErrorMessage(err, 'unknown')}`,
+      );
+      return null;
+    }
+  }
+
+  private async fetchRazorpaySubscriptionPeriodEnd(subscriptionId: string): Promise<Date | null> {
+    const razorpay = this.getRazorpay();
+    if (!razorpay) return null;
+    try {
+      const subscription = await razorpay.subscriptions.fetch(subscriptionId);
+      if (subscription.current_end) {
+        return new Date(Number(subscription.current_end) * 1000);
+      }
+    } catch (err) {
+      this.logger.warn(
+        `Could not fetch Razorpay subscription ${subscriptionId}: ${this.razorpayErrorMessage(err, 'unknown')}`,
+      );
+    }
+    return null;
+  }
+
+  private estimatePeriodEnd(plan: BillingPlan): Date {
+    const periodEnd = new Date();
+    if (plan === 'yearly') {
+      periodEnd.setFullYear(periodEnd.getFullYear() + 1);
+    } else {
+      periodEnd.setMonth(periodEnd.getMonth() + 1);
+    }
+    return periodEnd;
+  }
+
   async createSubscription(userId: number, plan: BillingPlan) {
     if (!this.isEnabled()) {
       throw new UnprocessableEntityException('Billing is not enabled.');
@@ -363,12 +408,14 @@ export class BillingService {
     }
 
     const plan = (user.subscriptionPlan as BillingPlan) ?? 'monthly';
-    const periodEnd = new Date();
-    if (plan === 'yearly') {
-      periodEnd.setFullYear(periodEnd.getFullYear() + 1);
-    } else {
-      periodEnd.setMonth(periodEnd.getMonth() + 1);
-    }
+    const periodEnd =
+      (await this.fetchRazorpaySubscriptionPeriodEnd(subscriptionId)) ??
+      this.estimatePeriodEnd(plan);
+
+    const paymentDetails = await this.fetchRazorpayPaymentDetails(paymentId);
+    const amountInr =
+      paymentDetails?.amountInr ??
+      (plan === 'monthly' ? this.monthlyPriceInr() : this.yearlyPriceInr());
 
     await this.prisma.user.update({
       where: { id: userId },
@@ -378,6 +425,16 @@ export class BillingService {
         subscriptionPlan: plan,
         currentPeriodEnd: periodEnd,
       },
+    });
+
+    await this.recordTransaction({
+      userId,
+      eventType: 'checkout.activated',
+      razorpayPaymentId: paymentId,
+      razorpaySubscriptionId: subscriptionId,
+      plan,
+      amountInr,
+      status: paymentDetails?.status ?? 'captured',
     });
 
     return this.getStatus(userId);
@@ -390,41 +447,114 @@ export class BillingService {
     return expected === signature;
   }
 
-  async handleWebhookEvent(event: string, payload: Record<string, unknown>): Promise<boolean> {
+  async handleWebhookEvent(event: string, webhookBody: Record<string, unknown>): Promise<boolean> {
     this.logger.log(`Razorpay webhook: ${event}`);
 
-    const entity = (payload?.entity as Record<string, unknown>) ?? payload;
-    const nestedSub = payload?.subscription as { entity?: { id?: string } } | undefined;
+    const inner = (webhookBody.payload as Record<string, unknown>) ?? {};
+    const subscriptionWrap = inner.subscription as { entity?: Record<string, unknown> } | undefined;
+    const paymentWrap = inner.payment as { entity?: Record<string, unknown> } | undefined;
+    const subscriptionEntity = subscriptionWrap?.entity;
+    const paymentEntity = paymentWrap?.entity;
+    const entity =
+      subscriptionEntity ??
+      paymentEntity ??
+      (webhookBody.entity as Record<string, unknown>) ??
+      webhookBody;
+
     const subscriptionId =
+      (subscriptionEntity?.id as string) ??
+      (entity?.subscription_id as string) ??
       (entity?.id as string) ??
-      (payload?.subscription_id as string) ??
-      nestedSub?.entity?.id;
+      (webhookBody.subscription_id as string);
 
     if (!subscriptionId) {
       this.logger.warn('Webhook missing subscription id');
       return false;
     }
 
-    const user = await this.prisma.user.findFirst({
+    const notes =
+      (subscriptionEntity?.notes as Record<string, string>) ??
+      (entity?.notes as Record<string, string>) ??
+      {};
+
+    if (notes.product === 'career_seeker') {
+      return false;
+    }
+
+    let user = await this.prisma.user.findFirst({
       where: { razorpaySubscriptionId: subscriptionId },
     });
 
     if (!user) {
-      const notes = (entity?.notes as Record<string, string>) ?? {};
-      if (notes.product === 'career_seeker') {
-        return false;
-      }
       const userId = notes.user_id ? Number(notes.user_id) : null;
       if (!userId) {
         this.logger.warn(`No user for subscription ${subscriptionId}`);
         return false;
       }
-      await this.applySubscriptionEvent(userId, event, entity, subscriptionId);
-      return true;
+      user = await this.prisma.user.findUnique({ where: { id: userId } });
+      if (!user) {
+        this.logger.warn(`Webhook user_id ${userId} not found for subscription ${subscriptionId}`);
+        return false;
+      }
     }
 
-    await this.applySubscriptionEvent(user.id, event, entity, subscriptionId);
+    const subscriptionForEvent = subscriptionEntity ?? entity;
+    await this.applySubscriptionEvent(user.id, event, subscriptionForEvent, subscriptionId);
+
+    if (event === 'subscription.charged') {
+      const freshUser = await this.prisma.user.findUnique({ where: { id: user.id } });
+      const plan =
+        (notes.plan as BillingPlan) ??
+        ((freshUser?.subscriptionPlan as BillingPlan) ?? 'monthly');
+      const amountPaise =
+        Number(paymentEntity?.amount ?? entity?.amount ?? 0) ||
+        (plan === 'yearly' ? this.yearlyPriceInr() : this.monthlyPriceInr()) * 100;
+
+      await this.recordTransaction({
+        userId: user.id,
+        eventType: event,
+        razorpayPaymentId: (paymentEntity?.id as string) ?? null,
+        razorpaySubscriptionId: subscriptionId,
+        plan,
+        amountInr: Math.round(amountPaise / 100),
+        status: (paymentEntity?.status as string) ?? 'captured',
+        metadata: { source: 'webhook' },
+      });
+    }
+
     return true;
+  }
+
+  private async recordTransaction(data: {
+    userId: number;
+    eventType: string;
+    razorpayPaymentId?: string | null;
+    razorpaySubscriptionId?: string | null;
+    plan?: BillingPlan | string | null;
+    amountInr: number;
+    status?: string;
+    metadata?: Record<string, unknown>;
+  }) {
+    if (data.razorpayPaymentId) {
+      const existing = await this.prisma.billingTransaction.findFirst({
+        where: { razorpayPaymentId: data.razorpayPaymentId },
+      });
+      if (existing) return existing;
+    }
+
+    return this.prisma.billingTransaction.create({
+      data: {
+        userId: data.userId,
+        product: 'platform',
+        eventType: data.eventType,
+        razorpayPaymentId: data.razorpayPaymentId ?? null,
+        razorpaySubscriptionId: data.razorpaySubscriptionId ?? null,
+        plan: data.plan ?? null,
+        amountInr: data.amountInr,
+        status: data.status ?? 'captured',
+        metadata: (data.metadata as Prisma.InputJsonValue) ?? undefined,
+      },
+    });
   }
 
   private async applySubscriptionEvent(
@@ -433,6 +563,12 @@ export class BillingService {
     entity: Record<string, unknown>,
     subscriptionId: string,
   ) {
+    const existing = await this.prisma.user.findUnique({ where: { id: userId } });
+    if (!existing) {
+      this.logger.warn(`applySubscriptionEvent: user ${userId} not found`);
+      return;
+    }
+
     const planNote = (entity?.notes as Record<string, string>)?.plan;
     const currentEnd = entity.current_end
       ? new Date(Number(entity.current_end) * 1000)
@@ -445,16 +581,8 @@ export class BillingService {
       case 'subscription.resumed': {
         const plan =
           (planNote as BillingPlan) ??
-          ((await this.getUser(userId)).subscriptionPlan as BillingPlan) ??
-          'monthly';
-        const periodEnd =
-          currentEnd ??
-          (() => {
-            const d = new Date();
-            if (plan === 'yearly') d.setFullYear(d.getFullYear() + 1);
-            else d.setMonth(d.getMonth() + 1);
-            return d;
-          })();
+          ((existing.subscriptionPlan as BillingPlan) ?? 'monthly');
+        const periodEnd = currentEnd ?? this.estimatePeriodEnd(plan);
 
         await this.prisma.user.update({
           where: { id: userId },
