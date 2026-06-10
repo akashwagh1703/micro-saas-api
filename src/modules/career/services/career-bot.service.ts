@@ -7,7 +7,14 @@ import { InboxService } from '../../inbox/inbox.service';
 import { CAREER_COMMANDS, CAREER_MAX_INBOUND_CHARS, CAREER_BOT_MESSAGE_SOURCE, CAREER_WORK_MODE_BUTTONS, CAREER_EMPLOYMENT_TYPE_BUTTONS, buildJobActionButtons } from '../career.constants';
 import { CareerProfileService } from './career-profile.service';
 import { CareerJobService } from './career-job.service';
-import { CareerMatchingService, JobMatchResult, CAREER_MATCH_TIER_GOOD, formatMatchScoreLabel } from './career-matching.service';
+import { emptyMatchBreakdown, readMatchBreakdown } from './career-match-scoring.util';
+import {
+  CareerMatchingService,
+  JobMatchResult,
+  CAREER_MATCH_TIER_GOOD,
+  formatMatchScoreLabel,
+  readMatchFactorLines,
+} from './career-matching.service';
 import { CareerAiService, ConvTurn, ParsedCareerProfile } from './career-ai.service';
 import { CareerResumeParserService } from './career-resume-parser.service';
 import { CareerStorageService } from './career-storage.service';
@@ -883,21 +890,23 @@ export class CareerBotService {
       match = {
         job,
         score: Math.round(stored.score),
-        matchFactors: Array.isArray(stored.matchFactors)
-          ? (stored.matchFactors as string[])
-          : [],
+        matchFactors: readMatchFactorLines(stored.matchFactors),
         missingSkills: Array.isArray(stored.missingSkills)
           ? (stored.missingSkills as string[])
           : [],
+        breakdown: readMatchBreakdown(stored.matchFactors) ?? emptyMatchBreakdown(),
       };
     } else {
       const [computed] = this.matching.matchProfileToJobs(profile, [job]);
-      match = computed ?? {
-        job,
-        score: 0,
-        matchFactors: [],
-        missingSkills: [],
-      };
+      match =
+        computed ??
+        ({
+          job,
+          score: 0,
+          matchFactors: [],
+          missingSkills: [],
+          breakdown: emptyMatchBreakdown(),
+        } satisfies JobMatchResult);
     }
 
     const desc = (job.description ?? '').replace(/\s+/g, ' ').trim();

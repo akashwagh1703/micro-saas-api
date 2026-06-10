@@ -1,17 +1,35 @@
 import { Injectable } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { CareerJob, CareerProfile } from '@prisma/client';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { normalizeSkillToken } from '../job-sources/job-source.utils';
 import { CareerJobService } from './career-job.service';
+import {
+  buildStoredMatchFactors,
+  formatSkillDisplayLines,
+  inrToLPA,
+  MatchFactorBreakdown,
+  overallBand,
+  parseSalaryLPA,
+  readMatchFactorLines,
+  scoreExperienceAndSeniority,
+  scoreLocation,
+  scoreRoleTitle,
+  scoreSalary,
+  scoreSkills,
+} from './career-match-scoring.util';
 
 export interface JobMatchResult {
   job: CareerJob;
   score: number;
   matchFactors: string[];
   missingSkills: string[];
+  breakdown: MatchFactorBreakdown;
 }
 
 export type MatchTier = 'strong' | 'good' | 'stretch';
+
+export { readMatchFactorLines } from './career-match-scoring.util';
 
 /** Instant alerts & daily digest (high-confidence only). */
 export const CAREER_MATCH_TIER_STRONG = 80;
@@ -34,9 +52,7 @@ export function minScoreForTier(tier: MatchTier): number {
 }
 
 export interface MatchPipelineOptions {
-  /** Keyword search instead of profile-based pre-filter. */
   keyword?: string;
-  /** Minimum score to return in `shown` (default: good tier). */
   tier?: MatchTier;
 }
 
@@ -45,27 +61,16 @@ export interface MatchPipelineResult {
   shownMatches: JobMatchResult[];
 }
 
-/**
- * Scoring weights — must sum to 100.
- *
- *  Skills         40 pts  — primary technical fit signal
- *  Experience     20 pts  — years vs job minimum requirement
- *  Salary         15 pts  — candidate expectation vs job range
- *  Location       15 pts  — preferred locations vs job city / remote flag
- *  Role title      5 pts  — preferred roles vs job title
- *  Notice period   5 pts  — candidate availability vs job urgency
- */
-const W_SKILLS     = 40;
-const W_EXPERIENCE = 20;
-const W_SALARY     = 15;
-const W_LOCATION   = 15;
-const W_ROLE       = 5;
-const W_NOTICE     = 5;
+const W_SKILLS = 40;
+const W_EXPERIENCE = 14;
+const W_SENIORITY = 6;
+const W_SALARY = 15;
+const W_LOCATION = 15;
+const W_ROLE = 5;
+const W_NOTICE = 5;
 
-/** Minimum score shown to job seekers in VIEW JOBS / FIND JOBS. */
 export const CAREER_MIN_MATCH_SCORE = CAREER_MATCH_TIER_GOOD;
 
-/** Human-readable match band aligned with CareerAI.md Step 6. */
 export function formatMatchScoreLabel(score: number): string {
   if (score >= 95) return 'Excellent Match';
   if (score >= CAREER_MATCH_TIER_STRONG) return 'Strong Match';
@@ -73,18 +78,6 @@ export function formatMatchScoreLabel(score: number): string {
   if (score >= CAREER_MATCH_TIER_STRETCH) return 'Partial Match';
   return 'Low Match';
 }
-
-const CITY_ALIASES: Record<string, string[]> = {
-  bangalore: ['bangalore', 'bengaluru'],
-  bengaluru: ['bangalore', 'bengaluru'],
-  mumbai: ['mumbai', 'bombay'],
-  bombay: ['mumbai', 'bombay'],
-  delhi: ['delhi', 'new delhi', 'ncr'],
-  chennai: ['chennai', 'madras'],
-  kolkata: ['kolkata', 'calcutta'],
-  hyderabad: ['hyderabad'],
-  pune: ['pune', 'poona'],
-};
 
 @Injectable()
 export class CareerMatchingService {
@@ -98,15 +91,10 @@ export class CareerMatchingService {
     return results.filter((r) => r.score >= min);
   }
 
-  /** @deprecated Use filterMatchesByTier(results, 'good') */
   filterQualityMatches(results: JobMatchResult[]): JobMatchResult[] {
     return this.filterMatchesByTier(results, 'good');
   }
 
-  /**
-   * Unified matching pipeline: pre-filter → score → persist top 100.
-   * Used by bot, digest, alerts, and portal rematch.
-   */
   async matchAndPersistForProfile(
     userId: number,
     profile: CareerProfile,
@@ -130,158 +118,151 @@ export class CareerMatchingService {
   }
 
   matchProfileToJobs(profile: CareerProfile, jobs: CareerJob[]): JobMatchResult[] {
-    const profileSkills    = this.normalizeSkills(profile.skills);
-    const preferredRoles   = this.normalizeArray(profile.preferredRoles);
-    const preferredLocs    = this.buildLocationPreferences(profile);
-    const profileExpYears  = this.calcExperienceYears(profile.experience);
-    const expectedSalaryL  = this.parseSalaryLPA(profile.expectedSalary);
-    const workPref         = (profile.workPreference ?? '').toLowerCase();
-    const noticeDays       = this.parseNoticePeriodDays(profile.noticePeriod);
+    const profileSkills = this.normalizeSkills(profile.skills);
+    const preferredRoles = this.normalizeArray(profile.preferredRoles);
+    const preferredLocs = this.buildLocationPreferences(profile);
+    const profileExpYears = this.calcExperienceYears(profile.experience);
+    const expectedSalaryL = parseSalaryLPA(profile.expectedSalary);
+    const workPref = (profile.workPreference ?? '').toLowerCase();
+    const noticeDays = this.parseNoticePeriodDays(profile.noticePeriod);
 
     return jobs
       .map((job) => {
-        const matched: string[] = [];
-        const missing: string[]  = [];
-        let score = 0;
-
-        // ── 1. Skills (40 pts) ───────────────────────────────────────────────
         const required = this.normalizeSkills(job.requiredSkills);
-        if (required.length > 0) {
-          const hits = required.filter((skill) => this.skillMatches(profileSkills, skill));
-          score += (hits.length / required.length) * W_SKILLS;
-          hits.forEach((s) => matched.push(`✓ ${this.cap(s)}`));
-          required.filter((s) => !hits.includes(s)).forEach((s) => missing.push(this.cap(s)));
-        } else {
-          // No required skills listed — minimal credit (avoids inflated Adzuna scores).
-          score += W_SKILLS * 0.25;
+        const skillScore = scoreSkills(
+          profileSkills,
+          required,
+          job.description ?? '',
+          W_SKILLS,
+        );
+        const { display: skillLines, missingDisplay } = formatSkillDisplayLines(
+          skillScore.matched,
+          skillScore.partial,
+          skillScore.missing,
+        );
+
+        const expSeniority = scoreExperienceAndSeniority(
+          profileExpYears,
+          job,
+          W_EXPERIENCE,
+          W_SENIORITY,
+        );
+
+        const salary = scoreSalary(
+          expectedSalaryL,
+          inrToLPA(job.salaryMin),
+          inrToLPA(job.salaryMax),
+          W_SALARY,
+        );
+
+        const location = scoreLocation(preferredLocs, workPref, job, W_LOCATION);
+        const role = scoreRoleTitle(preferredRoles, job.title, W_ROLE);
+        const notice = this.scoreNotice(noticeDays, job.description ?? '', profile.noticePeriod, W_NOTICE);
+
+        const rawScore =
+          skillScore.points +
+          expSeniority.experiencePoints +
+          expSeniority.seniorityPoints +
+          salary.points +
+          location.points +
+          role.points +
+          notice.points;
+
+        const score = Math.min(100, Math.round(rawScore));
+        const band = overallBand(score);
+
+        const display: string[] = [
+          ...skillLines,
+          `✓ Experience: ${expSeniority.experienceNote}`,
+          `✓ Seniority: ${expSeniority.seniorityNote}`,
+        ];
+        if (salary.points >= W_SALARY * 0.7) {
+          display.push(`✓ Salary: ${salary.note ?? 'aligned'}`);
+        }
+        if (location.points >= W_LOCATION * 0.6) {
+          display.push(`✓ ${location.note ?? 'Location fit'}`);
+        }
+        if (role.points >= W_ROLE * 0.5) {
+          display.push(`✓ ${role.note ?? 'Role fit'}`);
+        }
+        if (notice.points >= W_NOTICE * 0.8) {
+          display.push(`✓ ${notice.note ?? 'Notice period OK'}`);
         }
 
-        // ── 2. Experience (20 pts) ───────────────────────────────────────────
-        const minExp = job.minExperience ?? 0;
-        const maxExp = job.experienceMax ?? 99;
-        if (profileExpYears >= minExp && profileExpYears <= maxExp) {
-          score += W_EXPERIENCE;
-          matched.push(`✓ ${profileExpYears}y exp (needs ${minExp}–${maxExp}y)`);
-        } else if (profileExpYears >= minExp && profileExpYears > maxExp) {
-          score += W_EXPERIENCE * 0.75;
-          matched.push(`✓ ${profileExpYears}y exp (role asks ${minExp}–${maxExp}y)`);
-        } else if (profileExpYears >= minExp) {
-          score += W_EXPERIENCE * 0.85;
-          matched.push(`✓ Experience meets minimum (${minExp}y+)`);
-        } else if (minExp > 0) {
-          // Partial credit proportional to how close the candidate is.
-          const partial = (profileExpYears / minExp) * W_EXPERIENCE * 0.5;
-          score += partial;
-          missing.push(`${minExp}+ years experience`);
+        const missingSkills: string[] = [...missingDisplay];
+        if (expSeniority.experiencePoints < W_EXPERIENCE * 0.5) {
+          missingSkills.push('Experience gap');
+        }
+        if (expSeniority.seniorityPoints < W_SENIORITY * 0.5) {
+          missingSkills.push(`Seniority: ${expSeniority.seniorityNote}`);
+        }
+        if (salary.points < W_SALARY * 0.5 && salary.note) {
+          missingSkills.push(salary.note);
+        }
+        if (location.points < W_LOCATION * 0.4 && location.note) {
+          missingSkills.push(location.note);
+        }
+        if (role.points < W_ROLE * 0.4 && role.note) {
+          missingSkills.push(role.note);
+        }
+        if (notice.points < W_NOTICE * 0.5 && notice.note) {
+          missingSkills.push(notice.note);
         }
 
-        // ── 3. Salary (15 pts) ───────────────────────────────────────────────
-        const jobMinL = this.inrToLPA(job.salaryMin);
-        const jobMaxL = this.inrToLPA(job.salaryMax);
-
-        if (expectedSalaryL !== null && jobMinL !== null && jobMaxL !== null) {
-          if (expectedSalaryL >= jobMinL && expectedSalaryL <= jobMaxL * 1.15) {
-            // Expectation falls within range (with 15% headroom for negotiation).
-            score += W_SALARY;
-            matched.push(`✓ Salary fits (expect ${expectedSalaryL}L, range ${jobMinL}–${jobMaxL}L)`);
-          } else if (expectedSalaryL <= jobMaxL) {
-            // Expectation is below max — candidate may accept.
-            score += W_SALARY * 0.7;
-            matched.push(`✓ Within salary budget`);
-          } else {
-            // Candidate expects more than the job offers.
-            missing.push(`Salary: expect ${expectedSalaryL}L, offered up to ${jobMaxL}L`);
-          }
-        } else {
-          // Salary data missing on one side — neutral half credit.
-          score += W_SALARY * 0.5;
-        }
-
-        // ── 4. Location (15 pts) ─────────────────────────────────────────────
-        const jobCity   = (job.city ?? job.location ?? '').toLowerCase();
-        const workMode  = this.getJobWorkMode(job);
-        const isRemote  =
-          workMode === 'remote' ||
-          workMode === 'hybrid' ||
-          jobCity.includes('remote');
-
-        if (workPref === 'remote' && isRemote) {
-          score += W_LOCATION;
-          matched.push(workMode === 'hybrid' ? '✓ Hybrid / remote option' : '✓ Remote role');
-        } else if (workPref === 'remote' && !isRemote) {
-          // Candidate wants remote, job is not.
-          missing.push('Remote role required');
-        } else if (preferredLocs.length > 0) {
-          const locHit = preferredLocs.some((loc) => this.locationMatches(loc, jobCity));
-          if (locHit) {
-            score += W_LOCATION;
-            matched.push(`✓ Location matches`);
-          } else if (isRemote) {
-            // Remote is acceptable even when not the preference.
-            score += W_LOCATION * 0.6;
-            matched.push('✓ Remote option (not preferred city)');
-          } else {
-            missing.push(`Location: prefers ${preferredLocs.slice(0, 2).join(' / ')}`);
-          }
-        } else {
-          // No location preference stated — half credit.
-          score += W_LOCATION * 0.5;
-        }
-
-        // ── 5. Role title (10 pts) ───────────────────────────────────────────
-        if (preferredRoles.length > 0) {
-          const jobTitleLower = job.title.toLowerCase();
-
-          // Word-boundary match: "react" should not match "react native" as a full hit.
-          const roleHit = preferredRoles.some((r) => {
-            const roleLower = r.toLowerCase();
-            // Exact containment in either direction on word tokens.
-            const roleWords = roleLower.split(/\s+/);
-            const titleWords = jobTitleLower.split(/\s+/);
-            return (
-              titleWords.some((tw) => roleWords.includes(tw)) ||
-              roleWords.some((rw) => titleWords.includes(rw))
-            );
-          });
-
-          if (roleHit) {
-            score += W_ROLE;
-            matched.push('✓ Preferred role match');
-          }
-        } else {
-          // No role preference — half credit.
-          score += W_ROLE * 0.5;
-        }
-
-        // ── 6. Notice period (5 pts) ─────────────────────────────────────────
-        const jobNoticeMax = this.extractJobNoticeRequirement(job.description ?? '');
-        if (noticeDays !== null && jobNoticeMax !== null) {
-          if (noticeDays <= jobNoticeMax) {
-            score += W_NOTICE;
-            matched.push(`✓ Notice period OK (${profile.noticePeriod ?? 'immediate'})`);
-          } else {
-            missing.push(`Notice: role prefers ≤${jobNoticeMax} days`);
-          }
-        } else {
-          score += W_NOTICE * 0.5;
-        }
+        const breakdown: MatchFactorBreakdown = {
+          skills: {
+            matched: skillScore.matched,
+            partial: skillScore.partial,
+            missing: skillScore.missing,
+            score: Math.round(skillScore.points),
+            max: W_SKILLS,
+          },
+          experience: {
+            profileYears: profileExpYears,
+            required: expSeniority.experienceNote,
+            score: Math.round(expSeniority.experiencePoints),
+            max: W_EXPERIENCE,
+          },
+          seniority: {
+            profile: expSeniority.profileLevel,
+            job: expSeniority.jobLevel,
+            score: Math.round(expSeniority.seniorityPoints),
+            max: W_SENIORITY,
+          },
+          salary: {
+            score: Math.round(salary.points),
+            max: W_SALARY,
+            note: salary.note,
+          },
+          location: {
+            score: Math.round(location.points),
+            max: W_LOCATION,
+            note: location.note,
+          },
+          role: {
+            score: Math.round(role.points),
+            max: W_ROLE,
+            note: role.note,
+          },
+          notice: {
+            score: Math.round(notice.points),
+            max: W_NOTICE,
+            note: notice.note,
+          },
+          overall_band: band,
+        };
 
         return {
           job,
-          score: Math.min(100, Math.round(score)),
-          matchFactors: matched,
-          missingSkills: missing,
+          score,
+          matchFactors: display,
+          missingSkills,
+          breakdown,
         };
       })
       .sort((a, b) => b.score - a.score);
   }
 
-  /**
-   * Upserts all match results in a single transaction.
-   * Previous implementation ran N individual upsert calls sequentially — with 200
-   * Adzuna jobs per tenant that was 200 sequential DB round-trips per match run.
-   * This version batches the work inside a $transaction for a single DB round-trip.
-   */
   async persistMatches(
     userId: number,
     profileId: number,
@@ -292,8 +273,9 @@ export class CareerMatchingService {
     if (top.length === 0) return;
 
     await this.prisma.$transaction(
-      top.map((r) =>
-        this.prisma.careerJobMatch.upsert({
+      top.map((r) => {
+        const stored = buildStoredMatchFactors(r.matchFactors, r.breakdown);
+        return this.prisma.careerJobMatch.upsert({
           where: { profileId_jobId: { profileId, jobId: r.job.id } },
           create: {
             userId,
@@ -301,108 +283,57 @@ export class CareerMatchingService {
             contactId,
             jobId: r.job.id,
             score: r.score,
-            matchFactors: r.matchFactors,
+            matchFactors: stored as unknown as Prisma.InputJsonValue,
             missingSkills: r.missingSkills,
           },
           update: {
             score: r.score,
-            matchFactors: r.matchFactors,
+            matchFactors: stored as unknown as Prisma.InputJsonValue,
             missingSkills: r.missingSkills,
           },
-        }),
-      ),
+        });
+      }),
     );
   }
 
-  // ─── Private helpers ─────────────────────────────────────────────────────────
+  private scoreNotice(
+    noticeDays: number | null,
+    description: string,
+    noticeLabel: string | null | undefined,
+    maxPoints: number,
+  ): { points: number; note?: string } {
+    const jobNoticeMax = this.extractJobNoticeRequirement(description);
+    if (noticeDays !== null && jobNoticeMax !== null) {
+      if (noticeDays <= jobNoticeMax) {
+        return { points: maxPoints, note: `Notice OK (${noticeLabel ?? 'immediate'})` };
+      }
+      return { points: 0, note: `Notice: role prefers ≤${jobNoticeMax} days` };
+    }
+    return { points: maxPoints * 0.5, note: 'Notice not specified' };
+  }
 
-  /**
-   * Reads the `years` or `duration` field that the AI extracts from each
-   * experience entry. Falls back to 1 year per entry when the field is absent
-   * or not parseable. Caps the total at 35 years.
-   */
   private calcExperienceYears(experience: unknown): number {
     if (!Array.isArray(experience) || experience.length === 0) return 0;
     let total = 0;
     for (const entry of experience) {
-      const raw = String((entry as any)?.years ?? (entry as any)?.duration ?? '');
+      const raw = String((entry as { years?: string; duration?: string })?.years ?? (entry as { duration?: string })?.duration ?? '');
       const n = parseFloat(raw.replace(/[^\d.]/g, ''));
-      total += isNaN(n) ? 1 : Math.min(n, 20);
+      total += Number.isNaN(n) ? 1 : Math.min(n, 20);
     }
     return Math.min(total > 0 ? total : experience.length, 35);
-  }
-
-  /**
-   * Parses salary strings like "10 LPA", "10L", "10 lakh", "10-15 LPA" (takes lower
-   * bound), "800000" (raw INR), into a LPA float.  Returns null when not parseable.
-   */
-  private parseSalaryLPA(raw: string | null | undefined): number | null {
-    if (!raw) return null;
-    const match = raw.match(/(\d+(?:\.\d+)?)/);
-    if (!match) return null;
-    const n = parseFloat(match[1]);
-    if (isNaN(n)) return null;
-    // If the number is > 1000 it is likely raw rupees — convert to LPA.
-    return n > 1000 ? Math.round(n / 100_000 * 10) / 10 : n;
-  }
-
-  /**
-   * Converts a salary stored in the DB (could be raw INR or already LPA) to LPA.
-   * Returns null when the input is null / 0.
-   */
-  private inrToLPA(inr: number | null | undefined): number | null {
-    if (!inr) return null;
-    return inr > 1000 ? Math.round(inr / 100_000 * 10) / 10 : inr;
   }
 
   private buildLocationPreferences(profile: CareerProfile): string[] {
     const fromPreferred = this.normalizeArray(profile.preferredLocations);
     const current = profile.currentLocation?.trim();
-    const combined = current && !fromPreferred.includes(current)
-      ? [...fromPreferred, current]
-      : fromPreferred;
+    const combined =
+      current && !fromPreferred.includes(current) ? [...fromPreferred, current] : fromPreferred;
     return combined.map((l) => l.toLowerCase()).filter(Boolean);
-  }
-
-  private locationMatches(preferred: string, jobCity: string): boolean {
-    if (!preferred || !jobCity) return false;
-    if (jobCity.includes(preferred) || preferred.includes(jobCity.split(',')[0]?.trim() ?? '')) {
-      return true;
-    }
-    const aliases = CITY_ALIASES[preferred.split(/\s+/)[0]] ?? [preferred];
-    return aliases.some(
-      (alias) => jobCity.includes(alias) || alias.includes(jobCity.split(',')[0]?.trim() ?? ''),
-    );
-  }
-
-  private skillMatches(profileSkills: string[], skill: string): boolean {
-    return profileSkills.some((ps) => {
-      if (ps === skill) return true;
-      const [short, long] = ps.length <= skill.length ? [ps, skill] : [skill, ps];
-      if (short.length < 2) return false;
-      return new RegExp(`\\b${this.escapeRegex(short)}\\b`).test(long);
-    });
-  }
-
-  private escapeRegex(value: string): string {
-    return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  }
-
-  private getJobWorkMode(job: CareerJob): string {
-    const tags = job.tags as { workMode?: string } | null;
-    if (tags?.workMode && tags.workMode !== 'unknown') {
-      return tags.workMode;
-    }
-    const city = (job.city ?? job.location ?? '').toLowerCase();
-    if (city.includes('remote')) return 'remote';
-    return 'unknown';
   }
 
   private normalizeSkills(raw: unknown): string[] {
     if (!raw || !Array.isArray(raw)) return [];
-    return raw
-      .map((s) => normalizeSkillToken(String(s)))
-      .filter(Boolean);
+    return raw.map((s) => normalizeSkillToken(String(s))).filter(Boolean);
   }
 
   private normalizeArray(raw: unknown): string[] {
@@ -410,11 +341,6 @@ export class CareerMatchingService {
     return raw.map((s) => String(s).trim()).filter(Boolean);
   }
 
-  private cap(s: string): string {
-    return s.charAt(0).toUpperCase() + s.slice(1);
-  }
-
-  /** Parses "30 days", "2 months", "Immediate" into approximate days. */
   private parseNoticePeriodDays(raw: string | null | undefined): number | null {
     if (!raw?.trim()) return null;
     const t = raw.toLowerCase();
@@ -436,7 +362,6 @@ export class CareerMatchingService {
     return null;
   }
 
-  /** Reads notice urgency from job description when present. */
   private extractJobNoticeRequirement(description: string): number | null {
     const d = description.toLowerCase();
     if (/immediate joiner|join immediately|immediate joining|no notice period|can join immediately/i.test(d)) {

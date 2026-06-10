@@ -6,6 +6,7 @@ import {
   CareerMatchingService,
   JobMatchResult,
   formatMatchScoreLabel,
+  readMatchFactorLines,
 } from './career-matching.service';
 import { CareerJobService } from './career-job.service';
 import { buildJobActionButtons } from '../career.constants';
@@ -221,8 +222,8 @@ export class CareerJobAlertService {
         `📍 ${m.job.location ?? m.job.city ?? '—'} | 💰 ${m.job.salaryText ?? '—'}`,
         `🎯 *${m.score}%* — ${formatMatchScoreLabel(m.score)}`,
       );
-      if (m.matchFactors.length > 0) {
-        lines.push(`   ${m.matchFactors.slice(0, 2).join(' · ')}`);
+      if (readMatchFactorLines(m.matchFactors).length > 0) {
+        lines.push(`   ${readMatchFactorLines(m.matchFactors).slice(0, 2).join(' · ')}`);
       }
       lines.push('');
     });

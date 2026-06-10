@@ -3,6 +3,7 @@ import { PrismaService } from '../../../prisma/prisma.service';
 import { readAlertPreferences } from '../career-alert-preferences.util';
 import { readGuidanceHistory } from '../career-guidance-state.util';
 import { readInterviewHistory } from '../career-interview-state.util';
+import { readMatchBreakdown, readMatchFactorLines } from './career-match-scoring.util';
 import { CareerPortalShareService } from './career-portal-share.service';
 import { CareerSeekerBillingService } from './career-seeker-billing.service';
 
@@ -64,6 +65,8 @@ export class CareerPortalService {
         id: m.id,
         score: m.score,
         missing_skills: m.missingSkills,
+        match_highlights: readMatchFactorLines(m.matchFactors),
+        breakdown: readMatchBreakdown(m.matchFactors),
         job: m.job
           ? {
               id: m.job.id,
