@@ -50,6 +50,7 @@ export const CAREER_COMMANDS = {
   INTERVIEW_STATUS: ['interview status', 'mock status'],
   VIEW_JOBS: ['view jobs', 'top jobs', 'daily jobs'],
   VIEW_JOB: ['view job', 'job details', 'job detail'],
+  DISMISS_JOB: ['not interested', 'pass job', 'skip job', 'dismiss job'],
   STOP_DIGEST: ['stop digest', 'unsubscribe', 'stop daily digest'],
   START_DIGEST: ['start digest', 'subscribe digest'],
   HELP: ['help', 'commands', 'menu'],

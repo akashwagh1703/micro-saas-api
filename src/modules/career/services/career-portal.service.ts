@@ -63,10 +63,12 @@ export class CareerPortalService {
       },
       matches: profile.jobMatches.map((m) => ({
         id: m.id,
+        job_id: m.jobId,
         score: m.score,
         missing_skills: m.missingSkills,
         match_highlights: readMatchFactorLines(m.matchFactors),
         breakdown: readMatchBreakdown(m.matchFactors),
+        feedback_actions: ['dismissed', 'viewed'],
         job: m.job
           ? {
               id: m.job.id,

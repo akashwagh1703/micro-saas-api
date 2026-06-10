@@ -24,6 +24,11 @@ export interface MatchFactorBreakdown {
     profile_key?: string;
     max: number;
   };
+  feedback?: {
+    adjustment: number;
+    reasons: string[];
+    max: number;
+  };
   overall_band: string;
 }
 

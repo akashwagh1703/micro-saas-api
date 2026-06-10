@@ -27,6 +27,7 @@ import { CareerInterviewService } from './career-interview.service';
 import { CareerGuidanceService } from './career-guidance.service';
 import { CareerPortalShareService } from './career-portal-share.service';
 import { CareerSeekerBillingService } from './career-seeker-billing.service';
+import { CareerMatchFeedbackService } from './career-match-feedback.service';
 import {
   formatAlertPreferencesWhatsApp,
   mergeAlertPreferencesPatch,
@@ -92,6 +93,7 @@ export class CareerBotService {
     private readonly guidance: CareerGuidanceService,
     private readonly portalShare: CareerPortalShareService,
     private readonly seekerBilling: CareerSeekerBillingService,
+    private readonly matchFeedback: CareerMatchFeedbackService,
     @Inject(JOB_DISPATCHER) private readonly dispatcher: JobDispatcher,
   ) {}
 
@@ -200,6 +202,12 @@ export class CareerBotService {
     const applyIndex = this.parseApplyIndex(lower);
     if (applyIndex !== null) {
       await this.cmdApply(message, profile, applyIndex);
+      return true;
+    }
+
+    const dismissIndex = this.parseDismissIndex(lower);
+    if (dismissIndex !== null) {
+      await this.cmdDismissJob(message, profile, dismissIndex);
       return true;
     }
 
@@ -882,6 +890,11 @@ export class CareerBotService {
       return;
     }
 
+    await this.matchFeedback.recordEvent(message.userId, profile, job, 'viewed', {
+      source: 'whatsapp',
+      command: 'job_details',
+    });
+
     const stored = await this.prisma.careerJobMatch.findFirst({
       where: { profileId: profile.id, jobId: job.id },
     });
@@ -981,6 +994,11 @@ export class CareerBotService {
       autoApply,
     );
 
+    await this.matchFeedback.recordEvent(message.userId, profile, job, 'applied', {
+      source: 'whatsapp',
+      auto_apply: autoApply,
+    });
+
     const lines = [
       autoApply
         ? `*${job.title}* @ ${job.company} — queued for assisted apply ✅`
@@ -1000,6 +1018,37 @@ export class CareerBotService {
     }
     lines.push('', `Reply *COVER LETTER ${index1Based}* for a matching cover letter.`);
     await this.reply(message, lines.join('\n'));
+  }
+
+  private async cmdDismissJob(
+    message: Message & { contact: Contact },
+    profile: CareerProfile,
+    index1Based: number,
+  ): Promise<void> {
+    const job = await this.resolveJobByIndex(profile, message.userId, index1Based);
+    if (!job) {
+      await this.reply(
+        message,
+        `Job #${index1Based} not found. Reply *VIEW JOBS* or *FIND JOBS* first to refresh the list.`,
+      );
+      return;
+    }
+
+    await this.matchFeedback.recordEvent(message.userId, profile, job, 'dismissed', {
+      source: 'whatsapp',
+    });
+
+    const refreshed = await this.prisma.careerProfile.findUnique({ where: { id: profile.id } });
+    await this.matching.matchAndPersistForProfile(
+      message.userId,
+      refreshed ?? profile,
+      { tier: 'good' },
+    );
+
+    await this.reply(
+      message,
+      `Got it — *${job.title}* @ ${job.company} marked as not interested.\n\nI'll show fewer similar roles. Reply *VIEW JOBS* to refresh your list.`,
+    );
   }
 
   private async cmdShowApplications(
@@ -1147,6 +1196,11 @@ export class CareerBotService {
         filePathDocx,
         filePathPdf,
       },
+    });
+
+    await this.matchFeedback.recordEvent(message.userId, profile, job, 'cover_letter_generated', {
+      source: 'whatsapp',
+      cover_letter_id: letter.id,
     });
 
     const jobNum = jobIndex ?? (await this.jobIndexInSession(profile.id, job.id)) ?? 1;
@@ -1586,6 +1640,7 @@ export class CareerBotService {
       '• *JOB 1* — full details for job #1',
       '• *APPLY 1* — save job & get apply link',
       '• *COVER LETTER 1* — cover letter (PDF + DOCX) for job #1',
+      '• *NOT INTERESTED 1* — hide similar roles',
       '• *MOCK INTERVIEW* — 5-question practice with readiness score',
       '• *MOCK INTERVIEW 1* — practice for job #1',
       '• *CAREER ROADMAP* — personalized role ladder',
@@ -2016,6 +2071,13 @@ export class CareerBotService {
     const match =
       lower.match(/^job\s*#?\s*(\d+)\s*$/) ||
       lower.match(/^view\s+job\s*#?\s*(\d+)\s*$/);
+    return match ? parseInt(match[1], 10) : null;
+  }
+
+  private parseDismissIndex(lower: string): number | null {
+    const match = lower.match(
+      /^(?:not\s+interested|pass|dismiss|skip)\s*#?\s*(\d+)\s*$/,
+    );
     return match ? parseInt(match[1], 10) : null;
   }
 }

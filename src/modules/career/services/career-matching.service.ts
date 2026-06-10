@@ -20,6 +20,7 @@ import {
   scoreSkills,
 } from './career-match-scoring.util';
 import { CareerMatchRerankService } from './career-match-rerank.service';
+import { CareerMatchLearningService } from './career-match-learning.service';
 
 export type { JobMatchResult } from './career-match-scoring.util';
 
@@ -54,6 +55,8 @@ export interface MatchPipelineOptions {
   jobList?: CareerJob[];
   /** Set false to skip AI rerank even when enabled globally. */
   aiRerank?: boolean;
+  /** Set false to skip feedback-based learning adjustments. */
+  learning?: boolean;
 }
 
 export interface MatchPipelineResult {
@@ -85,6 +88,7 @@ export class CareerMatchingService {
     private readonly prisma: PrismaService,
     private readonly jobs: CareerJobService,
     private readonly rerank: CareerMatchRerankService,
+    private readonly learning: CareerMatchLearningService,
   ) {}
 
   filterMatchesByTier(results: JobMatchResult[], tier: MatchTier = 'good'): JobMatchResult[] {
@@ -114,10 +118,14 @@ export class CareerMatchingService {
     }
 
     const ruleMatches = this.matchProfileToJobs(profile, jobList);
-    const allMatches =
+    const reranked =
       options.aiRerank !== false && this.rerank.isEnabled()
         ? await this.rerank.applyAiRerank(userId, profile, ruleMatches)
         : ruleMatches;
+    const allMatches =
+      options.learning !== false && this.learning.isEnabled()
+        ? this.learning.applyLearningAdjustments(profile, reranked)
+        : reranked;
     await this.persistMatches(userId, profile.id, profile.contactId, allMatches);
     const shownMatches = this.filterMatchesByTier(allMatches, tier);
 

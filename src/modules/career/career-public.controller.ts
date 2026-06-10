@@ -6,6 +6,7 @@ import {
   Post,
   Query,
   StreamableFile,
+  UnprocessableEntityException,
 } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CareerStorageService } from './services/career-storage.service';
@@ -24,6 +25,9 @@ import {
 import { CareerPortalService } from './services/career-portal.service';
 import { CareerSeekerBillingService } from './services/career-seeker-billing.service';
 import { CareerPortalShareService } from './services/career-portal-share.service';
+import { CareerMatchFeedbackService } from './services/career-match-feedback.service';
+import { CareerMatchingService } from './services/career-matching.service';
+import { MATCH_FEEDBACK_EVENTS, MatchFeedbackEvent } from './career-match-learning.util';
 import { SeekerSubscribeDto, SeekerVerifySubscriptionDto } from './dto/career-seeker-billing.dto';
 
 /** Public document downloads and candidate portal (signed token — no login). */
@@ -38,6 +42,8 @@ export class CareerPublicController {
     private readonly portalService: CareerPortalService,
     private readonly seekerBilling: CareerSeekerBillingService,
     private readonly portalShare: CareerPortalShareService,
+    private readonly matchFeedback: CareerMatchFeedbackService,
+    private readonly matching: CareerMatchingService,
   ) {}
 
   @Get('portal')
@@ -46,6 +52,48 @@ export class CareerPublicController {
       throw new NotFoundException('Invalid or expired link');
     }
     return this.portalService.getPortalData(token);
+  }
+
+  @Post('match-feedback')
+  async recordMatchFeedback(
+    @Body() body: { token?: string; job_id?: number; event?: string },
+  ) {
+    const payload = this.requirePortalToken(body.token);
+    const jobId = Number(body.job_id);
+    const event = body.event as MatchFeedbackEvent;
+
+    if (!jobId || Number.isNaN(jobId) || !event || !MATCH_FEEDBACK_EVENTS.includes(event)) {
+      throw new UnprocessableEntityException('Invalid job_id or event');
+    }
+
+    const profile = await this.prisma.careerProfile.findFirst({
+      where: { id: payload.profileId, userId: payload.userId },
+    });
+    if (!profile) {
+      throw new NotFoundException('Profile not found');
+    }
+
+    const job = await this.prisma.careerJob.findFirst({
+      where: { id: jobId, userId: payload.userId },
+    });
+    if (!job) {
+      throw new NotFoundException('Job not found');
+    }
+
+    await this.matchFeedback.recordEvent(payload.userId, profile, job, event, {
+      source: 'portal',
+    });
+
+    if (event === 'dismissed') {
+      const refreshed = await this.prisma.careerProfile.findUnique({ where: { id: profile.id } });
+      await this.matching.matchAndPersistForProfile(
+        payload.userId,
+        refreshed ?? profile,
+        { tier: 'good' },
+      );
+    }
+
+    return { ok: true, event, job_id: jobId };
   }
 
   @Get('billing/status')

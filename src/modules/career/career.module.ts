@@ -14,6 +14,8 @@ import { CareerJobFetcherService } from './services/career-job-fetcher.service';
 import { CareerJobRefreshScheduler } from './career-job-refresh.scheduler';
 import { CareerMatchingService } from './services/career-matching.service';
 import { CareerMatchRerankService } from './services/career-match-rerank.service';
+import { CareerMatchFeedbackService } from './services/career-match-feedback.service';
+import { CareerMatchLearningService } from './services/career-match-learning.service';
 import { CareerAiService } from './services/career-ai.service';
 import { CareerResumeParserService } from './services/career-resume-parser.service';
 import { CareerStorageService } from './services/career-storage.service';
@@ -58,6 +60,8 @@ import { CareerResumeBuilderService } from './services/career-resume-builder.ser
     CareerJobRefreshScheduler,
     CareerMatchingService,
     CareerMatchRerankService,
+    CareerMatchFeedbackService,
+    CareerMatchLearningService,
     CareerAiService,
     CareerResumeParserService,
     CareerStorageService,

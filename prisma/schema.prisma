@@ -46,6 +46,7 @@ model User {
   careerResumes       CareerResume[]
   careerJobs          CareerJob[]
   careerJobMatches    CareerJobMatch[]
+  careerMatchFeedback CareerMatchFeedback[]
   careerApplications  CareerApplication[]
   careerCoverLetters  CareerCoverLetter[]
   careerNotifications CareerNotification[]
@@ -364,6 +365,7 @@ model CareerProfile {
   contact        Contact              @relation(fields: [contactId], references: [id], onDelete: Cascade)
   resumes        CareerResume[]
   jobMatches     CareerJobMatch[]
+  matchFeedback  CareerMatchFeedback[]
   applications   CareerApplication[]
   coverLetters   CareerCoverLetter[]
   notifications  CareerNotification[]
@@ -441,6 +443,7 @@ model CareerJob {
 
   user         User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
   matches      CareerJobMatch[]
+  matchFeedback CareerMatchFeedback[]
   applications CareerApplication[]
   versions     CareerResumeVersion[]
   coverLetters CareerCoverLetter[]
@@ -469,6 +472,24 @@ model CareerJobMatch {
   @@unique([profileId, jobId])
   @@index([userId, profileId, score])
   @@map("career_job_matches")
+}
+
+model CareerMatchFeedback {
+  id        Int      @id @default(autoincrement())
+  userId    Int      @map("user_id")
+  profileId Int      @map("profile_id")
+  jobId     Int      @map("job_id")
+  event     String   @db.VarChar(40)
+  metadata  Json?
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user    User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  profile CareerProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  job     CareerJob     @relation(fields: [jobId], references: [id], onDelete: Cascade)
+
+  @@index([profileId, event, createdAt])
+  @@index([profileId, jobId])
+  @@map("career_match_feedback")
 }
 
 model CareerApplication {
