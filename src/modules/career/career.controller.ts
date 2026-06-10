@@ -45,6 +45,10 @@ import { readAlertPreferences, mergeAlertPreferencesPatch } from './career-alert
 import { CareerGuidanceService } from './services/career-guidance.service';
 import { CareerPortalShareService } from './services/career-portal-share.service';
 import { CareerTenantSettingsService } from './services/career-tenant-settings.service';
+import { CareerMatchAnalyticsService } from './services/career-match-analytics.service';
+import { CareerZeroMatchService } from './services/career-zero-match.service';
+import { CareerProfileRematchService } from './services/career-profile-rematch.service';
+import { profileMatchFieldsChanged } from './career-profile-match.util';
 import { UpdateCareerSettingsDto } from './dto/career-settings.dto';
 import { CAREER_APPLICATION_STATUSES } from './career.constants';
 import { IsArray, IsBoolean, IsIn, IsOptional, IsString } from 'class-validator';
@@ -174,6 +178,9 @@ export class CareerController {
     private readonly guidance: CareerGuidanceService,
     private readonly portalShare: CareerPortalShareService,
     private readonly careerSettings: CareerTenantSettingsService,
+    private readonly matchAnalytics: CareerMatchAnalyticsService,
+    private readonly zeroMatch: CareerZeroMatchService,
+    private readonly profileRematch: CareerProfileRematchService,
   ) {}
 
   @Get('settings')
@@ -197,34 +204,9 @@ export class CareerController {
 
   @Get('analytics')
   async analytics(@CurrentUser('id') userId: number) {
-    const [profiles, resumes, jobs, matches, applications, notifications] = await Promise.all([
-      this.prisma.careerProfile.count({ where: { userId } }),
-      this.prisma.careerResume.count({ where: { userId } }),
-      this.prisma.careerJob.count({ where: { userId, isActive: true } }),
-      this.prisma.careerJobMatch.count({ where: { userId } }),
-      this.prisma.careerApplication.count({ where: { userId } }),
-      this.prisma.careerNotification.count({ where: { userId } }),
-    ]);
-
-    const completeProfiles = await this.prisma.careerProfile.count({
-      where: { userId, isComplete: true },
-    });
-
-    const byStatus = await this.prisma.careerApplication.groupBy({
-      by: ['status'],
-      where: { userId },
-      _count: true,
-    });
-
+    const metrics = await this.matchAnalytics.getOperatorMetrics(userId);
     return {
-      profiles,
-      complete_profiles: completeProfiles,
-      resumes,
-      jobs,
-      matches,
-      applications,
-      notifications,
-      applications_by_status: byStatus,
+      ...metrics,
       ai_usage: await this.aiUsage.getMonthlyStats(userId),
     };
   }
@@ -442,7 +424,7 @@ export class CareerController {
       throw new NotFoundException('Profile not found');
     }
 
-    return this.prisma.careerProfile.update({
+    const updated = await this.prisma.careerProfile.update({
       where: { id },
       data: {
         fullName: dto.full_name,
@@ -466,6 +448,14 @@ export class CareerController {
           : {}),
       },
     });
+
+    const rematch = await this.profileRematch.rematchIfProfileChanged(userId, existing, updated);
+
+    return {
+      ...updated,
+      match_fields_changed: profileMatchFieldsChanged(existing, updated),
+      ...(rematch ? { rematch } : {}),
+    };
   }
 
   @Delete('profiles/:id')
@@ -489,14 +479,33 @@ export class CareerController {
     @CurrentUser('id') userId: number,
     @Param('id', ParseIntPipe) id: number,
   ) {
-    const result = await this.bot.rematchProfile(userId, id);
+    const profile = await this.prisma.careerProfile.findFirst({ where: { id, userId } });
+    if (!profile) {
+      throw new NotFoundException('Profile not found');
+    }
+
+    const result = await this.profileRematch.rematchProfile(userId, profile);
+    return {
+      message: `Re-matched profile — ${result.matchCount} matches (65%+ score), ${result.strongMatchCount} strong (80%+)`,
+      ...result,
+    };
+  }
+
+  @Post('profiles/:id/zero-match-playbook')
+  async zeroMatchPlaybook(
+    @CurrentUser('id') userId: number,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() body: { fetch?: boolean; rematch?: boolean; location?: string } = {},
+  ) {
+    const result = await this.zeroMatch.runPlaybook(userId, id, {
+      fetch: body.fetch ?? true,
+      rematch: body.rematch ?? true,
+      location: body.location,
+    });
     if (!result) {
       throw new NotFoundException('Profile not found');
     }
-    return {
-      message: `Re-matched profile — ${result.matchCount} matches (65%+ score)`,
-      ...result,
-    };
+    return result;
   }
 
   @Post('cover-letters/:id/send')

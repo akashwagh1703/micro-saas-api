@@ -28,6 +28,8 @@ import { CareerGuidanceService } from './career-guidance.service';
 import { CareerPortalShareService } from './career-portal-share.service';
 import { CareerSeekerBillingService } from './career-seeker-billing.service';
 import { CareerMatchFeedbackService } from './career-match-feedback.service';
+import { CareerZeroMatchService } from './career-zero-match.service';
+import { CareerProfileRematchService } from './career-profile-rematch.service';
 import {
   formatAlertPreferencesWhatsApp,
   mergeAlertPreferencesPatch,
@@ -94,6 +96,8 @@ export class CareerBotService {
     private readonly portalShare: CareerPortalShareService,
     private readonly seekerBilling: CareerSeekerBillingService,
     private readonly matchFeedback: CareerMatchFeedbackService,
+    private readonly zeroMatch: CareerZeroMatchService,
+    private readonly profileRematch: CareerProfileRematchService,
     @Inject(JOB_DISPATCHER) private readonly dispatcher: JobDispatcher,
   ) {}
 
@@ -523,11 +527,23 @@ export class CareerBotService {
         ? `🎉 *Profile complete!* ✅\n\nI found *${matches.length}* strong matches (65%+ fit) tailored to your role, skills & location.`
         : '🎉 *Profile complete!* ✅\n\nYour career profile is ready — let\'s find the right opportunities for you.';
     if (matches.length === 0) {
+      const activeJobs = await this.prisma.careerJob.count({
+        where: { userId: message.userId, isActive: true },
+      });
+      const strongCount = allMatches.filter((m) => m.score >= 80).length;
+      const analysis = this.zeroMatch.analyze(profile, {
+        goodMatchCount: matches.length,
+        strongMatchCount: strongCount,
+        totalScored: allMatches.length,
+        topScore: allMatches[0]?.score ?? 0,
+        activeJobs,
+      });
+      const tips = this.zeroMatch.formatWhatsAppSuggestions(analysis);
       await this.reply(
         message,
         allMatches.length > 0
-          ? `${intro}\n\nNo jobs scored 65%+ for your profile yet. Try *FIND JOBS {skill}* or update your location/roles, or ask your operator to fetch more listings.`
-          : `${intro}\n\nNo jobs in the system yet. Reply *VIEW JOBS* after your operator fetches listings.`,
+          ? `${intro}\n\nNo jobs scored 65%+ for your profile yet.\n\n*Tips to improve matches:*\n${tips}`
+          : `${intro}\n\nNo jobs in the system yet. Reply *VIEW JOBS* after your operator fetches listings.\n\n*Tips:*\n${tips}`,
       );
       return;
     }
@@ -1240,17 +1256,7 @@ export class CareerBotService {
       return null;
     }
 
-    const { allMatches, shownMatches: quality } = await this.matching.matchAndPersistForProfile(
-      userId,
-      profile,
-      { tier: 'good' },
-    );
-
-    return {
-      matchCount: quality.length,
-      totalScored: allMatches.length,
-      topScore: quality[0]?.score ?? 0,
-    };
+    return this.profileRematch.rematchProfile(userId, profile);
   }
 
   /** Send a cover letter to the job seeker on WhatsApp (portal operator action). */

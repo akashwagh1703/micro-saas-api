@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import { CareerProfile } from '@prisma/client';
 import { PrismaService } from '../../../prisma/prisma.service';
 
 /** Baseline queries when a tenant has no complete seeker profiles yet. */
@@ -92,6 +93,46 @@ export class CareerProfileKeywordsService {
         }
         if (keywords.length >= maxKeywords) break;
       }
+    }
+
+    return keywords;
+  }
+
+  /** Search queries tailored to one seeker profile (zero-match playbook). */
+  buildFetchKeywordsForProfile(profile: CareerProfile, maxKeywords = 8): string[] {
+    const scores = new Map<string, number>();
+
+    for (const role of asArray(profile.preferredRoles)) {
+      addKeyword(scores, role, 5);
+    }
+
+    for (const skill of asArray(profile.skills).slice(0, 8)) {
+      if (skill.length > 2) {
+        addKeyword(scores, `${skill} developer`, 3);
+        addKeyword(scores, skill, 2);
+      }
+    }
+
+    if (profile.currentLocation?.trim()) {
+      addKeyword(scores, profile.currentLocation.trim(), 1);
+    }
+    for (const loc of asArray(profile.preferredLocations).slice(0, 2)) {
+      addKeyword(scores, loc, 1);
+    }
+
+    const ranked = [...scores.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .map(([keyword]) => keyword);
+
+    const keywords: string[] = [];
+    for (const kw of ranked) {
+      if (keywords.includes(kw)) continue;
+      keywords.push(kw);
+      if (keywords.length >= maxKeywords) break;
+    }
+
+    if (keywords.length === 0) {
+      return [...CAREER_FALLBACK_FETCH_KEYWORDS].slice(0, maxKeywords);
     }
 
     return keywords;
