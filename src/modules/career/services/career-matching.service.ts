@@ -8,6 +8,7 @@ import {
   buildStoredMatchFactors,
   formatSkillDisplayLines,
   inrToLPA,
+  JobMatchResult,
   MatchFactorBreakdown,
   overallBand,
   parseSalaryLPA,
@@ -18,14 +19,9 @@ import {
   scoreSalary,
   scoreSkills,
 } from './career-match-scoring.util';
+import { CareerMatchRerankService } from './career-match-rerank.service';
 
-export interface JobMatchResult {
-  job: CareerJob;
-  score: number;
-  matchFactors: string[];
-  missingSkills: string[];
-  breakdown: MatchFactorBreakdown;
-}
+export type { JobMatchResult } from './career-match-scoring.util';
 
 export type MatchTier = 'strong' | 'good' | 'stretch';
 
@@ -54,6 +50,10 @@ export function minScoreForTier(tier: MatchTier): number {
 export interface MatchPipelineOptions {
   keyword?: string;
   tier?: MatchTier;
+  /** Pre-filtered job list (e.g. instant alerts on new listings only). */
+  jobList?: CareerJob[];
+  /** Set false to skip AI rerank even when enabled globally. */
+  aiRerank?: boolean;
 }
 
 export interface MatchPipelineResult {
@@ -84,6 +84,7 @@ export class CareerMatchingService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly jobs: CareerJobService,
+    private readonly rerank: CareerMatchRerankService,
   ) {}
 
   filterMatchesByTier(results: JobMatchResult[], tier: MatchTier = 'good'): JobMatchResult[] {
@@ -101,16 +102,22 @@ export class CareerMatchingService {
     options: MatchPipelineOptions = {},
   ): Promise<MatchPipelineResult> {
     const tier = options.tier ?? 'good';
-    let jobList = await this.jobs.listActive(userId);
+    let jobList = options.jobList ?? (await this.jobs.listActive(userId));
 
     const keyword = options.keyword?.trim();
-    if (keyword && keyword.length > 1 && keyword.toLowerCase() !== 'all') {
-      jobList = this.jobs.searchByKeyword(jobList, keyword);
-    } else {
-      jobList = this.jobs.relevantJobsForProfile(jobList, profile);
+    if (!options.jobList) {
+      if (keyword && keyword.length > 1 && keyword.toLowerCase() !== 'all') {
+        jobList = this.jobs.searchByKeyword(jobList, keyword);
+      } else {
+        jobList = this.jobs.relevantJobsForProfile(jobList, profile);
+      }
     }
 
-    const allMatches = this.matchProfileToJobs(profile, jobList);
+    const ruleMatches = this.matchProfileToJobs(profile, jobList);
+    const allMatches =
+      options.aiRerank !== false && this.rerank.isEnabled()
+        ? await this.rerank.applyAiRerank(userId, profile, ruleMatches)
+        : ruleMatches;
     await this.persistMatches(userId, profile.id, profile.contactId, allMatches);
     const shownMatches = this.filterMatchesByTier(allMatches, tier);
 
@@ -210,6 +217,7 @@ export class CareerMatchingService {
         }
 
         const breakdown: MatchFactorBreakdown = {
+          rule_score: score,
           skills: {
             matched: skillScore.matched,
             partial: skillScore.partial,

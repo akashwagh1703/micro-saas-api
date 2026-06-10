@@ -9,6 +9,7 @@ import {
 } from '../job-sources/job-source.utils';
 
 export interface MatchFactorBreakdown {
+  rule_score: number;
   skills: { matched: string[]; partial: string[]; missing: string[]; score: number; max: number };
   experience: { profileYears: number; required: string; score: number; max: number };
   seniority: { profile: string; job: string; score: number; max: number };
@@ -16,7 +17,22 @@ export interface MatchFactorBreakdown {
   location: { score: number; max: number; note?: string };
   role: { score: number; max: number; note?: string };
   notice: { score: number; max: number; note?: string };
+  ai?: {
+    score: number;
+    rule_score: number;
+    reason: string;
+    profile_key?: string;
+    max: number;
+  };
   overall_band: string;
+}
+
+export interface JobMatchResult {
+  job: CareerJob;
+  score: number;
+  matchFactors: string[];
+  missingSkills: string[];
+  breakdown: MatchFactorBreakdown;
 }
 
 export interface StoredMatchFactors {
@@ -473,6 +489,7 @@ export function buildStoredMatchFactors(
 
 export function emptyMatchBreakdown(): MatchFactorBreakdown {
   return {
+    rule_score: 0,
     skills: { matched: [], partial: [], missing: [], score: 0, max: 40 },
     experience: { profileYears: 0, required: '—', score: 0, max: 14 },
     seniority: { profile: 'unknown', job: 'unknown', score: 0, max: 6 },

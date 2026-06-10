@@ -670,6 +670,79 @@ export class CareerAiService {
     };
   }
 
+  // ─── Job match AI rerank (Phase 3) ───────────────────────────────────────────
+
+  async rerankJobMatches(
+    userId: number,
+    profile: Record<string, unknown>,
+    jobs: Array<{
+      id: number;
+      title: string;
+      company: string;
+      ruleScore: number;
+      summary: string;
+    }>,
+  ): Promise<Map<number, { aiScore: number; reason: string }> | null> {
+    if (jobs.length === 0) {
+      return new Map();
+    }
+
+    if (!(await this.usage.isWithinLimit(userId)).allowed) {
+      return null;
+    }
+
+    const validIds = new Set(jobs.map((j) => j.id));
+    const messages: Array<{ role: 'system' | 'user'; content: string }> = [
+      {
+        role: 'system',
+        content:
+          'You rerank job listings for Indian job seekers against a candidate profile. ' +
+          'Return ONLY a JSON array: [{"id":123,"score":0-100,"reason":"one concise sentence"}]. ' +
+          'Score holistic fit (skills, seniority, location, salary, role trajectory) — not just the ruleScore. ' +
+          'Most scores should fall between 40–85 unless the fit is exceptional or poor.',
+      },
+      {
+        role: 'user',
+        content: [
+          'Candidate profile:',
+          JSON.stringify({
+            full_name: profile['full_name'],
+            skills: profile['skills'],
+            experience: profile['experience'],
+            preferred_roles: profile['preferred_roles'],
+            current_location: profile['current_location'],
+            preferred_locations: profile['preferred_locations'],
+            expected_salary: profile['expected_salary'],
+            work_preference: profile['work_preference'],
+          }).slice(0, 2800),
+          '',
+          'Jobs to score (id, title, company, ruleScore, summary):',
+          JSON.stringify(
+            jobs.map((j) => ({
+              id: j.id,
+              title: j.title,
+              company: j.company,
+              ruleScore: j.ruleScore,
+              summary: j.summary.slice(0, 400),
+            })),
+          ),
+        ].join('\n'),
+      },
+    ];
+
+    const result = await this.ai.completeWithMessages(userId, messages, {
+      max_tokens: Math.min(2500, 150 + jobs.length * 70),
+      temperature: 0.2,
+    });
+    await this.track(userId, 'job_match_rerank', result);
+
+    if (!result.success || !result.content) {
+      return null;
+    }
+
+    return this.parseRerankResults(result.content, validIds);
+  }
+
   // ─── Private helpers ──────────────────────────────────────────────────────────
 
   private async track(userId: number, context: string, result: AiResult): Promise<void> {
@@ -799,5 +872,41 @@ export class CareerAiService {
     } catch {
       return null;
     }
+  }
+
+  private parseRerankResults(
+    raw: string,
+    validIds: Set<number>,
+  ): Map<number, { aiScore: number; reason: string }> {
+    const map = new Map<number, { aiScore: number; reason: string }>();
+    const cleaned = raw.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '');
+    const match = cleaned.match(/\[[\s\S]*\]/);
+    if (!match) {
+      return map;
+    }
+
+    try {
+      const arr = JSON.parse(match[0]) as Array<{ id?: unknown; score?: unknown; reason?: unknown }>;
+      if (!Array.isArray(arr)) {
+        return map;
+      }
+
+      for (const item of arr) {
+        const id = Number(item.id);
+        if (!validIds.has(id) || Number.isNaN(id)) {
+          continue;
+        }
+        const aiScore = Math.min(100, Math.max(0, Math.round(Number(item.score))));
+        const reason = String(item.reason ?? '').trim().slice(0, 200);
+        if (Number.isNaN(aiScore) || !reason) {
+          continue;
+        }
+        map.set(id, { aiScore, reason });
+      }
+    } catch {
+      // ignore malformed AI output
+    }
+
+    return map;
   }
 }

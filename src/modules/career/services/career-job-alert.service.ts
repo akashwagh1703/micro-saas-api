@@ -113,29 +113,25 @@ export class CareerJobAlertService {
 
     try {
       const relevantJobs = this.jobs.relevantJobsForProfile(candidateJobs, profile);
-      const allMatches = this.matching.matchProfileToJobs(profile, relevantJobs);
-      await this.matching.persistMatches(
+      const { shownMatches: matches } = await this.matching.matchAndPersistForProfile(
         profile.userId,
-        profile.id,
-        profile.contactId,
-        allMatches,
+        profile,
+        { tier: 'strong', jobList: relevantJobs },
       );
 
-      const matches = this.matching
-        .filterMatchesByTier(allMatches, 'strong')
-        .filter((m) => !notifiedSet.has(m.job.id));
+      const freshMatches = matches.filter((m) => !notifiedSet.has(m.job.id));
 
-      if (matches.length === 0) {
+      if (freshMatches.length === 0) {
         return 'skipped';
       }
 
-      const top = matches.slice(0, 3);
+      const top = freshMatches.slice(0, 3);
       const conversation = await this.prisma.conversation.findUnique({
         where: { contactId: profile.contactId },
       });
 
-      const whatsappBody = this.formatInstantAlertMessage(profile, top, matches.length);
-      const emailContent = this.channels.buildInstantEmailContent(profile, top, matches.length);
+      const whatsappBody = this.formatInstantAlertMessage(profile, top, freshMatches.length);
+      const emailContent = this.channels.buildInstantEmailContent(profile, top, freshMatches.length);
 
       const delivery = await this.channels.deliver(
         profile,
