@@ -21,6 +21,7 @@ import {
 } from './career-match-scoring.util';
 import { CareerMatchRerankService } from './career-match-rerank.service';
 import { CareerMatchLearningService } from './career-match-learning.service';
+import { readSelfReportedExperienceYears } from '../career-onboarding.util';
 
 export type { JobMatchResult } from './career-match-scoring.util';
 
@@ -136,7 +137,12 @@ export class CareerMatchingService {
     const profileSkills = this.normalizeSkills(profile.skills);
     const preferredRoles = this.normalizeArray(profile.preferredRoles);
     const preferredLocs = this.buildLocationPreferences(profile);
-    const profileExpYears = this.calcExperienceYears(profile.experience);
+    // The user's self-reported total experience (collected during onboarding) is
+    // the authoritative value; fall back to resume-estimated years only when the
+    // user has not answered the experience question.
+    const selfReportedExpYears = readSelfReportedExperienceYears(profile.onboardingData);
+    const profileExpYears =
+      selfReportedExpYears ?? this.calcExperienceYears(profile.experience);
     const expectedSalaryL = parseSalaryLPA(profile.expectedSalary);
     const workPref = (profile.workPreference ?? '').toLowerCase();
     const noticeDays = this.parseNoticePeriodDays(profile.noticePeriod);

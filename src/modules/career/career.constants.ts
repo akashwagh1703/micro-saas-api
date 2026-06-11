@@ -30,6 +30,7 @@ export const CAREER_ONBOARDING_STEPS = [
   'parse_review',
   'follow_up_location',
   'follow_up_preferred_location',
+  'follow_up_experience',
   'follow_up_current_salary',
   'follow_up_expected_salary',
   'follow_up_notice_period',

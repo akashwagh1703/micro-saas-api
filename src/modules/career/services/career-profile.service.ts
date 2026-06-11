@@ -5,13 +5,18 @@ import { ParsedCareerProfile } from '../career-parsed-profile.types';
 import { ParsedProfileValidation } from '../career-resume-validate.util';
 import { StagedParseReview } from '../career-parse-review.util';
 import { CareerSeekerBillingService } from './career-seeker-billing.service';
+import {
+  OnboardingField,
+  readSelfReportedExperienceYears,
+} from '../career-onboarding.util';
 
 const ONBOARDING_FIELD_ORDER: Array<{
   step: string;
-  field: keyof CareerProfile;
+  field: OnboardingField;
 }> = [
   { step: 'follow_up_location', field: 'currentLocation' },
   { step: 'follow_up_preferred_location', field: 'preferredLocations' },
+  { step: 'follow_up_experience', field: 'totalExperienceYears' },
   { step: 'follow_up_current_salary', field: 'currentSalary' },
   { step: 'follow_up_expected_salary', field: 'expectedSalary' },
   { step: 'follow_up_notice_period', field: 'noticePeriod' },
@@ -71,7 +76,11 @@ export class CareerProfileService {
     };
   }
 
-  private isFieldFilled(profile: CareerProfile, field: keyof CareerProfile): boolean {
+  private isFieldFilled(profile: CareerProfile, field: OnboardingField): boolean {
+    // Virtual field: self-reported experience lives in onboardingData, not a column.
+    if (field === 'totalExperienceYears') {
+      return readSelfReportedExperienceYears(profile.onboardingData) !== null;
+    }
     const val = profile[field];
     if (val === null || val === undefined || val === '') {
       return false;
@@ -271,6 +280,7 @@ export class CareerProfileService {
       phone: profile.phone,
       skills: profile.skills,
       experience: profile.experience,
+      total_experience_years: readSelfReportedExperienceYears(profile.onboardingData),
       education: profile.education,
       certifications: profile.certifications,
       projects: profile.projects,

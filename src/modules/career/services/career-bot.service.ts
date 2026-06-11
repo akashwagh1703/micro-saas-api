@@ -68,10 +68,12 @@ import {
   formatOnboardingAck,
   getOnboardingSteps,
   parsingResumeRecoveryMessage,
+  readSelfReportedExperienceYears,
   validateOnboardingAnswer,
   welcomeMessage,
   awaitingResumeMessage,
   workModePromptBody,
+  type OnboardingField,
 } from '../career-onboarding.util';
 
 // WhatsApp rejects messages over 4096 chars. We use 3800 to leave a safe buffer.
@@ -499,8 +501,18 @@ export class CareerBotService {
       return;
     }
 
+    // Self-reported experience is a virtual field stored in onboardingData and
+    // used as the authoritative experience for matching (no dedicated column).
+    if (step.field === 'totalExperienceYears') {
+      await this.mergeOnboardingData(current.id, {
+        total_experience_years: Number(validation.value ?? 0),
+      });
+    }
+
     const data: Prisma.CareerProfileUpdateInput = {};
-    if (step.field === 'preferredLocations' || step.field === 'preferredRoles') {
+    if (step.field === 'totalExperienceYears') {
+      // Already persisted to onboardingData above — no column to update.
+    } else if (step.field === 'preferredLocations' || step.field === 'preferredRoles') {
       data[step.field] = (validation.value as string[]) ?? [];
     } else if (step.field === 'preferredJobTypes') {
       data.preferredJobTypes = [String(validation.value ?? text)];
@@ -1732,8 +1744,12 @@ export class CareerBotService {
    */
   private isFieldAlreadyFilled(
     profile: CareerProfile,
-    field: keyof CareerProfile,
+    field: OnboardingField,
   ): boolean {
+    // Self-reported experience lives in onboardingData, not a profile column.
+    if (field === 'totalExperienceYears') {
+      return readSelfReportedExperienceYears(profile.onboardingData) !== null;
+    }
     const val = profile[field];
     if (val === null || val === undefined || val === '') return false;
     if (Array.isArray(val)) return val.length > 0;

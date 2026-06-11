@@ -1,16 +1,26 @@
 /** Onboarding questions, validation, and friendly WhatsApp copy for CareerAI. */
 
+/**
+ * Onboarding step fields. Most map directly to a CareerProfile column, but
+ * `totalExperienceYears` is a *virtual* field — its value is the user's
+ * self-reported total years of experience, persisted inside the profile's
+ * `onboardingData` JSON (under {@link CAREER_EXPERIENCE_DATA_KEY}) rather than a
+ * dedicated column, and used as the authoritative experience for job matching.
+ */
+export type OnboardingField =
+  | 'currentLocation'
+  | 'preferredLocations'
+  | 'currentSalary'
+  | 'expectedSalary'
+  | 'noticePeriod'
+  | 'preferredJobTypes'
+  | 'workPreference'
+  | 'preferredRoles'
+  | 'totalExperienceYears';
+
 export interface OnboardingStepDef {
   next: string;
-  field:
-    | 'currentLocation'
-    | 'preferredLocations'
-    | 'currentSalary'
-    | 'expectedSalary'
-    | 'noticePeriod'
-    | 'preferredJobTypes'
-    | 'workPreference'
-    | 'preferredRoles';
+  field: OnboardingField;
   question: string;
   stepNumber: number;
 }
@@ -18,15 +28,19 @@ export interface OnboardingStepDef {
 export interface OnboardingValidationResult {
   ok: boolean;
   error?: string;
-  /** Value to persist — string or string[] depending on field. */
-  value?: string | string[];
+  /** Value to persist — string, string[], or number depending on field. */
+  value?: string | string[] | number;
   /** Short label for acknowledgment message. */
   display?: string;
 }
 
+/** Key under which the user's self-reported experience (years) lives in onboardingData. */
+export const CAREER_EXPERIENCE_DATA_KEY = 'total_experience_years';
+
 const STEP_ORDER = [
   'follow_up_location',
   'follow_up_preferred_location',
+  'follow_up_experience',
   'follow_up_current_salary',
   'follow_up_expected_salary',
   'follow_up_notice_period',
@@ -61,29 +75,40 @@ export function getOnboardingSteps(): Record<string, OnboardingStepDef> {
       field: 'currentLocation',
       stepNumber: 1,
       question: [
-        '📍 *Question 1 of 8 — Current location*',
+        '📍 *Question 1 of 9 — Current location*',
         '',
         'Where are you based right now?',
         '_Examples: Mumbai · Pune · Bengaluru · Remote_',
       ].join('\n'),
     },
     follow_up_preferred_location: {
-      next: 'follow_up_current_salary',
+      next: 'follow_up_experience',
       field: 'preferredLocations',
       stepNumber: 2,
       question: [
-        '🌍 *Question 2 of 8 — Preferred work locations*',
+        '🌍 *Question 2 of 9 — Preferred work locations*',
         '',
         'Which cities would you like to work in?',
         '_Comma-separated — e.g. Pune, Remote, Hyderabad_',
       ].join('\n'),
     },
+    follow_up_experience: {
+      next: 'follow_up_current_salary',
+      field: 'totalExperienceYears',
+      stepNumber: 3,
+      question: [
+        '📊 *Question 3 of 9 — Total experience*',
+        '',
+        'How many years of work experience do you have in total?',
+        '_Examples: 3 · 5.5 · 10+ · Fresher_',
+      ].join('\n'),
+    },
     follow_up_current_salary: {
       next: 'follow_up_expected_salary',
       field: 'currentSalary',
-      stepNumber: 3,
+      stepNumber: 4,
       question: [
-        '💰 *Question 3 of 8 — Current salary*',
+        '💰 *Question 4 of 9 — Current salary*',
         '',
         'What is your current CTC?',
         '_Examples: 8 LPA · 6.5 LPA · Fresher · Not applicable_',
@@ -92,9 +117,9 @@ export function getOnboardingSteps(): Record<string, OnboardingStepDef> {
     follow_up_expected_salary: {
       next: 'follow_up_notice_period',
       field: 'expectedSalary',
-      stepNumber: 4,
+      stepNumber: 5,
       question: [
-        '🎯 *Question 4 of 8 — Expected salary*',
+        '🎯 *Question 5 of 9 — Expected salary*',
         '',
         'What CTC are you targeting in your next role?',
         '_Examples: 12 LPA · 10-14 LPA · Negotiable_',
@@ -103,9 +128,9 @@ export function getOnboardingSteps(): Record<string, OnboardingStepDef> {
     follow_up_notice_period: {
       next: 'follow_up_employment_type',
       field: 'noticePeriod',
-      stepNumber: 5,
+      stepNumber: 6,
       question: [
-        '⏳ *Question 5 of 8 — Notice period*',
+        '⏳ *Question 6 of 9 — Notice period*',
         '',
         'How soon can you join a new company?',
         '_Examples: 30 days · 2 months · Immediate · Serving notice_',
@@ -114,9 +139,9 @@ export function getOnboardingSteps(): Record<string, OnboardingStepDef> {
     follow_up_employment_type: {
       next: 'follow_up_job_type',
       field: 'preferredJobTypes',
-      stepNumber: 6,
+      stepNumber: 7,
       question: [
-        '💼 *Question 6 of 8 — Employment type*',
+        '💼 *Question 7 of 9 — Employment type*',
         '',
         'What type of role are you looking for?',
         'Tap a button below or type *Full-time*, *Part-time*, or *Contract*.',
@@ -125,9 +150,9 @@ export function getOnboardingSteps(): Record<string, OnboardingStepDef> {
     follow_up_job_type: {
       next: 'follow_up_roles',
       field: 'workPreference',
-      stepNumber: 7,
+      stepNumber: 8,
       question: [
-        '🏠 *Question 7 of 8 — Work mode*',
+        '🏠 *Question 8 of 9 — Work mode*',
         '',
         'Do you prefer Remote, Hybrid, or Onsite work?',
         'Tap a button below or type your preference.',
@@ -136,9 +161,9 @@ export function getOnboardingSteps(): Record<string, OnboardingStepDef> {
     follow_up_roles: {
       next: 'complete',
       field: 'preferredRoles',
-      stepNumber: 8,
+      stepNumber: 9,
       question: [
-        '🚀 *Question 8 of 8 — Target roles*',
+        '🚀 *Question 9 of 9 — Target roles*',
         '',
         'Which job titles are you aiming for?',
         '_Comma-separated — e.g. React Developer, Full Stack Engineer, PHP Developer_',
@@ -179,6 +204,7 @@ export function formatOnboardingAck(step: string, display: string): string {
   const icons: Record<string, string> = {
     follow_up_location: '📍',
     follow_up_preferred_location: '🌍',
+    follow_up_experience: '📊',
     follow_up_current_salary: '💰',
     follow_up_expected_salary: '🎯',
     follow_up_notice_period: '⏳',
@@ -201,6 +227,8 @@ export function validateOnboardingAnswer(step: string, rawText: string): Onboard
       return validateLocation(text, false);
     case 'follow_up_preferred_location':
       return validatePreferredLocations(text);
+    case 'follow_up_experience':
+      return validateExperience(text);
     case 'follow_up_current_salary':
       return validateSalary(text, 'current');
     case 'follow_up_expected_salary':
@@ -229,6 +257,7 @@ function emptyAnswerError(step: string): string {
   const prompts: Record<string, string> = {
     follow_up_location: 'Please share your current city — e.g. *Mumbai* or *Pune*.',
     follow_up_preferred_location: 'Please list at least one preferred location — e.g. *Pune, Remote*.',
+    follow_up_experience: 'Please enter your total years of experience — e.g. *3*, *5.5*, or *Fresher*.',
     follow_up_current_salary: 'Please enter your current CTC — e.g. *8 LPA* or *Fresher*.',
     follow_up_expected_salary: 'Please enter your expected CTC — e.g. *12 LPA* or *Negotiable*.',
     follow_up_notice_period: 'Please enter your notice period — e.g. *30 days* or *Immediate*.',
@@ -324,6 +353,64 @@ function validatePreferredLocations(text: string): OnboardingValidationResult {
     value: unique,
     display: unique.join(', '),
   };
+}
+
+/** Max plausible career length (years) accepted for self-reported experience. */
+const MAX_EXPERIENCE_YEARS = 50;
+
+function validateExperience(text: string): OnboardingValidationResult {
+  const t = text.trim();
+  const lower = t.toLowerCase();
+
+  // Treat clear "no experience" answers as 0 years (Fresher).
+  if (
+    /\b(fresher|fresh|no experience|none|nil|student|intern(ship)?|just graduat|recent graduate)\b/i.test(
+      lower,
+    ) &&
+    !/\d/.test(lower)
+  ) {
+    return { ok: true, value: 0, display: 'Fresher (0 years)' };
+  }
+
+  const match = lower.match(/(\d+(?:\.\d+)?)/);
+  if (!match) {
+    return {
+      ok: false,
+      error: [
+        '⚠️ *Please enter your total experience in years.*',
+        '',
+        '_Examples: 3 · 5.5 · 10+ · Fresher_',
+      ].join('\n'),
+    };
+  }
+
+  let years = parseFloat(match[1]);
+
+  // "6 months" style answers — convert to fractional years.
+  if (/month/i.test(lower) && !/year|yr/i.test(lower)) {
+    years = years / 12;
+  }
+
+  if (Number.isNaN(years) || years < 0) {
+    return {
+      ok: false,
+      error: '⚠️ Please enter a valid number of years — e.g. *3*, *5.5*, or *Fresher*.',
+    };
+  }
+
+  if (years > MAX_EXPERIENCE_YEARS) {
+    return {
+      ok: false,
+      error: `⚠️ That looks too high. Please enter realistic total experience (0–${MAX_EXPERIENCE_YEARS} years) — e.g. *8* or *12*.`,
+    };
+  }
+
+  const rounded = Math.round(years * 10) / 10;
+  const display =
+    rounded === 0
+      ? 'Fresher (0 years)'
+      : `${rounded} year${rounded === 1 ? '' : 's'}`;
+  return { ok: true, value: rounded, display };
 }
 
 function validateSalary(text: string, kind: 'current' | 'expected'): OnboardingValidationResult {
@@ -557,7 +644,7 @@ function dedupeCaseInsensitive(items: string[]): string[] {
 export function employmentTypePromptBody(prefix?: string): string {
   return [
     prefix,
-    '💼 *Question 6 of 8 — Employment type*',
+    '💼 *Question 7 of 9 — Employment type*',
     '',
     'What type of role are you looking for?',
     'Tap a button below or type *Full-time*, *Part-time*, or *Contract*.',
@@ -569,13 +656,29 @@ export function employmentTypePromptBody(prefix?: string): string {
 export function workModePromptBody(prefix?: string): string {
   return [
     prefix,
-    '🏠 *Question 7 of 8 — Work mode*',
+    '🏠 *Question 8 of 9 — Work mode*',
     '',
     'Do you prefer *Remote*, *Hybrid*, or *Onsite* work?',
     'Tap a button below or type your preference.',
   ]
     .filter(Boolean)
     .join('\n\n');
+}
+
+/**
+ * Reads the user's self-reported total experience (years) from a profile's
+ * `onboardingData`. Returns null when the user has not answered the experience
+ * question yet, so callers can fall back to resume-estimated experience.
+ */
+export function readSelfReportedExperienceYears(onboardingData: unknown): number | null {
+  if (!onboardingData || typeof onboardingData !== 'object') {
+    return null;
+  }
+  const value = (onboardingData as Record<string, unknown>)[CAREER_EXPERIENCE_DATA_KEY];
+  if (typeof value === 'number' && Number.isFinite(value) && value >= 0) {
+    return value;
+  }
+  return null;
 }
 
 export { STEP_ORDER as ONBOARDING_STEP_ORDER };
