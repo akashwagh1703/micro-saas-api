@@ -30,6 +30,7 @@ model User {
   razorpayCustomerId     String?   @map("razorpay_customer_id") @db.VarChar(64)
   razorpaySubscriptionId String?   @map("razorpay_subscription_id") @db.VarChar(64)
   currentPeriodEnd       DateTime? @map("current_period_end")
+  subscriptionCancelAtPeriodEnd Boolean @default(false) @map("subscription_cancel_at_period_end")
 
   whatsAppAccount     WhatsAppAccount?
   instagramAccount    InstagramAccount?
@@ -52,6 +53,7 @@ model User {
   careerNotifications CareerNotification[]
   careerAuditLogs     CareerAuditLog[]
   billingTransactions BillingTransaction[]
+  integrationCredentials IntegrationCredential[]
 
   @@map("users")
 }
@@ -187,10 +189,10 @@ model Message {
   contact            Contact             @relation(fields: [contactId], references: [id], onDelete: Cascade)
   workflowExecutions WorkflowExecution[]
 
+  @@unique([userId, waMessageId])
+  @@unique([userId, externalMessageId])
   @@index([conversationId, createdAt])
   @@index([userId, channel, createdAt])
-  @@index([userId, waMessageId])
-  @@index([userId, externalMessageId])
   @@map("messages")
 }
 
@@ -202,6 +204,9 @@ model Workflow {
   status           String    @default("draft")
   isActive         Boolean   @default(false) @map("is_active")
   triggerType      String    @default("message_received") @map("trigger_type")
+  webhookToken     String?   @unique @map("webhook_token") @db.VarChar(64)
+  scheduleCron     String?   @map("schedule_cron") @db.VarChar(64)
+  scheduleTimezone String?   @default("UTC") @map("schedule_timezone") @db.VarChar(64)
   sourceTemplate   String?   @map("source_template")
   businessCategory String?   @map("business_category")
   useCase          String?   @map("use_case")
@@ -358,6 +363,7 @@ model CareerProfile {
   razorpayCustomerId       String?   @map("razorpay_customer_id") @db.VarChar(64)
   razorpaySubscriptionId   String?   @map("razorpay_subscription_id") @db.VarChar(64)
   currentPeriodEnd         DateTime? @map("current_period_end")
+  subscriptionCancelAtPeriodEnd Boolean @default(false) @map("subscription_cancel_at_period_end")
   createdAt          DateTime? @default(now()) @map("created_at")
   updatedAt          DateTime? @updatedAt @map("updated_at")
 
@@ -592,4 +598,22 @@ model BillingTransaction {
   @@index([product, createdAt])
   @@index([razorpayPaymentId])
   @@map("billing_transactions")
+}
+
+model IntegrationCredential {
+  id         Int       @id @default(autoincrement())
+  userId     Int       @map("user_id")
+  name       String    @db.VarChar(64)
+  label      String?   @db.VarChar(128)
+  authType   String    @default("bearer") @map("auth_type") @db.VarChar(32)
+  secret     String
+  headerName String?   @map("header_name") @db.VarChar(64)
+  createdAt  DateTime? @default(now()) @map("created_at")
+  updatedAt  DateTime? @updatedAt @map("updated_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, name])
+  @@index([userId])
+  @@map("integration_credentials")
 }

@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { WorkflowExecution } from '@prisma/client';
+import { getByPath } from '../../../common/template-variables.util';
 import { NodeExecutionResult, NodeExecutor } from './node-executor.interface';
 
 @Injectable()
@@ -14,26 +15,47 @@ export class ConditionNodeExecutor implements NodeExecutor {
     const operator = data.operator ?? 'contains';
     const value = data.value ?? '';
 
-    const actual = String(context[field] ?? context.message ?? '');
+    const actualRaw = getByPath(context, field) ?? context[field] ?? context.message ?? '';
+    const actual = String(actualRaw ?? '');
+    const compare = String(value ?? '');
 
     let matched: boolean;
     switch (operator) {
       case 'equals':
-        matched = actual === value;
+        matched = actual === compare;
+        break;
+      case 'not_equals':
+        matched = actual !== compare;
         break;
       case 'starts_with':
-        matched = actual.startsWith(value);
+        matched = actual.startsWith(compare);
         break;
       case 'ends_with':
-        matched = actual.endsWith(value);
+        matched = actual.endsWith(compare);
+        break;
+      case 'not_empty':
+        matched = actual.trim().length > 0;
+        break;
+      case 'greater_than':
+        matched = Number(actual) > Number(compare);
+        break;
+      case 'less_than':
+        matched = Number(actual) < Number(compare);
+        break;
+      case 'regex':
+        try {
+          matched = new RegExp(compare, 'i').test(actual);
+        } catch {
+          matched = false;
+        }
         break;
       default:
-        matched = actual.toLowerCase().includes(String(value).toLowerCase());
+        matched = actual.toLowerCase().includes(compare.toLowerCase());
     }
 
     return {
       success: true,
-      output: { matched },
+      output: { matched, condition_field: field, condition_value: compare },
       branch: matched ? 'true' : 'false',
     };
   }

@@ -99,6 +99,7 @@ export function serializeInstagramAccount(a: InstagramAccount) {
 }
 
 export function serializeWorkflow(w: Workflow) {
+  const appUrl = (process.env.APP_URL ?? '').replace(/\/$/, '');
   return {
     id: w.id,
     user_id: w.userId,
@@ -107,6 +108,11 @@ export function serializeWorkflow(w: Workflow) {
     status: w.status,
     is_active: w.isActive,
     trigger_type: w.triggerType,
+    webhook_token: w.webhookToken ?? null,
+    webhook_url:
+      w.webhookToken && appUrl ? `${appUrl}/api/hooks/workflows/${w.webhookToken}` : null,
+    schedule_cron: w.scheduleCron ?? null,
+    schedule_timezone: w.scheduleTimezone ?? null,
     source_template: w.sourceTemplate,
     business_category: w.businessCategory,
     use_case: w.useCase,

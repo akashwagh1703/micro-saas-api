@@ -28,7 +28,11 @@ import { CareerPortalShareService } from './services/career-portal-share.service
 import { CareerMatchFeedbackService } from './services/career-match-feedback.service';
 import { CareerMatchingService } from './services/career-matching.service';
 import { MATCH_FEEDBACK_EVENTS, MatchFeedbackEvent } from './career-match-learning.util';
-import { SeekerSubscribeDto, SeekerVerifySubscriptionDto } from './dto/career-seeker-billing.dto';
+import {
+  SeekerCancelSubscriptionDto,
+  SeekerSubscribeDto,
+  SeekerVerifySubscriptionDto,
+} from './dto/career-seeker-billing.dto';
 
 /** Public document downloads and candidate portal (signed token — no login). */
 @Controller('career/public')
@@ -124,6 +128,13 @@ export class CareerPublicController {
       dto.razorpay_subscription_id,
       dto.razorpay_signature,
     );
+    return { status };
+  }
+
+  @Post('billing/cancel')
+  async billingCancel(@Body() dto: SeekerCancelSubscriptionDto) {
+    const payload = this.requirePortalToken(dto.token);
+    const status = await this.seekerBilling.cancelSubscription(payload.profileId, payload.userId);
     return { status };
   }
 

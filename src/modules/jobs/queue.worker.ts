@@ -8,12 +8,14 @@ import {
   QUEUE_EXECUTE_WORKFLOW,
   QUEUE_PROCESS_INCOMING,
   QUEUE_SEND_MESSAGE,
+  QUEUE_WORKFLOW_SCHEDULE_TICK,
   SendMessageJob,
   CareerTaskJob,
 } from '../queue/queue.constants';
 import { IncomingMessageProcessor } from './incoming-message.processor';
 import { CareerTaskProcessor } from './career-task.processor';
 import { WorkflowExecutionService } from '../workflows/workflow-execution.service';
+import { WorkflowScheduleService } from '../workflows/workflow-schedule.service';
 import { InboxService } from '../inbox/inbox.service';
 
 /** Registers handlers for all three job queues, running in this same process. */
@@ -28,6 +30,7 @@ export class QueueWorker {
     private readonly execution: WorkflowExecutionService,
     private readonly inbox: InboxService,
     private readonly careerTasks: CareerTaskProcessor,
+    private readonly workflowSchedule: WorkflowScheduleService,
   ) {}
 
   /** Called from main.ts after HTTP listen — keeps /up reachable even if workers fail. */
@@ -78,6 +81,10 @@ export class QueueWorker {
 
     await this.queue.work<CareerTaskJob>(QUEUE_CAREER_TASK, async (data) => {
       await this.careerTasks.handle(data);
+    });
+
+    await this.queue.work<Record<string, never>>(QUEUE_WORKFLOW_SCHEDULE_TICK, async () => {
+      await this.workflowSchedule.processTick();
     });
 
     this.logger.log('Queue workers registered.');

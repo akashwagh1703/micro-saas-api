@@ -12,7 +12,7 @@ import { PrismaService } from '../../../prisma/prisma.service';
 import { CareerTenantSettingsService } from './career-tenant-settings.service';
 
 export type SeekerBillingPlan = 'monthly' | 'yearly';
-export type SeekerBillingStatusKind = 'trial' | 'active' | 'expired' | 'cancelled';
+export type SeekerBillingStatusKind = 'trial' | 'active' | 'past_due' | 'expired' | 'cancelled';
 
 export interface SeekerBillingStatus {
   billing_enabled: boolean;
@@ -21,6 +21,7 @@ export interface SeekerBillingStatus {
   has_access: boolean;
   trial_ends_at: string | null;
   current_period_end: string | null;
+  cancel_at_period_end: boolean;
   days_left: number | null;
   prices: { monthly_inr: number; yearly_inr: number };
   razorpay_configured: boolean;
@@ -83,13 +84,14 @@ export class CareerSeekerBillingService {
     signature: string,
     payload: Record<string, unknown>,
   ): Promise<boolean> {
-    const entity =
-      ((payload.payload as Record<string, unknown>)?.subscription as Record<string, unknown>)
-        ?.entity ??
-      ((payload.payload as Record<string, unknown>)?.payment as Record<string, unknown>)?.entity ??
-      {};
+    const inner = (payload.payload as Record<string, unknown>) ?? {};
+    const subscriptionEntity =
+      ((inner.subscription as Record<string, unknown>)?.entity as Record<string, unknown>) ?? null;
+    const paymentEntity =
+      ((inner.payment as Record<string, unknown>)?.entity as Record<string, unknown>) ?? null;
+    const entity = subscriptionEntity ?? paymentEntity ?? {};
 
-    const tenantUserId = await this.resolveTenantFromWebhook(entity as Record<string, unknown>);
+    const tenantUserId = await this.resolveTenantFromWebhook(entity);
     if (!tenantUserId) {
       return false;
     }
@@ -104,7 +106,7 @@ export class CareerSeekerBillingService {
     }
 
     const event = payload.event as string;
-    await this.handleWebhookEvent(event, entity as Record<string, unknown>);
+    await this.handleWebhookEvent(event, entity, paymentEntity);
     return true;
   }
 
@@ -147,6 +149,7 @@ export class CareerSeekerBillingService {
         has_access: true,
         trial_ends_at: null,
         current_period_end: null,
+        cancel_at_period_end: false,
         days_left: null,
         prices,
         razorpay_configured,
@@ -156,20 +159,35 @@ export class CareerSeekerBillingService {
     const now = new Date();
     const trialEnds = profile.trialEndsAt;
     const periodEnd = profile.currentPeriodEnd;
+    const plan = (profile.subscriptionPlan as SeekerBillingPlan) ?? null;
+    const cancelAtPeriodEnd = profile.subscriptionCancelAtPeriodEnd === true;
+    const withinPaidPeriod = !!periodEnd && periodEnd > now;
 
-    if (
-      profile.subscriptionStatus === 'active' &&
-      periodEnd &&
-      periodEnd > now
-    ) {
+    if (profile.subscriptionStatus === 'active' && withinPaidPeriod) {
       return {
         billing_enabled: true,
         status: 'active',
-        plan: (profile.subscriptionPlan as SeekerBillingPlan) ?? null,
+        plan,
         has_access: true,
         trial_ends_at: trialEnds.toISOString(),
-        current_period_end: periodEnd.toISOString(),
-        days_left: this.daysUntil(periodEnd),
+        current_period_end: periodEnd!.toISOString(),
+        cancel_at_period_end: cancelAtPeriodEnd,
+        days_left: this.daysUntil(periodEnd!),
+        prices,
+        razorpay_configured,
+      };
+    }
+
+    if (profile.subscriptionStatus === 'past_due') {
+      return {
+        billing_enabled: true,
+        status: 'past_due',
+        plan,
+        has_access: withinPaidPeriod,
+        trial_ends_at: trialEnds.toISOString(),
+        current_period_end: periodEnd ? periodEnd.toISOString() : null,
+        cancel_at_period_end: cancelAtPeriodEnd,
+        days_left: withinPaidPeriod ? this.daysUntil(periodEnd!) : 0,
         prices,
         razorpay_configured,
       };
@@ -179,11 +197,12 @@ export class CareerSeekerBillingService {
       return {
         billing_enabled: true,
         status: 'cancelled',
-        plan: (profile.subscriptionPlan as SeekerBillingPlan) ?? null,
-        has_access: false,
+        plan,
+        has_access: withinPaidPeriod,
         trial_ends_at: trialEnds.toISOString(),
         current_period_end: periodEnd ? periodEnd.toISOString() : null,
-        days_left: 0,
+        cancel_at_period_end: cancelAtPeriodEnd,
+        days_left: withinPaidPeriod ? this.daysUntil(periodEnd!) : 0,
         prices,
         razorpay_configured,
       };
@@ -197,6 +216,7 @@ export class CareerSeekerBillingService {
         has_access: true,
         trial_ends_at: trialEnds.toISOString(),
         current_period_end: null,
+        cancel_at_period_end: false,
         days_left: this.daysUntil(trialEnds),
         prices,
         razorpay_configured,
@@ -210,6 +230,7 @@ export class CareerSeekerBillingService {
       has_access: false,
       trial_ends_at: trialEnds.toISOString(),
       current_period_end: periodEnd ? periodEnd.toISOString() : null,
+      cancel_at_period_end: false,
       days_left: 0,
       prices,
       razorpay_configured,
@@ -374,14 +395,108 @@ export class CareerSeekerBillingService {
         subscriptionStatus: 'active',
         subscriptionPlan: plan,
         currentPeriodEnd: periodEnd,
+        subscriptionCancelAtPeriodEnd: false,
       },
+    });
+
+    const cfg = await this.tenantSettings.getSeekerBillingConfig(tenantUserId);
+    await this.recordSeekerTransaction(tenantUserId, {
+      eventType: 'checkout.activated',
+      profileId,
+      razorpayPaymentId: paymentId,
+      razorpaySubscriptionId: subscriptionId,
+      plan,
+      amountInr: plan === 'yearly' ? cfg.priceYearlyInr : cfg.priceMonthlyInr,
+      status: 'captured',
     });
 
     return this.resolveStatus(updated);
   }
 
+  /**
+   * Cancels a candidate's subscription at the end of the current cycle (grace
+   * period). Razorpay finalizes via the `subscription.cancelled` webhook.
+   */
+  async cancelSubscription(profileId: number, tenantUserId: number): Promise<SeekerBillingStatus> {
+    const profile = await this.prisma.careerProfile.findFirst({
+      where: { id: profileId, userId: tenantUserId },
+    });
+    if (!profile) {
+      throw new ForbiddenException('Profile not found');
+    }
+    if (!profile.razorpaySubscriptionId) {
+      throw new UnprocessableEntityException('No active subscription to cancel.');
+    }
+
+    const razorpay = await this.getRazorpayForTenant(tenantUserId);
+    if (!razorpay) {
+      throw new ServiceUnavailableException('Online payments are not configured for this account.');
+    }
+
+    try {
+      await razorpay.subscriptions.cancel(profile.razorpaySubscriptionId, true);
+    } catch (err) {
+      this.logger.error(
+        `Seeker cancel failed profileId=${profileId}: ${(err as Error)?.message ?? 'unknown'}`,
+      );
+      throw new ServiceUnavailableException('Could not cancel the subscription. Please try again.');
+    }
+
+    const updated = await this.prisma.careerProfile.update({
+      where: { id: profileId },
+      data: { subscriptionCancelAtPeriodEnd: true },
+    });
+
+    return this.resolveStatus(updated);
+  }
+
+  /** Records a candidate billing event in the shared ledger (product=career_seeker). */
+  private async recordSeekerTransaction(
+    tenantUserId: number,
+    data: {
+      eventType: string;
+      profileId: number;
+      razorpayPaymentId?: string | null;
+      razorpaySubscriptionId?: string | null;
+      plan?: SeekerBillingPlan | string | null;
+      amountInr: number;
+      status?: string;
+    },
+  ): Promise<void> {
+    try {
+      if (data.razorpayPaymentId) {
+        const existing = await this.prisma.billingTransaction.findFirst({
+          where: { razorpayPaymentId: data.razorpayPaymentId },
+        });
+        if (existing) {
+          return;
+        }
+      }
+
+      await this.prisma.billingTransaction.create({
+        data: {
+          userId: tenantUserId,
+          product: 'career_seeker',
+          eventType: data.eventType,
+          razorpayPaymentId: data.razorpayPaymentId ?? null,
+          razorpaySubscriptionId: data.razorpaySubscriptionId ?? null,
+          plan: data.plan ?? null,
+          amountInr: data.amountInr,
+          status: data.status ?? 'captured',
+          metadata: { profile_id: data.profileId },
+        },
+      });
+    } catch (err) {
+      this.logger.warn(`Could not record seeker transaction: ${(err as Error)?.message ?? 'unknown'}`);
+    }
+  }
+
   /** Called from Razorpay webhook when subscription is not linked to a platform User. */
-  async handleWebhookEvent(event: string, entity: Record<string, unknown>): Promise<boolean> {
+  async handleWebhookEvent(
+    event: string,
+    entity: Record<string, unknown>,
+    paymentEntity: Record<string, unknown> | null = null,
+  ): Promise<boolean> {
     const subscriptionId = entity.id as string | undefined;
     if (!subscriptionId) {
       return false;
@@ -400,11 +515,11 @@ export class CareerSeekerBillingService {
       if (!profileId) {
         return false;
       }
-      await this.applySubscriptionEvent(profileId, event, entity, subscriptionId);
+      await this.applySubscriptionEvent(profileId, event, entity, subscriptionId, paymentEntity);
       return true;
     }
 
-    await this.applySubscriptionEvent(profile.id, event, entity, subscriptionId);
+    await this.applySubscriptionEvent(profile.id, event, entity, subscriptionId, paymentEntity);
     return true;
   }
 
@@ -413,6 +528,7 @@ export class CareerSeekerBillingService {
     event: string,
     entity: Record<string, unknown>,
     subscriptionId: string,
+    paymentEntity: Record<string, unknown> | null = null,
   ): Promise<void> {
     const planNote = (entity.notes as Record<string, string>)?.plan;
     const currentEnd = entity.current_end
@@ -447,17 +563,49 @@ export class CareerSeekerBillingService {
             subscriptionStatus: 'active',
             subscriptionPlan: plan,
             currentPeriodEnd: periodEnd,
+            subscriptionCancelAtPeriodEnd: false,
           },
         });
         this.logger.log(`Seeker subscription activated profileId=${profileId}`);
+
+        if (event === 'subscription.charged' && profile) {
+          const cfg = await this.tenantSettings.getSeekerBillingConfig(profile.userId);
+          const amountPaise = Number(paymentEntity?.amount ?? 0);
+          const amountInr =
+            amountPaise > 0
+              ? Math.round(amountPaise / 100)
+              : plan === 'yearly'
+                ? cfg.priceYearlyInr
+                : cfg.priceMonthlyInr;
+          await this.recordSeekerTransaction(profile.userId, {
+            eventType: event,
+            profileId,
+            razorpayPaymentId: (paymentEntity?.id as string) ?? null,
+            razorpaySubscriptionId: subscriptionId,
+            plan,
+            amountInr,
+            status: (paymentEntity?.status as string) ?? 'captured',
+          });
+        }
         break;
       }
-      case 'subscription.cancelled':
-      case 'subscription.completed':
+      // Charge failed; Razorpay retrying. Keep grace access until currentPeriodEnd.
+      case 'subscription.pending':
       case 'subscription.halted':
         await this.prisma.careerProfile.update({
           where: { id: profileId },
-          data: { subscriptionStatus: 'cancelled' },
+          data: { subscriptionStatus: 'past_due' },
+        });
+        this.logger.log(`Seeker subscription past_due profileId=${profileId} event=${event}`);
+        break;
+      case 'subscription.cancelled':
+      case 'subscription.completed':
+        await this.prisma.careerProfile.update({
+          where: { id: profileId },
+          data: {
+            subscriptionStatus: 'cancelled',
+            subscriptionCancelAtPeriodEnd: false,
+          },
         });
         this.logger.log(`Seeker subscription ended profileId=${profileId} event=${event}`);
         break;
@@ -486,11 +634,33 @@ export class CareerSeekerBillingService {
     }
 
     if (status.status === 'active') {
+      lines.push(`✅ *Active* — ${status.plan === 'yearly' ? 'Yearly' : 'Monthly'} plan`);
+      if (status.cancel_at_period_end && status.current_period_end) {
+        lines.push(`Cancellation scheduled — access until ${this.formatDate(status.current_period_end)}`);
+      } else if (status.current_period_end) {
+        lines.push(`Renews: ${this.formatDate(status.current_period_end)}`);
+      }
+      return lines.filter(Boolean).join('\n');
+    }
+
+    if (status.status === 'past_due') {
       lines.push(
-        `✅ *Active* — ${status.plan === 'yearly' ? 'Yearly' : 'Monthly'} plan`,
-        status.current_period_end
-          ? `Renews: ${this.formatDate(status.current_period_end)}`
-          : '',
+        '⚠️ *Payment issue* — we could not charge your card',
+        status.has_access && status.current_period_end
+          ? `Access continues until ${this.formatDate(status.current_period_end)}.`
+          : 'Access is paused until payment succeeds.',
+        '',
+        'Reply *SUBSCRIBE* to update your payment and stay active.',
+      );
+      return lines.filter(Boolean).join('\n');
+    }
+
+    if (status.status === 'cancelled' && status.has_access && status.current_period_end) {
+      lines.push(
+        '🚫 *Cancellation scheduled*',
+        `You still have access until ${this.formatDate(status.current_period_end)}.`,
+        '',
+        'Reply *SUBSCRIBE* to reactivate anytime.',
       );
       return lines.filter(Boolean).join('\n');
     }

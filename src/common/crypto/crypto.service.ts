@@ -15,12 +15,12 @@ export class CryptoService {
   }
 
   private resolveKey(raw?: string): Buffer {
-    const isProd = this.config.get<string>('NODE_ENV') === 'production';
+    const isDev = this.config.get<string>('NODE_ENV') === 'development';
 
     if (!raw) {
-      if (isProd) {
+      if (!isDev) {
         throw new Error(
-          'APP_ENCRYPTION_KEY is required in production. Generate: node -e "console.log(require(\'crypto\').randomBytes(32).toString(\'base64\'))"',
+          'APP_ENCRYPTION_KEY is required outside development. Generate: node -e "console.log(require(\'crypto\').randomBytes(32).toString(\'base64\'))"',
         );
       }
       this.logger.warn(

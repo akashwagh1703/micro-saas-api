@@ -4,17 +4,20 @@
 export function validateEnv(config: Record<string, unknown>): Record<string, unknown> {
   const nodeEnv = String(config.NODE_ENV ?? 'development');
   const isProd = nodeEnv === 'production';
+  const isDev = nodeEnv === 'development';
   const errors: string[] = [];
 
   if (!config.DATABASE_URL) {
     errors.push('DATABASE_URL is required');
   }
 
-  if (isProd) {
-    if (!config.APP_ENCRYPTION_KEY) {
-      errors.push('APP_ENCRYPTION_KEY is required in production');
-    }
+  // Required everywhere except local development, so staging/test never fall back
+  // to the insecure development encryption key.
+  if (!isDev && !config.APP_ENCRYPTION_KEY) {
+    errors.push(`APP_ENCRYPTION_KEY is required when NODE_ENV is "${nodeEnv}"`);
+  }
 
+  if (isProd) {
     const queueDriver = String(config.QUEUE_DRIVER ?? 'pgboss');
     if (queueDriver !== 'pgboss') {
       errors.push(

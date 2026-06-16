@@ -11,7 +11,7 @@ import { SendMessageJob, CareerTaskJob } from './queue.constants';
  */
 export interface JobDispatcher {
   enqueueProcessIncoming(messageId: number): Promise<void>;
-  enqueueExecuteWorkflow(executionId: number): Promise<void>;
+  enqueueExecuteWorkflow(executionId: number, options?: { startAfterSeconds?: number }): Promise<void>;
   enqueueSendMessage(payload: SendMessageJob): Promise<void>;
   enqueueCareerTask(payload: CareerTaskJob): Promise<void>;
 }

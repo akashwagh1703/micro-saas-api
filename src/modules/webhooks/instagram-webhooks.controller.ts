@@ -1,4 +1,5 @@
 import { Controller, Get, Inject, Logger, Param, ParseIntPipe, Post, Req, Res } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { Request, Response } from 'express';
 import { InstagramService } from '../instagram/instagram.service';
 import { InstagramApiService } from '../integrations/instagram-api.service';
@@ -18,6 +19,7 @@ export class InstagramWebhooksController {
     private readonly instagram: InstagramService,
     private readonly api: InstagramApiService,
     private readonly inbox: InboxService,
+    private readonly config: ConfigService,
     @Inject(JOB_DISPATCHER) private readonly queue: JobDispatcher,
   ) {}
 
@@ -101,7 +103,7 @@ export class InstagramWebhooksController {
           creds.account.id,
         );
 
-        const message = await this.inbox.storeIncomingMessage(
+        const { message, isNew } = await this.inbox.storeIncomingMessage(
           userId,
           contact,
           conversation,
@@ -110,7 +112,9 @@ export class InstagramWebhooksController {
           { raw: item.raw, channel: 'instagram', sender_id: item.senderId },
         );
 
-        await this.queue.enqueueProcessIncoming(message.id);
+        if (isNew) {
+          await this.queue.enqueueProcessIncoming(message.id);
+        }
       }
     } catch (e: any) {
       this.logger.error(`Instagram webhook processing error for user ${userId}: ${e.message}`);
@@ -121,16 +125,30 @@ export class InstagramWebhooksController {
 
   private signatureIsValid(req: Request, appSecret: string | null, userId: number): boolean {
     if (!appSecret) {
+      if (this.unverifiedWebhooksAllowed()) {
+        this.logger.warn(
+          `Instagram webhook accepted WITHOUT signature verification (app_secret missing, dev override) for user ${userId}`,
+        );
+        return true;
+      }
       this.logger.warn(
-        `Instagram webhook received without app_secret configured; signature not verified (user ${userId})`,
+        `Instagram webhook rejected: app_secret not configured for user ${userId}. Configure the Meta app secret in Settings to receive messages.`,
       );
-      return true;
+      return false;
     }
     const raw = (req as any).rawBody?.toString('utf8') ?? JSON.stringify(req.body ?? {});
     return this.api.verifyWebhookSignature(
       raw,
       req.header('X-Hub-Signature-256') ?? undefined,
       appSecret,
+    );
+  }
+
+  /** Dev-only escape hatch to accept webhooks before an app secret is configured. */
+  private unverifiedWebhooksAllowed(): boolean {
+    return (
+      this.config.get<string>('NODE_ENV') !== 'production' &&
+      String(this.config.get<string>('ALLOW_UNVERIFIED_WEBHOOKS') ?? '').toLowerCase() === 'true'
     );
   }
 }

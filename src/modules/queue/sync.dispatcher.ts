@@ -22,10 +22,27 @@ export class SyncDispatcher implements JobDispatcher {
     await processor.handle(messageId);
   }
 
-  async enqueueExecuteWorkflow(executionId: number): Promise<void> {
-    const { WorkflowExecutionService } = await import('../workflows/workflow-execution.service');
-    const service = this.moduleRef.get(WorkflowExecutionService, { strict: false });
-    await service.executeById(executionId);
+  async enqueueExecuteWorkflow(
+    executionId: number,
+    options?: { startAfterSeconds?: number },
+  ): Promise<void> {
+    const run = async () => {
+      const { WorkflowExecutionService } = await import('../workflows/workflow-execution.service');
+      const service = this.moduleRef.get(WorkflowExecutionService, { strict: false });
+      await service.executeById(executionId);
+    };
+
+    const delayMs = (options?.startAfterSeconds ?? 0) * 1000;
+    if (delayMs > 0) {
+      setTimeout(() => {
+        run().catch((err: Error) =>
+          this.logger.error(`Delayed workflow ${executionId} failed: ${err.message}`),
+        );
+      }, delayMs);
+      return;
+    }
+
+    await run();
   }
 
   async enqueueSendMessage(payload: SendMessageJob): Promise<void> {

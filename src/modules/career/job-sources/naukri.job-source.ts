@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import axios from 'axios';
+import { assertAllowedUrl, guardedHttpAgents } from '../../../common/net/ssrf-guard';
 import { CareerJobSource, JobSourceStatus, NormalizedJobListing } from './job-source.types';
 import { CareerJobUpsertService } from './career-job-upsert.service';
 import { CareerTenantSettingsService } from '../services/career-tenant-settings.service';
@@ -49,11 +50,17 @@ export class NaukriJobSource implements CareerJobSource {
       return 0;
     }
 
+    assertAllowedUrl(cfg.naukriApiUrl);
+    const { httpAgent, httpsAgent } = guardedHttpAgents();
+
     try {
       const { data } = await axios.get<{ jobs?: Record<string, unknown>[] }>(cfg.naukriApiUrl, {
         params: { keyword, location, pages },
         headers: { Authorization: `Bearer ${cfg.naukriApiKey}` },
         timeout: 20_000,
+        httpAgent,
+        httpsAgent,
+        maxRedirects: 3,
       });
 
       let stored = 0;

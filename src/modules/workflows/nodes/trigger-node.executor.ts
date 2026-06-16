@@ -12,11 +12,13 @@ export class TriggerNodeExecutor implements NodeExecutor {
     return {
       success: true,
       output: {
+        trigger: context.trigger ?? 'message',
         message: context.message ?? '',
         channel: context.channel ?? 'whatsapp',
         contact_phone: context.contact_phone ?? '',
         contact_name: context.contact_name ?? '',
         contact_username: context.contact_username ?? '',
+        payload: context.payload ?? null,
       },
     };
   }

@@ -117,9 +117,20 @@ export class QueueService implements JobDispatcher, OnModuleInit, OnModuleDestro
     await boss.send(QUEUE_PROCESS_INCOMING, { messageId }, { retryLimit: 3 });
   }
 
-  async enqueueExecuteWorkflow(executionId: number): Promise<void> {
+  async enqueueExecuteWorkflow(
+    executionId: number,
+    options?: { startAfterSeconds?: number },
+  ): Promise<void> {
     const boss = await this.assertBoss();
-    await boss.send(QUEUE_EXECUTE_WORKFLOW, { executionId }, { retryLimit: 2 });
+    const startAfter = options?.startAfterSeconds;
+    await boss.send(
+      QUEUE_EXECUTE_WORKFLOW,
+      { executionId },
+      {
+        retryLimit: 2,
+        ...(startAfter ? { startAfter } : {}),
+      },
+    );
   }
 
   async enqueueSendMessage(payload: SendMessageJob): Promise<void> {

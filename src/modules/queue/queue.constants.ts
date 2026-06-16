@@ -6,6 +6,8 @@ export const QUEUE_CAREER_DIGEST = 'career-digest-batch';
 export const QUEUE_CAREER_JOB_REFRESH = 'career-job-refresh';
 export const QUEUE_CAREER_RETENTION = 'career-resume-text-retention';
 
+export const QUEUE_WORKFLOW_SCHEDULE_TICK = 'workflow-schedule-tick';
+
 export const ALL_QUEUES = [
   QUEUE_PROCESS_INCOMING,
   QUEUE_EXECUTE_WORKFLOW,
@@ -14,6 +16,7 @@ export const ALL_QUEUES = [
   QUEUE_CAREER_DIGEST,
   QUEUE_CAREER_JOB_REFRESH,
   QUEUE_CAREER_RETENTION,
+  QUEUE_WORKFLOW_SCHEDULE_TICK,
 ];
 
 export interface SendMessageJob {

@@ -1,5 +1,5 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
-import { Contact, Conversation, Message } from '@prisma/client';
+import { Contact, Conversation, Message, Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CHANNEL_INSTAGRAM, CHANNEL_WHATSAPP } from '../../common/channels';
 import { contactDisplayLabel } from '../../common/contact-display';
@@ -125,6 +125,11 @@ export class InboxService {
     });
   }
 
+  /**
+   * Persists an inbound message idempotently. Returns `isNew: false` when the
+   * provider message id was already stored (e.g. a Meta webhook retry), so the
+   * caller can skip re-enqueuing bot/workflow processing.
+   */
   async storeIncomingMessage(
     userId: number,
     contact: Contact,
@@ -132,40 +137,61 @@ export class InboxService {
     content: string,
     ids?: { waMessageId?: string | null; externalMessageId?: string | null },
     metadata?: Record<string, any> | null,
-  ): Promise<Message> {
-    return this.prisma.$transaction(async (tx) => {
-      const message = await tx.message.create({
-        data: {
-          userId,
-          conversationId: conversation.id,
-          contactId: contact.id,
-          channel: contact.channel,
-          direction: 'incoming',
-          content,
-          waMessageId: ids?.waMessageId ?? null,
-          externalMessageId: ids?.externalMessageId ?? null,
-          status: 'received',
-          metadata: metadata ?? undefined,
-        },
+  ): Promise<{ message: Message; isNew: boolean }> {
+    const waMessageId = ids?.waMessageId ?? null;
+    const externalMessageId = ids?.externalMessageId ?? null;
+
+    try {
+      const message = await this.prisma.$transaction(async (tx) => {
+        const created = await tx.message.create({
+          data: {
+            userId,
+            conversationId: conversation.id,
+            contactId: contact.id,
+            channel: contact.channel,
+            direction: 'incoming',
+            content,
+            waMessageId,
+            externalMessageId,
+            status: 'received',
+            metadata: metadata ?? undefined,
+          },
+        });
+
+        const now = new Date();
+        await tx.contact.update({ where: { id: contact.id }, data: { lastMessageAt: now } });
+        await tx.conversation.update({
+          where: { id: conversation.id },
+          data: { lastMessageAt: now, unreadCount: { increment: 1 } },
+        });
+        await tx.activity.create({
+          data: {
+            userId,
+            type: 'message_received',
+            title: `New message from ${contactDisplayLabel(contact)}`,
+            description: content,
+          },
+        });
+
+        return created;
       });
 
-      const now = new Date();
-      await tx.contact.update({ where: { id: contact.id }, data: { lastMessageAt: now } });
-      await tx.conversation.update({
-        where: { id: conversation.id },
-        data: { lastMessageAt: now, unreadCount: { increment: 1 } },
-      });
-      await tx.activity.create({
-        data: {
-          userId,
-          type: 'message_received',
-          title: `New message from ${contactDisplayLabel(contact)}`,
-          description: content,
-        },
-      });
-
-      return message;
-    });
+      return { message, isNew: true };
+    } catch (e) {
+      // Unique violation on (userId, waMessageId|externalMessageId): a concurrent
+      // webhook retry already stored this message. Return the existing row.
+      if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') {
+        const existing = waMessageId
+          ? await this.findMessageByWaId(userId, waMessageId)
+          : externalMessageId
+            ? await this.findMessageByExternalId(userId, externalMessageId)
+            : null;
+        if (existing) {
+          return { message: existing, isNew: false };
+        }
+      }
+      throw e;
+    }
   }
 
   async sendOutgoingMessage(

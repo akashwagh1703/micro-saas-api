@@ -29,4 +29,15 @@ export class BillingController {
     );
     return { status };
   }
+
+  @Post('cancel')
+  async cancel(@CurrentUser('id') userId: number) {
+    const status = await this.billing.cancelSubscription(userId);
+    return { status };
+  }
+
+  @Get('transactions')
+  async transactions(@CurrentUser('id') userId: number) {
+    return this.billing.getTransactions(userId);
+  }
 }

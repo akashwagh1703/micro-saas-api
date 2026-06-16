@@ -7,7 +7,7 @@ export interface NodeExecutionResult {
   stop?: boolean;
   /** When true, execution pauses until the contact replies (Ask & Wait). */
   pause?: boolean;
-  branch?: 'true' | 'false';
+  branch?: 'true' | 'false' | 'error';
 }
 
 export interface NodeExecutor {

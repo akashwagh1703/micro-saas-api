@@ -1,4 +1,5 @@
 import { Controller, Get, Inject, Logger, Param, ParseIntPipe, Post, Req, Res } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { Request, Response } from 'express';
 import { WhatsappService } from '../whatsapp/whatsapp.service';
 import { WhatsAppApiService } from '../integrations/whatsapp-api.service';
@@ -18,6 +19,7 @@ export class WebhooksController {
     private readonly whatsapp: WhatsappService,
     private readonly api: WhatsAppApiService,
     private readonly inbox: InboxService,
+    private readonly config: ConfigService,
     @Inject(JOB_DISPATCHER) private readonly queue: JobDispatcher,
   ) {}
 
@@ -96,7 +98,7 @@ export class WebhooksController {
           contact,
           creds.account.id,
         );
-        const message = await this.inbox.storeIncomingMessage(
+        const { message, isNew } = await this.inbox.storeIncomingMessage(
           userId,
           contact,
           conversation,
@@ -105,7 +107,9 @@ export class WebhooksController {
           { raw: waMessage },
         );
 
-        await this.queue.enqueueProcessIncoming(message.id);
+        if (isNew) {
+          await this.queue.enqueueProcessIncoming(message.id);
+        }
       }
     } catch (e: any) {
       this.logger.error(`Webhook processing error for user ${userId}: ${e.message}`);
@@ -116,16 +120,30 @@ export class WebhooksController {
 
   private signatureIsValid(req: Request, appSecret: string | null, userId: number): boolean {
     if (!appSecret) {
+      if (this.unverifiedWebhooksAllowed()) {
+        this.logger.warn(
+          `WhatsApp webhook accepted WITHOUT signature verification (app_secret missing, dev override) for user ${userId}`,
+        );
+        return true;
+      }
       this.logger.warn(
-        `WhatsApp webhook received without app_secret configured; signature not verified (user ${userId})`,
+        `WhatsApp webhook rejected: app_secret not configured for user ${userId}. Configure the Meta app secret in Settings to receive messages.`,
       );
-      return true;
+      return false;
     }
     const raw = (req as any).rawBody?.toString('utf8') ?? JSON.stringify(req.body ?? {});
     return this.api.verifyWebhookSignature(
       raw,
       req.header('X-Hub-Signature-256') ?? undefined,
       appSecret,
+    );
+  }
+
+  /** Dev-only escape hatch to accept webhooks before an app secret is configured. */
+  private unverifiedWebhooksAllowed(): boolean {
+    return (
+      this.config.get<string>('NODE_ENV') !== 'production' &&
+      String(this.config.get<string>('ALLOW_UNVERIFIED_WEBHOOKS') ?? '').toLowerCase() === 'true'
     );
   }
 

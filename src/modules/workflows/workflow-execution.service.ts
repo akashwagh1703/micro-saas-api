@@ -1,6 +1,7 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Inject } from '@nestjs/common';
 import { WorkflowExecution } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import { JOB_DISPATCHER, JobDispatcher } from '../queue/job-dispatcher';
 import { WorkflowValidator } from './workflow-validator.service';
 import { NodeExecutor } from './nodes/node-executor.interface';
 import { TriggerNodeExecutor } from './nodes/trigger-node.executor';
@@ -10,6 +11,7 @@ import { AiNodeExecutor } from './nodes/ai-node.executor';
 import { SendMessageNodeExecutor } from './nodes/send-message-node.executor';
 import { CollectInputNodeExecutor } from './nodes/collect-input-node.executor';
 import { SaveLeadNodeExecutor } from './nodes/save-lead-node.executor';
+import { DelayNodeExecutor } from './nodes/delay-node.executor';
 
 const MAX_NODES = 30;
 
@@ -35,6 +37,8 @@ export class WorkflowExecutionService {
     sendMessage: SendMessageNodeExecutor,
     collectInput: CollectInputNodeExecutor,
     saveLead: SaveLeadNodeExecutor,
+    delay: DelayNodeExecutor,
+    @Inject(JOB_DISPATCHER) private readonly jobs: JobDispatcher,
   ) {
     this.executors = {
       trigger,
@@ -44,6 +48,7 @@ export class WorkflowExecutionService {
       send_message: sendMessage,
       collect_input: collectInput,
       save_lead: saveLead,
+      delay,
     };
   }
 
@@ -97,9 +102,13 @@ export class WorkflowExecutionService {
 
     const resumeFromPause =
       context.__resuming === true && typeof context.__paused_at_node_id === 'string';
+    const resumeFromDelay =
+      context.__resuming === true && typeof context.__resume_at_node_id === 'string';
     let currentId: string | null = resumeFromPause
       ? (context.__paused_at_node_id as string)
-      : trigger.id;
+      : resumeFromDelay
+        ? (context.__resume_at_node_id as string)
+        : trigger.id;
 
     const visited: Record<string, boolean> = {};
     let steps = 0;
@@ -167,6 +176,24 @@ export class WorkflowExecutionService {
           return;
         }
 
+        if (node.type === 'delay') {
+          const seconds = Number(result.output?.delay_seconds ?? 5);
+          const nextId = this.resolveNextNodeId(edges, node, null);
+          await this.prisma.workflowExecution.update({
+            where: { id: execution.id },
+            data: {
+              status: 'delayed',
+              context: {
+                ...context,
+                __resume_at_node_id: nextId,
+                __resuming: true,
+              } as any,
+            },
+          });
+          await this.jobs.enqueueExecuteWorkflow(execution.id, { startAfterSeconds: seconds });
+          return;
+        }
+
         if (result.stop) {
           break;
         }
@@ -227,6 +254,18 @@ export class WorkflowExecutionService {
         return unlabeled?.target ?? null;
       }
       return null;
+    }
+
+    if (node.type === 'api' && result?.branch === 'error') {
+      const errorEdge = outgoing.find((e) => e.sourceHandle === 'error');
+      if (errorEdge?.target) {
+        return errorEdge.target;
+      }
+    }
+
+    if (node.type === 'api') {
+      const successEdge = outgoing.find((e) => e.sourceHandle === 'true' || !e.sourceHandle);
+      return successEdge?.target ?? outgoing[0]?.target ?? null;
     }
 
     return outgoing[0].target ?? null;

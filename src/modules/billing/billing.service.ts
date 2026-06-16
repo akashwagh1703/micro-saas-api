@@ -13,7 +13,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { SuperAdminService } from '../../common/super-admin.service';
 
 export type BillingPlan = 'monthly' | 'yearly';
-export type BillingStatusKind = 'trial' | 'active' | 'expired' | 'cancelled';
+export type BillingStatusKind = 'trial' | 'active' | 'past_due' | 'expired' | 'cancelled';
 
 export interface BillingStatus {
   billing_enabled: boolean;
@@ -22,10 +22,23 @@ export interface BillingStatus {
   has_access: boolean;
   trial_ends_at: string | null;
   current_period_end: string | null;
+  /** When true, the subscription is set to cancel at `current_period_end`. */
+  cancel_at_period_end: boolean;
   days_left: number | null;
   prices: { monthly_inr: number; yearly_inr: number };
   razorpay_configured: boolean;
   razorpay_webhook_url: string;
+}
+
+export interface BillingTransactionView {
+  id: number;
+  event_type: string;
+  plan: string | null;
+  amount_inr: number;
+  currency: string;
+  status: string;
+  razorpay_payment_id: string | null;
+  created_at: string;
 }
 
 @Injectable()
@@ -110,6 +123,7 @@ export class BillingService {
         has_access: true,
         trial_ends_at: null,
         current_period_end: null,
+        cancel_at_period_end: false,
         days_left: null,
         ...base,
       };
@@ -123,6 +137,7 @@ export class BillingService {
         has_access: true,
         trial_ends_at: null,
         current_period_end: null,
+        cancel_at_period_end: false,
         days_left: null,
         ...base,
       };
@@ -130,33 +145,51 @@ export class BillingService {
 
     const trialEnds = user.trialEndsAt;
     const periodEnd = user.currentPeriodEnd;
+    const plan = (user.subscriptionPlan as BillingPlan) ?? null;
+    const cancelAtPeriodEnd = user.subscriptionCancelAtPeriodEnd === true;
+    const withinPaidPeriod = !!periodEnd && periodEnd > now;
 
-    if (
-      user.subscriptionStatus === 'active' &&
-      periodEnd &&
-      periodEnd > now
-    ) {
+    if (user.subscriptionStatus === 'active' && withinPaidPeriod) {
       return {
         billing_enabled: true,
         status: 'active',
-        plan: (user.subscriptionPlan as BillingPlan) ?? null,
+        plan,
         has_access: true,
         trial_ends_at: trialEnds.toISOString(),
-        current_period_end: periodEnd.toISOString(),
-        days_left: this.daysUntil(periodEnd),
+        current_period_end: periodEnd!.toISOString(),
+        cancel_at_period_end: cancelAtPeriodEnd,
+        days_left: this.daysUntil(periodEnd!),
         ...base,
       };
     }
 
+    // Payment failing (Razorpay pending/halted): keep access during the grace
+    // window the user already paid for, then expire.
+    if (user.subscriptionStatus === 'past_due') {
+      return {
+        billing_enabled: true,
+        status: 'past_due',
+        plan,
+        has_access: withinPaidPeriod,
+        trial_ends_at: trialEnds.toISOString(),
+        current_period_end: periodEnd ? periodEnd.toISOString() : null,
+        cancel_at_period_end: cancelAtPeriodEnd,
+        days_left: withinPaidPeriod ? this.daysUntil(periodEnd!) : 0,
+        ...base,
+      };
+    }
+
+    // Cancelled: honor the remaining paid period (grace) before cutting access.
     if (user.subscriptionStatus === 'cancelled') {
       return {
         billing_enabled: true,
         status: 'cancelled',
-        plan: (user.subscriptionPlan as BillingPlan) ?? null,
-        has_access: false,
+        plan,
+        has_access: withinPaidPeriod,
         trial_ends_at: trialEnds.toISOString(),
         current_period_end: periodEnd ? periodEnd.toISOString() : null,
-        days_left: 0,
+        cancel_at_period_end: cancelAtPeriodEnd,
+        days_left: withinPaidPeriod ? this.daysUntil(periodEnd!) : 0,
         ...base,
       };
     }
@@ -169,6 +202,7 @@ export class BillingService {
         has_access: true,
         trial_ends_at: trialEnds.toISOString(),
         current_period_end: null,
+        cancel_at_period_end: false,
         days_left: this.daysUntil(trialEnds),
         ...base,
       };
@@ -181,6 +215,7 @@ export class BillingService {
       has_access: false,
       trial_ends_at: trialEnds.toISOString(),
       current_period_end: periodEnd ? periodEnd.toISOString() : null,
+      cancel_at_period_end: false,
       days_left: 0,
       ...base,
     };
@@ -440,6 +475,76 @@ export class BillingService {
     return this.getStatus(userId);
   }
 
+  /**
+   * Cancels the subscription at the end of the current billing cycle so the user
+   * keeps access until `currentPeriodEnd`. Razorpay sends `subscription.cancelled`
+   * when the cycle ends, which finalizes the local status.
+   */
+  async cancelSubscription(userId: number): Promise<BillingStatus> {
+    if (!this.isEnabled()) {
+      throw new UnprocessableEntityException('Billing is not enabled.');
+    }
+
+    const user = await this.getUser(userId);
+    if (!user.razorpaySubscriptionId) {
+      throw new UnprocessableEntityException('You do not have an active subscription to cancel.');
+    }
+
+    const razorpay = this.getRazorpay();
+    if (!razorpay) {
+      throw new ServiceUnavailableException('Online payments are not configured.');
+    }
+
+    try {
+      // `true` => cancel_at_cycle_end so access continues until the paid period ends.
+      await razorpay.subscriptions.cancel(user.razorpaySubscriptionId, true);
+    } catch (err) {
+      this.logger.error(
+        `Cancel failed userId=${userId}: ${this.razorpayErrorMessage(err, 'Unknown error')}`,
+      );
+      throw new ServiceUnavailableException(
+        this.razorpayErrorMessage(err, 'Could not cancel the subscription. Please try again.'),
+      );
+    }
+
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: { subscriptionCancelAtPeriodEnd: true },
+    });
+
+    await this.recordTransaction({
+      userId,
+      eventType: 'subscription.cancel_requested',
+      razorpaySubscriptionId: user.razorpaySubscriptionId,
+      plan: (user.subscriptionPlan as BillingPlan) ?? null,
+      amountInr: 0,
+      status: 'cancel_scheduled',
+      metadata: { source: 'self_service' },
+    });
+
+    return this.getStatus(userId);
+  }
+
+  /** Receipt/transaction history for the operator's billing page. */
+  async getTransactions(userId: number, limit = 50): Promise<BillingTransactionView[]> {
+    const rows = await this.prisma.billingTransaction.findMany({
+      where: { userId, product: 'platform' },
+      orderBy: { createdAt: 'desc' },
+      take: Math.min(Math.max(limit, 1), 200),
+    });
+
+    return rows.map((t) => ({
+      id: t.id,
+      event_type: t.eventType,
+      plan: t.plan,
+      amount_inr: t.amountInr,
+      currency: t.currency,
+      status: t.status,
+      razorpay_payment_id: t.razorpayPaymentId,
+      created_at: t.createdAt.toISOString(),
+    }));
+  }
+
   verifyWebhookSignature(body: Buffer | string, signature: string): boolean {
     const secret = this.env('RAZORPAY_WEBHOOK_SECRET');
     if (!secret) return false;
@@ -591,16 +696,28 @@ export class BillingService {
             subscriptionStatus: 'active',
             subscriptionPlan: plan,
             currentPeriodEnd: periodEnd,
+            subscriptionCancelAtPeriodEnd: false,
           },
         });
         break;
       }
-      case 'subscription.cancelled':
-      case 'subscription.completed':
+      // A charge failed; Razorpay is retrying. Keep access during the grace
+      // window (governed by currentPeriodEnd) so the user can fix their card.
+      case 'subscription.pending':
       case 'subscription.halted':
         await this.prisma.user.update({
           where: { id: userId },
-          data: { subscriptionStatus: 'cancelled' },
+          data: { subscriptionStatus: 'past_due' },
+        });
+        break;
+      case 'subscription.cancelled':
+      case 'subscription.completed':
+        await this.prisma.user.update({
+          where: { id: userId },
+          data: {
+            subscriptionStatus: 'cancelled',
+            subscriptionCancelAtPeriodEnd: false,
+          },
         });
         break;
       default:

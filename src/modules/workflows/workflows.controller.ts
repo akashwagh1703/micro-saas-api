@@ -27,6 +27,7 @@ import { SettingsService } from '../settings/settings.service';
 import { BillingService } from '../billing/billing.service';
 import { WorkflowValidator } from './workflow-validator.service';
 import { WorkflowTemplateService } from './workflow-template.service';
+import { WorkflowTriggerService } from './workflow-trigger.service';
 import { WorkflowDefinition } from './workflow-templates';
 import {
   CreateWorkflowDto,
@@ -47,6 +48,7 @@ export class WorkflowsController {
     private readonly activity: ActivityLogger,
     private readonly settings: SettingsService,
     private readonly billing: BillingService,
+    private readonly triggers: WorkflowTriggerService,
   ) {}
 
   // --- Static / specific routes first (must precede ":id") ---
@@ -180,7 +182,8 @@ export class WorkflowsController {
       where: { id },
       data: { status: 'published', isActive: true },
     });
-    return { workflow: serializeWorkflow(updated) };
+    const synced = await this.triggers.onPublished(updated);
+    return { workflow: serializeWorkflow(synced) };
   }
 
   @Post(':id/unpublish')
@@ -190,6 +193,7 @@ export class WorkflowsController {
       where: { id },
       data: { status: 'draft', isActive: false },
     });
+    await this.triggers.onUnpublished(id);
     return { workflow: serializeWorkflow(updated) };
   }
 
@@ -299,13 +303,16 @@ export class WorkflowsController {
     }
 
     const workflow = await this.prisma.workflow.update({ where: { id }, data });
-    return { workflow: serializeWorkflow(workflow) };
+    const synced = await this.triggers.syncFromDefinition(workflow, {
+      active: workflow.status === 'published' && workflow.isActive,
+    });
+    return { workflow: serializeWorkflow(synced) };
   }
 
   @Delete(':id')
   async destroy(@CurrentUser('id') userId: number, @Param('id', ParseIntPipe) id: number) {
-    // Must belong to the authenticated user and be visible in their current business scope.
     await this.findOrFail(userId, id);
+    await this.triggers.onUnpublished(id);
     const deleted = await this.prisma.workflow.deleteMany({
       where: { id, userId },
     });

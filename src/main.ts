@@ -4,6 +4,7 @@ import { AppModule } from './app.module';
 import { configureApp } from './bootstrap';
 import { QueueWorker } from './modules/jobs/queue.worker';
 import { CareerPgBossScheduler } from './modules/career/career-pgboss.scheduler';
+import { WorkflowScheduleService } from './modules/workflows/workflow-schedule.service';
 
 async function bootstrap() {
   const log = new Logger('Bootstrap');
@@ -19,6 +20,7 @@ async function bootstrap() {
   try {
     await app.get(QueueWorker).registerWorkers();
     await app.get(CareerPgBossScheduler).registerSchedules();
+    await app.get(WorkflowScheduleService).ensureGlobalTick();
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
     log.error(`Background queue setup failed (API stays online): ${message}`);

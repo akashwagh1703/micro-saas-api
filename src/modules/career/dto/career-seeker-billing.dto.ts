@@ -9,6 +9,12 @@ export class SeekerSubscribeDto {
   plan!: 'monthly' | 'yearly';
 }
 
+export class SeekerCancelSubscriptionDto {
+  @IsString()
+  @IsNotEmpty()
+  token!: string;
+}
+
 export class SeekerVerifySubscriptionDto {
   @IsString()
   @IsNotEmpty()
