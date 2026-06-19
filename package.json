@@ -24,7 +24,8 @@
     "resume:eval:merged": "ts-node scripts/resume-golden/run-eval.ts --pipeline=merged",
     "resume:eval:ai": "ts-node scripts/resume-golden/run-eval.ts --pipeline=ai-only",
     "lint": "eslint \"{src,test}/**/*.ts\" --fix",
-    "format": "prettier --write \"src/**/*.ts\""
+    "format": "prettier --write \"src/**/*.ts\"",
+    "test": "node --require ts-node/register --test test/**/*.test.ts"
   },
   "prisma": {
     "seed": "ts-node prisma/seed.ts"

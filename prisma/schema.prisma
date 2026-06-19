@@ -617,3 +617,46 @@ model IntegrationCredential {
   @@index([userId])
   @@map("integration_credentials")
 }
+
+model ProcessedWebhookEvent {
+  id             Int       @id @default(autoincrement())
+  source         String    @db.VarChar(32)
+  idempotencyKey String    @unique @map("idempotency_key") @db.VarChar(128)
+  expiresAt      DateTime? @map("expires_at")
+  createdAt      DateTime  @default(now()) @map("created_at")
+
+  @@index([source, createdAt])
+  @@index([expiresAt])
+  @@map("processed_webhook_events")
+}
+
+// --- Marketing Website Lead Capture ---
+
+model WebsiteLead {
+  id               Int       @id @default(autoincrement())
+  name             String
+  email            String
+  phone            String
+  businessType     String    @db.VarChar(50)
+  companyName      String?   @map("company_name")
+  monthlyMessages  Int?      @map("monthly_messages")
+  challenge        String?   @db.Text
+  source           String    @default("website") @db.VarChar(50)
+  status           String    @default("new") @db.VarChar(20)
+  score            Int?      @default(0)
+  qualification    String?   @default("cold") @db.VarChar(20)
+  notes            String?   @db.Text
+  demoDate         DateTime? @map("demo_date")
+  demoConfirmed    Boolean   @default(false) @map("demo_confirmed")
+  confirmationToken String?  @unique @map("confirmation_token") @db.VarChar(128)
+  metadata         Json?
+  createdAt        DateTime  @default(now()) @map("created_at")
+  updatedAt        DateTime  @updatedAt @map("updated_at")
+
+  @@unique([email])
+  @@index([email])
+  @@index([status])
+  @@index([businessType])
+  @@index([createdAt])
+  @@map("website_leads")
+}

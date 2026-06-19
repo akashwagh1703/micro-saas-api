@@ -2,6 +2,7 @@ import { Controller, Headers, Logger, Post, Req, Res } from '@nestjs/common';
 import { Request, Response } from 'express';
 import { BillingService } from './billing.service';
 import { CareerSeekerBillingService } from '../career/services/career-seeker-billing.service';
+import { WebhookIdempotencyService } from '../../common/webhook-idempotency/webhook-idempotency.service';
 
 @Controller('webhook/razorpay')
 export class BillingWebhookController {
@@ -10,6 +11,7 @@ export class BillingWebhookController {
   constructor(
     private readonly billing: BillingService,
     private readonly seekerBilling: CareerSeekerBillingService,
+    private readonly idempotency: WebhookIdempotencyService,
   ) {}
 
   @Post()
@@ -17,6 +19,7 @@ export class BillingWebhookController {
     @Req() req: Request,
     @Res() res: Response,
     @Headers('x-razorpay-signature') signature: string | undefined,
+    @Headers('x-razorpay-event-id') eventId: string | undefined,
   ) {
     const rawBody = (req as Request & { rawBody?: Buffer }).rawBody;
     const body = rawBody ?? Buffer.from(JSON.stringify(req.body ?? {}));
@@ -30,6 +33,13 @@ export class BillingWebhookController {
     const payload =
       typeof req.body === 'object' && req.body !== null ? req.body : JSON.parse(body.toString());
     const event = payload.event as string;
+
+    const idempotencyKey =
+      eventId?.trim() || this.idempotency.buildRazorpayKey(event, payload as Record<string, unknown>);
+    if (!(await this.idempotency.claim('razorpay', idempotencyKey))) {
+      res.status(200).json({ ok: true, duplicate: true });
+      return;
+    }
 
     try {
       if (this.billing.verifyWebhookSignature(body, signature)) {

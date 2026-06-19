@@ -1,4 +1,5 @@
 import { IsArray, IsEmail, IsIn, IsOptional, IsString, MaxLength, MinLength, ArrayMinSize } from 'class-validator';
+import { BUSINESS_CATEGORY_KEYS, USE_CASE_KEYS } from '../../../platform/business-verticals.registry';
 
 export class UpdateProfileDto {
   @IsOptional()
@@ -25,28 +26,8 @@ export class ChangePasswordDto {
   password_confirmation?: string;
 }
 
-export const BUSINESS_CATEGORIES = [
-  'farmer',
-  'real_estate',
-  'coaching',
-  'clinic',
-  'local_shop',
-  'travel',
-  'insurance',
-  'ca_accountant',
-  'support',
-  'career_ai',
-  'other',
-] as const;
-
-export const USE_CASES = [
-  'customer_support',
-  'lead_generation',
-  'appointment_booking',
-  'sales_assistant',
-  'faq_bot',
-  'ai_chat',
-] as const;
+export const BUSINESS_CATEGORIES = BUSINESS_CATEGORY_KEYS;
+export const USE_CASES = USE_CASE_KEYS;
 
 export class UpdateBusinessProfileDto {
   @IsIn(BUSINESS_CATEGORIES as unknown as string[])

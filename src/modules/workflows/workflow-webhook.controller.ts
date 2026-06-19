@@ -2,14 +2,17 @@ import {
   Body,
   Controller,
   ForbiddenException,
+  Headers,
   NotFoundException,
   Param,
   Post,
 } from '@nestjs/common';
 import { Inject } from '@nestjs/common';
+import { createHash } from 'crypto';
 import { PrismaService } from '../../prisma/prisma.service';
 import { BillingService } from '../billing/billing.service';
 import { JOB_DISPATCHER, JobDispatcher } from '../queue/job-dispatcher';
+import { WebhookIdempotencyService } from '../../common/webhook-idempotency/webhook-idempotency.service';
 
 @Controller('hooks/workflows')
 export class WorkflowWebhookController {
@@ -17,10 +20,25 @@ export class WorkflowWebhookController {
     private readonly prisma: PrismaService,
     private readonly billing: BillingService,
     @Inject(JOB_DISPATCHER) private readonly jobs: JobDispatcher,
+    private readonly idempotency: WebhookIdempotencyService,
   ) {}
 
   @Post(':token')
-  async invoke(@Param('token') token: string, @Body() body: Record<string, unknown>) {
+  async invoke(
+    @Param('token') token: string,
+    @Body() body: Record<string, unknown>,
+    @Headers('idempotency-key') idempotencyKeyHeader: string | undefined,
+    @Headers('x-idempotency-key') xIdempotencyKey: string | undefined,
+  ) {
+    const idempotencyKey =
+      idempotencyKeyHeader?.trim() ||
+      xIdempotencyKey?.trim() ||
+      createHash('sha256').update(`${token}:${JSON.stringify(body ?? {})}`).digest('hex').slice(0, 32);
+
+    if (!(await this.idempotency.claim('workflow', `${token}:${idempotencyKey}`))) {
+      return { success: true, duplicate: true };
+    }
+
     const workflow = await this.prisma.workflow.findFirst({
       where: {
         webhookToken: token,
