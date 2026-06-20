@@ -8,6 +8,38 @@ const prisma = new PrismaClient();
  * WorkflowTemplateSeeder). New users get them automatically at registration.
  */
 async function main() {
+  // Seed interactive message types
+  const messageTypes = [
+    {
+      name: 'QUICK_REPLY',
+      description: 'Up to 3 quick reply buttons for instant responses',
+      maxOptions: 3,
+    },
+    {
+      name: 'LIST_MESSAGE',
+      description: 'Dropdown-style list with up to 10 options',
+      maxOptions: 10,
+    },
+    {
+      name: 'FLOW_BUTTON',
+      description: 'Single action button for external links or flows',
+      maxOptions: 1,
+    },
+  ];
+
+  for (const messageType of messageTypes) {
+    const exists = await prisma.interactiveMessageType.findUnique({
+      where: { name: messageType.name },
+    });
+    if (!exists) {
+      await prisma.interactiveMessageType.create({
+        data: messageType,
+      });
+      console.log(`Created message type: ${messageType.name}`);
+    }
+  }
+
+  // Seed workflow templates
   const users = await prisma.user.findMany({ select: { id: true } });
   let created = 0;
 

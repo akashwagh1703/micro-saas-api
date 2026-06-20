@@ -54,6 +54,7 @@ model User {
   careerAuditLogs     CareerAuditLog[]
   billingTransactions BillingTransaction[]
   integrationCredentials IntegrationCredential[]
+  interactiveTemplates InteractiveMessageTemplate[]
 
   @@map("users")
 }
@@ -217,6 +218,7 @@ model Workflow {
 
   user       User                @relation(fields: [userId], references: [id], onDelete: Cascade)
   executions WorkflowExecution[]
+  nodes      WorkflowNode[]
 
   @@index([userId, status])
   @@index([userId, sourceTemplate])
@@ -659,4 +661,107 @@ model WebsiteLead {
   @@index([businessType])
   @@index([createdAt])
   @@map("website_leads")
+}
+
+// --- Interactive Messages for Workflows ---
+
+model InteractiveMessageType {
+  id          Int      @id @default(autoincrement())
+  name        String   @unique @db.VarChar(50)
+  description String?  @db.Text
+  maxOptions  Int      @map("max_options")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  templates InteractiveMessageTemplate[]
+
+  @@map("interactive_message_types")
+}
+
+model InteractiveMessageTemplate {
+  id              Int      @id @default(autoincrement())
+  userId          Int      @map("user_id")
+  name            String   @db.VarChar(100)
+  messageTypeId   Int      @map("message_type_id")
+  headerText      String?  @map("header_text") @db.VarChar(1000)
+  bodyText        String   @map("body_text") @db.Text
+  footerText      String?  @map("footer_text") @db.VarChar(1000)
+  isActive        Boolean  @default(true) @map("is_active")
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  user           User                         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  messageType     InteractiveMessageType        @relation(fields: [messageTypeId], references: [id], onDelete: Cascade)
+  options        InteractiveMessageOption[]
+  workflowNodes  WorkflowNode[]
+
+  @@index([userId])
+  @@index([messageTypeId])
+  @@map("interactive_message_templates")
+}
+
+model InteractiveMessageOption {
+  id          Int      @id @default(autoincrement())
+  templateId  Int      @map("template_id")
+  optionText  String   @map("option_text") @db.VarChar(100)
+  description String?  @db.VarChar(500)
+  nextNodeId  String?  @map("next_node_id") @db.VarChar(100)
+  displayOrder Int      @map("display_order")
+  metadata    Json?
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  template InteractiveMessageTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
+
+  @@index([templateId])
+  @@map("interactive_message_options")
+}
+
+model WorkflowNode {
+  id                    Int      @id @default(autoincrement())
+  workflowId            Int      @map("workflow_id")
+  nodeId                String   @map("node_id") @db.VarChar(100)
+  nodeType              String   @map("node_type") @db.VarChar(50)
+  messageType           String   @default("TEXT") @map("message_type") @db.VarChar(20)
+  interactiveTemplateId Int?     @map("interactive_template_id")
+  config                Json?
+  createdAt             DateTime @default(now()) @map("created_at")
+  updatedAt             DateTime @updatedAt @map("updated_at")
+
+  workflow               Workflow                      @relation(fields: [workflowId], references: [id], onDelete: Cascade)
+  interactiveTemplate    InteractiveMessageTemplate?   @relation(fields: [interactiveTemplateId], references: [id], onDelete: SetNull)
+
+  @@unique([workflowId, nodeId])
+  @@index([workflowId])
+  @@index([interactiveTemplateId])
+  @@map("workflow_nodes")
+}
+
+model UserWorkflowState {
+  id              Int      @id @default(autoincrement())
+  phoneNumber     String   @unique @map("phone_number") @db.VarChar(20)
+  workflowId      Int      @map("workflow_id")
+  currentNodeId   String   @map("current_node_id") @db.VarChar(100)
+  status          String   @default("ACTIVE") @db.VarChar(20)
+  lastMessageSentAt DateTime? @map("last_message_sent_at")
+  metadata        Json?
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  @@index([phoneNumber])
+  @@index([workflowId])
+  @@map("user_workflow_states")
+}
+
+model ButtonClickAnalytics {
+  id            Int      @id @default(autoincrement())
+  templateId    Int      @map("template_id")
+  optionId      Int      @map("option_id")
+  phoneNumber   String   @map("phone_number") @db.VarChar(20)
+  workflowId    Int      @map("workflow_id")
+  clickedAt     DateTime @default(now()) @map("clicked_at")
+  responseTimeMs Int?     @map("response_time_ms")
+
+  @@index([templateId])
+  @@index([optionId])
+  @@index([clickedAt])
+  @@map("button_click_analytics")
 }
