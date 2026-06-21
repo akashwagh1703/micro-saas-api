@@ -134,6 +134,10 @@ export class InteractiveMessagesService {
         where: { id: template.messageTypeId },
       });
 
+      if (!messageType) {
+        throw new NotFoundException('Message type not found');
+      }
+
       if (dto.options.length > messageType.maxOptions) {
         throw new BadRequestException(
           `${messageType.name} can have maximum ${messageType.maxOptions} options`,
