@@ -12,6 +12,8 @@ import { SendMessageNodeExecutor } from './nodes/send-message-node.executor';
 import { CollectInputNodeExecutor } from './nodes/collect-input-node.executor';
 import { SaveLeadNodeExecutor } from './nodes/save-lead-node.executor';
 import { DelayNodeExecutor } from './nodes/delay-node.executor';
+// Phase 5: Interactive Message Node Executor
+import { InteractiveMessageNodeExecutor } from './nodes/interactive-message-node.executor';
 
 const MAX_NODES = 30;
 
@@ -38,6 +40,8 @@ export class WorkflowExecutionService {
     collectInput: CollectInputNodeExecutor,
     saveLead: SaveLeadNodeExecutor,
     delay: DelayNodeExecutor,
+    // Phase 5: Inject interactive message executor
+    interactiveMessage: InteractiveMessageNodeExecutor,
     @Inject(JOB_DISPATCHER) private readonly jobs: JobDispatcher,
   ) {
     this.executors = {
@@ -49,6 +53,8 @@ export class WorkflowExecutionService {
       collect_input: collectInput,
       save_lead: saveLead,
       delay,
+      // Phase 5: Register interactive message executor
+      interactive_message: interactiveMessage,
     };
   }
 

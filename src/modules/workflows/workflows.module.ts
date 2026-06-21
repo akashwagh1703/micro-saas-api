@@ -19,10 +19,21 @@ import { SendMessageNodeExecutor } from './nodes/send-message-node.executor';
 import { CollectInputNodeExecutor } from './nodes/collect-input-node.executor';
 import { SaveLeadNodeExecutor } from './nodes/save-lead-node.executor';
 import { DelayNodeExecutor } from './nodes/delay-node.executor';
+// Phase 5: Interactive Message Services
+import { InteractiveMessageNodeExecutor } from './nodes/interactive-message-node.executor';
+import { UserStateService } from './user-state.service';
+import { InteractiveMessageHandlerService } from './interactive-message-handler.service';
+import { InteractiveMessageWebhookController } from './interactive-message-webhook.controller';
+import { WorkflowValidationInteractiveService } from './workflow-validation-interactive.service';
 
 @Module({
   imports: [IntegrationsModule, SettingsModule, BillingModule, LeadsModule],
-  controllers: [WorkflowsController, WorkflowWebhookController],
+  controllers: [
+    WorkflowsController,
+    WorkflowWebhookController,
+    // Phase 5: Interactive Message Webhook
+    InteractiveMessageWebhookController,
+  ],
   providers: [
     WorkflowValidator,
     WorkflowTemplateService,
@@ -38,12 +49,21 @@ import { DelayNodeExecutor } from './nodes/delay-node.executor';
     CollectInputNodeExecutor,
     SaveLeadNodeExecutor,
     DelayNodeExecutor,
+    // Phase 5: Interactive Message Services
+    InteractiveMessageNodeExecutor,
+    UserStateService,
+    InteractiveMessageHandlerService,
+    WorkflowValidationInteractiveService,
   ],
   exports: [
     WorkflowValidator,
     WorkflowTemplateService,
     WorkflowExecutionService,
     WorkflowScheduleService,
+    // Phase 5: Export new services
+    UserStateService,
+    InteractiveMessageHandlerService,
+    WorkflowValidationInteractiveService,
   ],
 })
 export class WorkflowsModule {}
