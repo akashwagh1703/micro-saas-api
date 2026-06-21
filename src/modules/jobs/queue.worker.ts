@@ -8,11 +8,14 @@ import {
   QUEUE_EXECUTE_WORKFLOW,
   QUEUE_PROCESS_INCOMING,
   QUEUE_SEND_MESSAGE,
+  QUEUE_SEND_INTERACTIVE_MESSAGE,
   QUEUE_WORKFLOW_SCHEDULE_TICK,
   SendMessageJob,
+  SendInteractiveMessageJob,
   CareerTaskJob,
 } from '../queue/queue.constants';
 import { IncomingMessageProcessor } from './incoming-message.processor';
+import { InteractiveMessageProcessor } from './interactive-message.processor';
 import { CareerTaskProcessor } from './career-task.processor';
 import { WorkflowExecutionService } from '../workflows/workflow-execution.service';
 import { WorkflowScheduleService } from '../workflows/workflow-schedule.service';
@@ -27,6 +30,7 @@ export class QueueWorker {
     private readonly config: ConfigService,
     private readonly queue: QueueService,
     private readonly incoming: IncomingMessageProcessor,
+    private readonly interactiveMessage: InteractiveMessageProcessor,
     private readonly execution: WorkflowExecutionService,
     private readonly inbox: InboxService,
     private readonly careerTasks: CareerTaskProcessor,
@@ -74,6 +78,17 @@ export class QueueWorker {
       } catch (e: any) {
         this.logger.error(
           `send-message failed for conversation ${data.conversationId}: ${e.message}`,
+        );
+        throw e;
+      }
+    });
+
+    await this.queue.work<SendInteractiveMessageJob>(QUEUE_SEND_INTERACTIVE_MESSAGE, async (data) => {
+      try {
+        await this.interactiveMessage.handle(data);
+      } catch (e: any) {
+        this.logger.error(
+          `send-interactive-message failed for template ${data.templateId}: ${e.message}`,
         );
         throw e;
       }

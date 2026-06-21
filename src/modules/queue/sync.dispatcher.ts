@@ -1,7 +1,7 @@
 import { Logger } from '@nestjs/common';
 import { ModuleRef } from '@nestjs/core';
 import { JobDispatcher } from './job-dispatcher';
-import { CareerTaskJob, SendMessageJob } from './queue.constants';
+import { CareerTaskJob, SendMessageJob, SendInteractiveMessageJob } from './queue.constants';
 
 /**
  * Serverless-friendly dispatcher: instead of enqueueing, it runs each job inline
@@ -52,6 +52,12 @@ export class SyncDispatcher implements JobDispatcher {
     const { InboxService } = await import('../inbox/inbox.service');
     const inbox = this.moduleRef.get(InboxService, { strict: false });
     await inbox.sendOutgoingMessage(payload.userId, payload.conversationId, payload.content);
+  }
+
+  async enqueueSendInteractiveMessage(payload: SendInteractiveMessageJob): Promise<void> {
+    const { InteractiveMessageProcessor } = await import('../jobs/interactive-message.processor');
+    const processor = this.moduleRef.get(InteractiveMessageProcessor, { strict: false });
+    await processor.handle(payload);
   }
 
   async enqueueCareerTask(payload: CareerTaskJob): Promise<void> {

@@ -108,6 +108,126 @@ export class WhatsAppApiService {
     }
   }
 
+  async sendListMessage(
+    accessToken: string,
+    phoneNumberId: string,
+    to: string,
+    headerText: string,
+    bodyText: string,
+    options: Array<{ id: string; title: string; description?: string }>,
+  ): Promise<WhatsAppApiResult> {
+    const phone = (to ?? '').replace(/\D/g, '');
+    const trimmed = bodyText.trim().slice(0, 1024);
+    const actionOptions = options.slice(0, 10).map((opt) => ({
+      id: opt.id.slice(0, 256),
+      title: opt.title.trim().slice(0, 20),
+      description: opt.description?.trim().slice(0, 72),
+    }));
+
+    if (actionOptions.length === 0) {
+      return this.sendTextMessage(accessToken, phoneNumberId, to, trimmed);
+    }
+
+    try {
+      const { status, data } = await withMetaApiRetry(async () => {
+        const response = await axios.post(
+          `${this.base}/${phoneNumberId}/messages`,
+          {
+            messaging_product: 'whatsapp',
+            to: phone,
+            type: 'interactive',
+            interactive: {
+              type: 'list',
+              header: { type: 'text', text: headerText.trim().slice(0, 60) },
+              body: { text: trimmed || 'Choose an option:' },
+              action: {
+                button: 'View Options',
+                sections: [
+                  {
+                    title: 'Available Options',
+                    rows: actionOptions,
+                  },
+                ],
+              },
+            },
+          },
+          {
+            headers: { Authorization: `Bearer ${accessToken}` },
+            timeout: 20000,
+            validateStatus: () => true,
+          },
+        );
+        return { status: response.status, data: response.data };
+      });
+
+      if (status >= 200 && status < 300) {
+        return { success: true, data };
+      }
+
+      return { success: false, message: data?.error?.message ?? 'Send failed' };
+    } catch (e: any) {
+      this.logger.error(`WhatsApp list message send failed: ${e.message}`);
+      return { success: false, message: e.message };
+    }
+  }
+
+  async sendFlowButton(
+    accessToken: string,
+    phoneNumberId: string,
+    to: string,
+    bodyText: string,
+    option: any,
+  ): Promise<WhatsAppApiResult> {
+    const phone = (to ?? '').replace(/\D/g, '');
+    const trimmed = bodyText.trim().slice(0, 1024);
+    const url = option.metadata?.url || '';
+
+    if (!url) {
+      return this.sendTextMessage(accessToken, phoneNumberId, to, trimmed);
+    }
+
+    try {
+      const { status, data } = await withMetaApiRetry(async () => {
+        const response = await axios.post(
+          `${this.base}/${phoneNumberId}/messages`,
+          {
+            messaging_product: 'whatsapp',
+            to: phone,
+            type: 'interactive',
+            interactive: {
+              type: 'button',
+              body: { text: trimmed },
+              action: {
+                buttons: [
+                  {
+                    type: 'url',
+                    text: option.optionText?.trim().slice(0, 20) || 'Open Link',
+                    url: url,
+                  },
+                ],
+              },
+            },
+          },
+          {
+            headers: { Authorization: `Bearer ${accessToken}` },
+            timeout: 20000,
+            validateStatus: () => true,
+          },
+        );
+        return { status: response.status, data: response.data };
+      });
+
+      if (status >= 200 && status < 300) {
+        return { success: true, data };
+      }
+
+      return { success: false, message: data?.error?.message ?? 'Send failed' };
+    } catch (e: any) {
+      this.logger.error(`WhatsApp flow button send failed: ${e.message}`);
+      return { success: false, message: e.message };
+    }
+  }
+
   async sendTextMessage(
     accessToken: string,
     phoneNumberId: string,

@@ -9,7 +9,9 @@ import {
   QUEUE_EXECUTE_WORKFLOW,
   QUEUE_PROCESS_INCOMING,
   QUEUE_SEND_MESSAGE,
+  QUEUE_SEND_INTERACTIVE_MESSAGE,
   SendMessageJob,
+  SendInteractiveMessageJob,
 } from './queue.constants';
 
 /**
@@ -136,6 +138,14 @@ export class QueueService implements JobDispatcher, OnModuleInit, OnModuleDestro
   async enqueueSendMessage(payload: SendMessageJob): Promise<void> {
     const boss = await this.assertBoss();
     await boss.send(QUEUE_SEND_MESSAGE, payload, { retryLimit: 3 });
+  }
+
+  async enqueueSendInteractiveMessage(payload: SendInteractiveMessageJob): Promise<void> {
+    const boss = await this.assertBoss();
+    await boss.send(QUEUE_SEND_INTERACTIVE_MESSAGE, payload, {
+      retryLimit: 3,
+      expireInSeconds: 300, // 5 minutes
+    });
   }
 
   async enqueueCareerTask(payload: CareerTaskJob): Promise<void> {

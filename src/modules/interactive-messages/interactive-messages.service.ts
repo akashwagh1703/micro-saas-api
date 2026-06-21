@@ -1,17 +1,19 @@
-import { Injectable, BadRequestException, NotFoundException, Logger } from '@nestjs/common';
+import { Injectable, BadRequestException, NotFoundException, Logger, Inject } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
+import { JOB_DISPATCHER, JobDispatcher } from '../queue/job-dispatcher';
 import {
   CreateInteractiveTemplateDto,
   UpdateInteractiveTemplateDto,
   InteractiveMessageResponseDto,
   InteractiveTemplateListDto,
+  SendInteractiveMessageDto,
 } from './dto/interactive-message.dto';
 
 @Injectable()
 export class InteractiveMessagesService {
   private readonly logger = new Logger(InteractiveMessagesService.name);
 
-  constructor(private prisma: PrismaService) {}
+  constructor(private prisma: PrismaService, @Inject(JOB_DISPATCHER) private readonly queue: JobDispatcher) {}
 
   async createTemplate(
     userId: number,
@@ -277,6 +279,43 @@ export class InteractiveMessagesService {
         nextNodeId: opt.nextNodeId,
       })),
       message: 'Interactive template created successfully',
+    };
+  }
+
+  async sendMessage(
+    userId: number,
+    dto: SendInteractiveMessageDto,
+  ): Promise<{ success: boolean; message: string }> {
+    this.logger.log(
+      `Sending interactive message template ${dto.templateId} to ${dto.phoneNumber}`,
+    );
+
+    // Verify template exists and belongs to user
+    const template = await this.prisma.interactiveMessageTemplate.findFirst({
+      where: { id: dto.templateId, userId },
+    });
+
+    if (!template) {
+      throw new NotFoundException('Interactive template not found');
+    }
+
+    // Enqueue the message for sending
+    await this.queue.enqueueSendInteractiveMessage({
+      userId,
+      conversationId: 0, // Placeholder, will be set by processor if needed
+      templateId: dto.templateId,
+      phoneNumber: dto.phoneNumber,
+      workflowId: dto.workflowId,
+      nodeId: dto.nodeId,
+    });
+
+    this.logger.log(
+      `Interactive message queued for template ${dto.templateId}`,
+    );
+
+    return {
+      success: true,
+      message: 'Interactive message queued for sending',
     };
   }
 }

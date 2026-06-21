@@ -6,6 +6,7 @@ import {
   UpdateInteractiveTemplateDto,
   InteractiveMessageResponseDto,
   InteractiveTemplateListDto,
+  SendInteractiveMessageDto,
 } from './dto/interactive-message.dto';
 
 @Controller('interactive-messages')
@@ -53,5 +54,17 @@ export class InteractiveMessagesController {
   @Get(':id/validate')
   async validateTemplate(@Param('id') id: string): Promise<{ valid: boolean; errors: string[] }> {
     return this.interactiveMessagesService.validateTemplate(parseInt(id));
+  }
+
+  @Post(':id/send')
+  async sendMessage(
+    @Param('id') id: string,
+    @Body() dto: SendInteractiveMessageDto,
+    @Request() req,
+  ): Promise<{ success: boolean; message: string }> {
+    return this.interactiveMessagesService.sendMessage(req.user.id, {
+      ...dto,
+      templateId: parseInt(id),
+    });
   }
 }
