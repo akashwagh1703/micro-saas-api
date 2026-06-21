@@ -27,6 +27,7 @@ import { AdminModule } from './modules/admin/admin.module';
 import { PlatformModule } from './platform/platform.module';
 import { WebsiteModule } from './modules/website/website.module';
 import { InteractiveMessagesModule } from './modules/interactive-messages/interactive-messages.module';
+import { IntegrationsModule } from './modules/integrations/integrations.module';
 import { AppController } from './app.controller';
 
 @Module({
@@ -56,6 +57,7 @@ import { AppController } from './app.controller';
     AdminModule,
     WebsiteModule,
     InteractiveMessagesModule,
+    IntegrationsModule,
   ],
   controllers: [AppController],
 })
