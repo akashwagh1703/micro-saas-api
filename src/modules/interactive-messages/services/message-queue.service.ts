@@ -11,6 +11,7 @@ export interface InteractiveMessageJob {
   templateId: number;
   workflowId: string;
   nodeId: string;
+  conversationId?: number;
 }
 
 export interface JobProcessingResult {
@@ -56,13 +57,21 @@ export class MessageQueueService {
       // Validate input
       this.validateJobData(jobData);
 
-      // Enqueue job with retry configuration
-      const jobId = await this.queue.enqueueSendInteractiveMessage({
-        ...jobData,
+      // Build queue job with required fields
+      const queueJob = {
+        userId: jobData.userId,
+        conversationId: jobData.conversationId || 0,
+        templateId: jobData.templateId,
+        phoneNumber: jobData.phoneNumber,
+        workflowId: parseInt(jobData.workflowId, 10) || 0,
+        nodeId: jobData.nodeId,
         attempts: 0,
-        createdAt: new Date().toISOString(),
-      });
+      };
 
+      // Enqueue job with retry configuration
+      const result = await this.queue.enqueueSendInteractiveMessage(queueJob as any);
+
+      const jobId = typeof result === 'string' ? result : 'queued';
       this.logger.log(`Message queued with jobId: ${jobId}`);
       return jobId;
     } catch (error) {
@@ -162,15 +171,7 @@ export class MessageQueueService {
       );
 
       // Still throw so pgboss knows the job failed
-      if (classification && classification.retryable && attempts < this.retryAttempts) {
-        throw error;
-      }
-
-      return {
-        success: false,
-        error: fallbackError.message,
-        retryable: false,
-      };
+      throw error;
     }
   }
 
