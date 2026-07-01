@@ -18,11 +18,8 @@ export class InteractiveMessageHandlerService {
     @Inject(JOB_DISPATCHER) private readonly jobs: JobDispatcher,
   ) {}
 
-  /**
-   * Handle a button click or list selection from a user
-   * Resumes the workflow at the configured next node
-   */
   async handleButtonResponse(
+    userId: number,
     phoneNumber: string,
     optionId: number,
   ): Promise<{
@@ -32,8 +29,7 @@ export class InteractiveMessageHandlerService {
     nextNodeId?: string;
   }> {
     try {
-      // Get user state
-      const userState = await this.userStateService.getUserState(phoneNumber);
+      const userState = await this.userStateService.getUserState(userId, phoneNumber);
 
       if (!userState) {
         return {
@@ -44,7 +40,7 @@ export class InteractiveMessageHandlerService {
 
       if (userState.status !== 'WAITING_FOR_RESPONSE') {
         this.logger.warn(
-          `User ${phoneNumber} not waiting for response (status=${userState.status})`,
+          `User ${phoneNumber} (tenant ${userId}) not waiting for response (status=${userState.status})`,
         );
         return {
           success: false,
@@ -60,7 +56,6 @@ export class InteractiveMessageHandlerService {
         };
       }
 
-      // Get the option that was selected
       const option = await this.prisma.interactiveMessageOption.findUnique({
         where: { id: optionId },
       });
@@ -72,12 +67,12 @@ export class InteractiveMessageHandlerService {
         };
       }
 
-      // Verify option belongs to the template - match type
       const templateIdFromState = this.userStateService.getTemplateIdFromState(userState);
-      const templateIdNum = typeof templateIdFromState === 'string' 
-        ? parseInt(templateIdFromState, 10) 
-        : templateIdFromState;
-      
+      const templateIdNum =
+        typeof templateIdFromState === 'string'
+          ? parseInt(templateIdFromState, 10)
+          : templateIdFromState;
+
       if (!templateIdNum || templateIdNum !== option.templateId) {
         return {
           success: false,
@@ -85,26 +80,21 @@ export class InteractiveMessageHandlerService {
         };
       }
 
-      // Get the next node ID from the option
       const nextNodeId = option.nextNodeId;
       if (!nextNodeId) {
-        this.logger.warn(
-          `Option ${optionId} has no next node routing configured`,
-        );
-        // Clear state but don't error - workflow just ends
-        await this.userStateService.clearUserState(phoneNumber);
+        this.logger.warn(`Option ${optionId} has no next node routing configured`);
+        await this.userStateService.clearUserState(userId, phoneNumber);
         return {
           success: true,
           message: 'No next node configured - workflow ends',
         };
       }
 
-      // Save the user's selection
-      await this.saveUserSelection(phoneNumber, optionId);
+      await this.saveUserSelection(userId, phoneNumber, optionId);
 
-      // Get the current workflow execution (if exists)
       const execution = await this.prisma.workflowExecution.findFirst({
         where: {
+          userId,
           workflowId: userState.workflowId,
           status: 'waiting',
         },
@@ -112,19 +102,16 @@ export class InteractiveMessageHandlerService {
       });
 
       if (!execution) {
-        // No active execution - clear state
-        await this.userStateService.clearUserState(phoneNumber);
+        await this.userStateService.clearUserState(userId, phoneNumber);
         return {
           success: true,
           message: 'No active execution found - cleared state',
         };
       }
 
-      // Resume the workflow from the next node
       const resumed = await this.resumeWorkflowAtNode(
         execution.id,
         nextNodeId,
-        phoneNumber,
         String(optionId),
       );
 
@@ -135,8 +122,7 @@ export class InteractiveMessageHandlerService {
         };
       }
 
-      // Clear state after successful resume
-      await this.userStateService.clearUserState(phoneNumber);
+      await this.userStateService.clearUserState(userId, phoneNumber);
 
       return {
         success: true,
@@ -144,9 +130,7 @@ export class InteractiveMessageHandlerService {
         nextNodeId,
       };
     } catch (error: any) {
-      this.logger.error(
-        `Error handling button response: ${error.message}`,
-      );
+      this.logger.error(`Error handling button response: ${error.message}`);
       return {
         success: false,
         message: error.message,
@@ -154,14 +138,9 @@ export class InteractiveMessageHandlerService {
     }
   }
 
-  /**
-   * Resume a workflow execution at a specific node
-   * Called after user selects an option
-   */
   private async resumeWorkflowAtNode(
     executionId: number,
     nextNodeId: string,
-    phoneNumber: string,
     selectedOptionId: string,
   ): Promise<boolean> {
     try {
@@ -173,13 +152,12 @@ export class InteractiveMessageHandlerService {
         return false;
       }
 
-      // Update execution context with user selection
       const context = (execution.context as Record<string, any>) || {};
       context.__selected_option_id = selectedOptionId;
       context.__interactive_response_received = true;
       context.__resumed_from_interactive_message = true;
+      context.__resume_at_node_id = nextNodeId;
 
-      // Update execution to resume from the next node
       await this.prisma.workflowExecution.update({
         where: { id: executionId },
         data: {
@@ -188,7 +166,6 @@ export class InteractiveMessageHandlerService {
         },
       });
 
-      // Queue the execution to resume
       await this.jobs.enqueueExecuteWorkflow(executionId);
 
       return true;
@@ -198,25 +175,22 @@ export class InteractiveMessageHandlerService {
     }
   }
 
-  /**
-   * Save user selection for analytics
-   */
   private async saveUserSelection(
+    userId: number,
     phoneNumber: string,
     optionId: number,
   ): Promise<void> {
     try {
-      const userState = await this.userStateService.getUserState(phoneNumber);
+      const userState = await this.userStateService.getUserState(userId, phoneNumber);
       if (!userState) return;
 
       const templateId = this.userStateService.getTemplateIdFromState(userState);
       if (!templateId) return;
 
-      // Convert templateId to number (it's stored as string in metadata)
-      const templateIdNum = typeof templateId === 'string' ? parseInt(templateId, 10) : templateId;
-      const workflowId = userState?.workflowId || 0;
+      const templateIdNum =
+        typeof templateId === 'string' ? parseInt(templateId, 10) : templateId;
+      const workflowId = userState.workflowId || 0;
 
-      // Save to button click analytics
       await this.prisma.buttonClickAnalytics.create({
         data: {
           templateId: templateIdNum,
@@ -224,18 +198,14 @@ export class InteractiveMessageHandlerService {
           phoneNumber,
           workflowId,
           clickedAt: new Date(),
-          responseTimeMs: 0, // Can be calculated if we track send time
+          responseTimeMs: 0,
         },
       });
     } catch (error) {
-      // Don't fail if analytics fails
       this.logger.warn(`Failed to save user selection: ${error}`);
     }
   }
 
-  /**
-   * Get button click statistics for analytics
-   */
   async getButtonClickStats(
     templateId: number,
     startDate?: Date,
@@ -254,14 +224,12 @@ export class InteractiveMessageHandlerService {
         where,
       });
 
-      // Get option details for each click
       const optionIds = [...new Set(clicks.map((c) => c.optionId))];
       const options = await this.prisma.interactiveMessageOption.findMany({
         where: { id: { in: optionIds } },
       });
       const optionsMap = new Map(options.map((o) => [o.id, o]));
 
-      // Group by option
       const statsByOption: Record<number, any> = {};
       clicks.forEach((click) => {
         const optionId = click.optionId;
@@ -280,12 +248,9 @@ export class InteractiveMessageHandlerService {
         }
       });
 
-      // Calculate averages
       Object.values(statsByOption).forEach((stat: any) => {
         if (stat.clicks > 0) {
-          stat.avgResponseTimeMs = Math.round(
-            stat.avgResponseTimeMs / stat.clicks,
-          );
+          stat.avgResponseTimeMs = Math.round(stat.avgResponseTimeMs / stat.clicks);
         }
       });
 

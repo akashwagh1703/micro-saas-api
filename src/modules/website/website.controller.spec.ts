@@ -152,23 +152,23 @@ describe('WebsiteController', () => {
 
   describe('admin lead endpoints', () => {
     it('getWebsiteLeads forwards status and page query params', async () => {
-      await controller.getWebsiteLeads(42, 'new', '2');
+      await controller.getWebsiteLeads('new', '2');
       assert.deepEqual(serviceMock.calls.getWebsiteLeads, [['new', '2']]);
     });
 
     it('getWebsiteLeadsStats delegates to service', async () => {
-      await controller.getWebsiteLeadsStats(42);
+      await controller.getWebsiteLeadsStats();
       assert.equal(serviceMock.calls.getWebsiteLeadsStats.length, 1);
     });
 
     it('getWebsiteLead parses id and delegates', async () => {
-      await controller.getWebsiteLead(42, '7');
+      await controller.getWebsiteLead('7');
       assert.deepEqual(serviceMock.calls.getWebsiteLead, [7]);
     });
 
     it('updateWebsiteLead parses id and forwards dto', async () => {
       const dto = { status: 'contacted' };
-      await controller.updateWebsiteLead(42, '9', dto as never);
+      await controller.updateWebsiteLead('9', dto as never);
       assert.deepEqual(serviceMock.calls.updateWebsiteLead, [[9, dto]]);
     });
   });

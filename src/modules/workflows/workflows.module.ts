@@ -23,7 +23,6 @@ import { DelayNodeExecutor } from './nodes/delay-node.executor';
 import { InteractiveMessageNodeExecutor } from './nodes/interactive-message-node.executor';
 import { UserStateService } from './user-state.service';
 import { InteractiveMessageHandlerService } from './interactive-message-handler.service';
-import { InteractiveMessageWebhookController } from './interactive-message-webhook.controller';
 import { WorkflowValidationInteractiveService } from './workflow-validation-interactive.service';
 
 @Module({
@@ -31,8 +30,6 @@ import { WorkflowValidationInteractiveService } from './workflow-validation-inte
   controllers: [
     WorkflowsController,
     WorkflowWebhookController,
-    // Phase 5: Interactive Message Webhook
-    InteractiveMessageWebhookController,
   ],
   providers: [
     WorkflowValidator,

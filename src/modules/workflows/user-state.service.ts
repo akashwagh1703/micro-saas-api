@@ -4,8 +4,7 @@ import { UserWorkflowState } from '@prisma/client';
 
 /**
  * User State Service
- * Manages user workflow state - tracks where a user is in a workflow
- * and what interactive message they're waiting to respond to
+ * Manages per-tenant workflow state for interactive message flows.
  */
 @Injectable()
 export class UserStateService {
@@ -13,26 +12,28 @@ export class UserStateService {
 
   constructor(private readonly prisma: PrismaService) {}
 
-  /**
-   * Get the current state of a user in any workflow
-   */
-  async getUserState(phoneNumber: string): Promise<UserWorkflowState | null> {
+  private tenantPhoneKey(userId: number, phoneNumber: string) {
+    return { userId_phoneNumber: { userId, phoneNumber } };
+  }
+
+  async getUserState(
+    userId: number,
+    phoneNumber: string,
+  ): Promise<UserWorkflowState | null> {
     try {
-      const state = await this.prisma.userWorkflowState.findUnique({
-        where: { phoneNumber },
-      });
-      return state || null;
+      return (
+        (await this.prisma.userWorkflowState.findUnique({
+          where: this.tenantPhoneKey(userId, phoneNumber),
+        })) ?? null
+      );
     } catch (error) {
       this.logger.error(`Error getting user state: ${error}`);
       return null;
     }
   }
 
-  /**
-   * Save or update user state
-   * Note: Template ID is stored in metadata JSON for flexibility
-   */
   async saveUserState(
+    userId: number,
     phoneNumber: string,
     workflowId: number,
     nodeId: string,
@@ -40,7 +41,7 @@ export class UserStateService {
     status: string = 'WAITING_FOR_RESPONSE',
   ): Promise<UserWorkflowState> {
     return await this.prisma.userWorkflowState.upsert({
-      where: { phoneNumber },
+      where: this.tenantPhoneKey(userId, phoneNumber),
       update: {
         workflowId,
         currentNodeId: nodeId,
@@ -52,6 +53,7 @@ export class UserStateService {
         updatedAt: new Date(),
       },
       create: {
+        userId,
         phoneNumber,
         workflowId,
         currentNodeId: nodeId,
@@ -64,25 +66,18 @@ export class UserStateService {
     });
   }
 
-  /**
-   * Clear user state after workflow completes or times out
-   */
-  async clearUserState(phoneNumber: string): Promise<void> {
+  async clearUserState(userId: number, phoneNumber: string): Promise<void> {
     try {
       await this.prisma.userWorkflowState.delete({
-        where: { phoneNumber },
+        where: this.tenantPhoneKey(userId, phoneNumber),
       });
     } catch (error: any) {
-      // Silently ignore if state doesn't exist
       if (!error.code?.includes('P2025')) {
         this.logger.warn(`Error clearing user state: ${error}`);
       }
     }
   }
 
-  /**
-   * Get the template ID from user state metadata
-   */
   getTemplateIdFromState(state: UserWorkflowState): string | null {
     try {
       const metadata = state.metadata as any;
@@ -92,67 +87,59 @@ export class UserStateService {
     }
   }
 
-  /**
-   * Check if user is waiting for interactive message response
-   */
-  async isWaitingForResponse(phoneNumber: string): Promise<boolean> {
-    const state = await this.getUserState(phoneNumber);
+  async isWaitingForResponse(
+    userId: number,
+    phoneNumber: string,
+  ): Promise<boolean> {
+    const state = await this.getUserState(userId, phoneNumber);
     if (!state || state.status !== 'WAITING_FOR_RESPONSE') {
       return false;
     }
-    const templateId = this.getTemplateIdFromState(state);
-    return !!templateId;
+    return !!this.getTemplateIdFromState(state);
   }
 
-  /**
-   * Timeout user state - move from waiting to timeout
-   */
   async timeoutUserState(
+    userId: number,
     phoneNumber: string,
     timeoutSeconds: number = 3600,
   ): Promise<void> {
     try {
-      const state = await this.getUserState(phoneNumber);
+      const state = await this.getUserState(userId, phoneNumber);
       if (!state) return;
 
       const createdAt = state.createdAt || state.updatedAt;
       const elapsedSeconds = (Date.now() - createdAt.getTime()) / 1000;
 
       if (elapsedSeconds > timeoutSeconds) {
-        await this.clearUserState(phoneNumber);
-        this.logger.debug(
-          `User state timed out for ${phoneNumber}`,
-        );
+        await this.clearUserState(userId, phoneNumber);
+        this.logger.debug(`User state timed out for tenant ${userId} / ${phoneNumber}`);
       }
     } catch (error) {
       this.logger.warn(`Error timing out user state: ${error}`);
     }
   }
 
-  /**
-   * Get all active user states (for monitoring/debugging)
-   */
-  async getAllActiveStates() {
+  async getAllActiveStates(userId?: number) {
     try {
-      return await this.prisma.userWorkflowState.findMany();
+      return await this.prisma.userWorkflowState.findMany({
+        where: userId ? { userId } : undefined,
+      });
     } catch (error) {
       this.logger.error(`Error getting all active states: ${error}`);
       return [];
     }
   }
 
-  /**
-   * Get active states for a specific workflow
-   */
-  async getActiveStatesForWorkflow(workflowId: number) {
+  async getActiveStatesForWorkflow(workflowId: number, userId?: number) {
     try {
       return await this.prisma.userWorkflowState.findMany({
-        where: { workflowId },
+        where: {
+          workflowId,
+          ...(userId ? { userId } : {}),
+        },
       });
     } catch (error) {
-      this.logger.error(
-        `Error getting active states for workflow: ${error}`,
-      );
+      this.logger.error(`Error getting active states for workflow: ${error}`);
       return [];
     }
   }

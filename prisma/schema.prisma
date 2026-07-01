@@ -54,6 +54,7 @@ model User {
   careerAuditLogs     CareerAuditLog[]
   billingTransactions BillingTransaction[]
   integrationCredentials IntegrationCredential[]
+  userWorkflowStates  UserWorkflowState[]
   interactiveTemplates InteractiveMessageTemplate[]
 
   @@map("users")
@@ -736,18 +737,23 @@ model WorkflowNode {
 }
 
 model UserWorkflowState {
-  id              Int      @id @default(autoincrement())
-  phoneNumber     String   @unique @map("phone_number") @db.VarChar(20)
-  workflowId      Int      @map("workflow_id")
-  currentNodeId   String   @map("current_node_id") @db.VarChar(100)
-  status          String   @default("ACTIVE") @db.VarChar(20)
+  id                Int       @id @default(autoincrement())
+  userId            Int       @map("user_id")
+  phoneNumber       String    @map("phone_number") @db.VarChar(20)
+  workflowId        Int       @map("workflow_id")
+  currentNodeId     String    @map("current_node_id") @db.VarChar(100)
+  status            String    @default("ACTIVE") @db.VarChar(20)
   lastMessageSentAt DateTime? @map("last_message_sent_at")
-  metadata        Json?
-  createdAt       DateTime @default(now()) @map("created_at")
-  updatedAt       DateTime @updatedAt @map("updated_at")
+  metadata          Json?
+  createdAt         DateTime  @default(now()) @map("created_at")
+  updatedAt         DateTime  @updatedAt @map("updated_at")
 
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, phoneNumber])
   @@index([phoneNumber])
   @@index([workflowId])
+  @@index([userId])
   @@map("user_workflow_states")
 }
 

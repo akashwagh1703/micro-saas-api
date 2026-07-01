@@ -4,7 +4,7 @@ import { CaptureDemoDto, CaptureDemoResponseDto } from './dto/capture-demo.dto';
 import { ContactUsDto, ContactUsResponseDto } from './dto/contact-us.dto';
 import { UpdateWebsiteLeadDto } from './dto/update-website-lead.dto';
 import { TokenAuthGuard } from '../../common/guards/token-auth.guard';
-import { CurrentUser } from '../../common/decorators/current-user.decorator';
+import { SuperAdminGuard } from '../../common/guards/super-admin.guard';
 
 /**
  * Website Controller
@@ -117,12 +117,11 @@ export class WebsiteController {
 
   /**
    * GET /api/website/leads
-   * Get all website leads (admin only)
+   * Get all website leads (super-admin only)
    */
   @Get('leads')
-  @UseGuards(TokenAuthGuard)
+  @UseGuards(TokenAuthGuard, SuperAdminGuard)
   async getWebsiteLeads(
-    @CurrentUser('id') userId: number,
     @Query('status') status?: string,
     @Query('page') page?: string,
   ) {
@@ -131,35 +130,31 @@ export class WebsiteController {
 
   /**
    * GET /api/website/leads/stats
-   * Get website leads statistics (admin only)
+   * Get website leads statistics (super-admin only)
    */
   @Get('leads/stats')
-  @UseGuards(TokenAuthGuard)
-  async getWebsiteLeadsStats(@CurrentUser('id') userId: number) {
+  @UseGuards(TokenAuthGuard, SuperAdminGuard)
+  async getWebsiteLeadsStats() {
     return this.websiteService.getWebsiteLeadsStats();
   }
 
   /**
    * GET /api/website/leads/:id
-   * Get specific website lead (admin only)
+   * Get specific website lead (super-admin only)
    */
   @Get('leads/:id')
-  @UseGuards(TokenAuthGuard)
-  async getWebsiteLead(
-    @CurrentUser('id') userId: number,
-    @Param('id') id: string,
-  ) {
+  @UseGuards(TokenAuthGuard, SuperAdminGuard)
+  async getWebsiteLead(@Param('id') id: string) {
     return this.websiteService.getWebsiteLead(parseInt(id));
   }
 
   /**
    * PATCH /api/website/leads/:id
-   * Update website lead (admin only)
+   * Update website lead (super-admin only)
    */
   @Patch('leads/:id')
-  @UseGuards(TokenAuthGuard)
+  @UseGuards(TokenAuthGuard, SuperAdminGuard)
   async updateWebsiteLead(
-    @CurrentUser('id') userId: number,
     @Param('id') id: string,
     @Body() dto: UpdateWebsiteLeadDto,
   ) {

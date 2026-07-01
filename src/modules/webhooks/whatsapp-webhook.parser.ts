@@ -91,3 +91,27 @@ export function extractWhatsAppInboundText(message: Record<string, unknown>): st
 
   return null;
 }
+
+/** Numeric interactive option id for workflow button/list routing (excludes CareerAI string ids). */
+export function extractWhatsAppInteractiveOptionId(
+  message: Record<string, unknown>,
+): number | null {
+  if (String(message.type ?? '') !== 'interactive') {
+    return null;
+  }
+
+  const interactive = message.interactive as
+    | {
+        button_reply?: { id?: string };
+        list_reply?: { id?: string };
+      }
+    | undefined;
+
+  const rawId = interactive?.button_reply?.id ?? interactive?.list_reply?.id;
+  if (!rawId || mapCareerButtonReply(rawId)) {
+    return null;
+  }
+
+  const parsed = parseInt(String(rawId), 10);
+  return Number.isNaN(parsed) ? null : parsed;
+}

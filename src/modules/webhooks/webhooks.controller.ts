@@ -4,8 +4,12 @@ import { Request, Response } from 'express';
 import { WhatsappService } from '../whatsapp/whatsapp.service';
 import { WhatsAppApiService } from '../integrations/whatsapp-api.service';
 import { InboxService } from '../inbox/inbox.service';
+import { InteractiveMessageHandlerService } from '../workflows/interactive-message-handler.service';
 import { JOB_DISPATCHER, JobDispatcher } from '../queue/job-dispatcher';
-import { extractWhatsAppInboundText } from './whatsapp-webhook.parser';
+import {
+  extractWhatsAppInboundText,
+  extractWhatsAppInteractiveOptionId,
+} from './whatsapp-webhook.parser';
 
 /**
  * Meta WhatsApp webhook endpoints. These return plain text (not JSON) to match
@@ -19,6 +23,7 @@ export class WebhooksController {
     private readonly whatsapp: WhatsappService,
     private readonly api: WhatsAppApiService,
     private readonly inbox: InboxService,
+    private readonly interactiveHandler: InteractiveMessageHandlerService,
     private readonly config: ConfigService,
     @Inject(JOB_DISPATCHER) private readonly queue: JobDispatcher,
   ) {}
@@ -76,12 +81,36 @@ export class WebhooksController {
         const from = waMessage.from ?? null;
         const waId = waMessage.id ?? null;
         const waType = String(waMessage.type ?? 'text');
+        const contactName = entry?.contacts?.[0]?.profile?.name ?? null;
+
+        if (!from) {
+          continue;
+        }
+
+        if (waType === 'interactive') {
+          const optionId = extractWhatsAppInteractiveOptionId(
+            waMessage as Record<string, unknown>,
+          );
+          if (optionId !== null) {
+            const handled = await this.interactiveHandler.handleButtonResponse(
+              userId,
+              from,
+              optionId,
+            );
+            if (handled.success) {
+              this.logger.log(
+                `Interactive reply handled for tenant ${userId} / ${from} (option ${optionId})`,
+              );
+              continue;
+            }
+          }
+        }
+
         const text =
           extractWhatsAppInboundText(waMessage as Record<string, unknown>) ??
           (waType === 'document' ? '[Resume document]' : null);
-        const contactName = entry?.contacts?.[0]?.profile?.name ?? null;
 
-        if (!from || !text) {
+        if (!text) {
           continue;
         }
 
