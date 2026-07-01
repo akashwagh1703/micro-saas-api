@@ -64,14 +64,6 @@ describe('WebsiteController', () => {
     assert.ok(controller);
   });
 
-  describe('health', () => {
-    it('returns health status', async () => {
-      const result = await controller.health();
-      assert.equal(result.status, 'ok');
-      assert.equal(result.message, 'Website API is running');
-    });
-  });
-
   describe('getWebsiteConfig', () => {
     it('returns website configuration with industries and pricing', async () => {
       const config = await controller.getWebsiteConfig();

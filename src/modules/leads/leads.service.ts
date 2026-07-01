@@ -11,6 +11,8 @@ import {
   SaveLeadApiConfig,
 } from './lead-api.config';
 import { SaveLeadDto, UpdateLeadDto } from './dto/lead.dto';
+import { buildCsv } from '../../common/export/csv.util';
+import { extractDigits } from '../../common/phone.util';
 
 interface CreateFromExecutionInput {
   execution: WorkflowExecution;
@@ -187,25 +189,21 @@ export class LeadsService {
       'notes',
       'created_at',
     ];
-    const rows = leads.map((lead) =>
-      [
-        lead.id,
-        lead.channel,
-        lead.status,
-        lead.name ?? '',
-        lead.phone ?? '',
-        lead.username ?? '',
-        lead.sourceMessage ?? '',
-        lead.collected ? JSON.stringify(lead.collected) : '',
-        lead.workflowId ?? '',
-        lead.executionId ?? '',
-        lead.notes ?? '',
-        lead.createdAt?.toISOString() ?? '',
-      ]
-        .map((cell) => `"${String(cell).replace(/"/g, '""')}"`)
-        .join(','),
-    );
-    return [headers.join(','), ...rows].join('\n');
+    const rows = leads.map((lead) => [
+      lead.id,
+      lead.channel,
+      lead.status,
+      lead.name ?? '',
+      lead.phone ?? '',
+      lead.username ?? '',
+      lead.sourceMessage ?? '',
+      lead.collected ? JSON.stringify(lead.collected) : '',
+      lead.workflowId ?? '',
+      lead.executionId ?? '',
+      lead.notes ?? '',
+      lead.createdAt?.toISOString() ?? '',
+    ]);
+    return buildCsv(headers, rows);
   }
 
   private normalizeSaveLeadDto(dto: SaveLeadDto): NormalizedLeadInput {
@@ -282,6 +280,6 @@ export class LeadsService {
   }
 
   private normalizePhone(phone: string): string {
-    return phone.replace(/\D/g, '');
+    return extractDigits(phone);
   }
 }

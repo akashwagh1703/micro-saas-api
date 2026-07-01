@@ -4,6 +4,9 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { CaptureDemoDto, CaptureDemoResponseDto } from './dto/capture-demo.dto';
 import { UpdateWebsiteLeadDto } from './dto/update-website-lead.dto';
 import { scoreForBusinessType } from './website.config';
+import { buildCsv } from '../../common/export/csv.util';
+import { isValidIndianMobile } from '../../common/phone.util';
+import { paginatedMeta, resolvePage } from '../../common/pagination';
 import { randomBytes } from 'crypto';
 import * as nodemailer from 'nodemailer';
 
@@ -169,10 +172,7 @@ Company: ${lead.companyName || 'Not specified'}</p>
     }
     
     // Phone number validation (Indian numbers starting with 6-9 are valid)
-    const phoneDigits = String(lead.phone ?? '').replace(/\D/g, '');
-    const mobile =
-      phoneDigits.length >= 10 ? phoneDigits.slice(-10) : phoneDigits;
-    if (/^[6-9]\d{9}$/.test(mobile)) {
+    if (isValidIndianMobile(lead.phone)) {
       score += 10;
     }
     
@@ -342,26 +342,22 @@ Company: ${lead.companyName || 'Not specified'}</p>
       'notes',
       'created_at',
     ];
-    const rows = leads.map((lead) =>
-      [
-        lead.id,
-        lead.name,
-        lead.email,
-        lead.phone,
-        lead.businessType,
-        lead.companyName ?? '',
-        lead.status,
-        lead.score ?? 0,
-        lead.qualification ?? '',
-        lead.source,
-        lead.demoConfirmed ? 'yes' : 'no',
-        lead.notes ?? '',
-        lead.createdAt?.toISOString() ?? '',
-      ]
-        .map((cell) => `"${String(cell).replace(/"/g, '""')}"`)
-        .join(','),
-    );
-    return [headers.join(','), ...rows].join('\n');
+    const rows = leads.map((lead) => [
+      lead.id,
+      lead.name,
+      lead.email,
+      lead.phone,
+      lead.businessType,
+      lead.companyName ?? '',
+      lead.status,
+      lead.score ?? 0,
+      lead.qualification ?? '',
+      lead.source,
+      lead.demoConfirmed ? 'yes' : 'no',
+      lead.notes ?? '',
+      lead.createdAt?.toISOString() ?? '',
+    ]);
+    return buildCsv(headers, rows);
   }
 
   async exportWebsiteLeads(status?: string, search?: string): Promise<string> {
@@ -377,7 +373,7 @@ Company: ${lead.companyName || 'Not specified'}</p>
    * Get all website leads with optional filtering
    */
   async getWebsiteLeads(status?: string, page?: string, search?: string) {
-    const currentPage = page ? parseInt(page, 10) : 1;
+    const currentPage = resolvePage(page);
     const perPage = 20;
     const skip = (currentPage - 1) * perPage;
     const where = this.buildWebsiteLeadWhere(status, search);
@@ -392,15 +388,7 @@ Company: ${lead.companyName || 'Not specified'}</p>
       this.prisma.websiteLead.count({ where }),
     ]);
 
-    return {
-      data: leads,
-      meta: {
-        total,
-        page: currentPage,
-        perPage,
-        totalPages: Math.ceil(total / perPage),
-      },
-    };
+    return paginatedMeta(leads, total, currentPage, perPage);
   }
 
   /**

@@ -51,6 +51,10 @@ export class RateLimitMiddleware implements NestMiddleware {
     } else if (path.startsWith('/api/webhook/') || path.startsWith('/api/hooks/')) {
       limit = this.rateLimit.webhookLimit();
       bucketKey = `webhook:${ip}`;
+    } else if (path.startsWith('/api/website/leads/capture-demo')) {
+      // Stricter cap on public lead capture (in-memory — single-instance only; use Redis for multi-node).
+      limit = this.rateLimit.websiteLeadCaptureLimit();
+      bucketKey = `website-lead:${ip}`;
     }
 
     const result = this.rateLimit.check(bucketKey, limit, windowMs);

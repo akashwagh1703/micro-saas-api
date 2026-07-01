@@ -55,18 +55,6 @@ export class WebsiteController {
   }
 
   /**
-   * Health check endpoint
-   */
-  @Get('health')
-  @HttpCode(HttpStatus.OK)
-  async health(): Promise<{ status: string; message: string }> {
-    return {
-      status: 'ok',
-      message: 'Website API is running',
-    };
-  }
-
-  /**
    * GET /api/website/leads
    * Get all website leads (super-admin only)
    */

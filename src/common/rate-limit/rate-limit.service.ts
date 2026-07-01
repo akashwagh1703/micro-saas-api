@@ -53,6 +53,10 @@ export class RateLimitService {
     return parseInt(this.config.get<string>('RATE_LIMIT_WEBHOOK_MAX') ?? '120', 10);
   }
 
+  websiteLeadCaptureLimit(): number {
+    return parseInt(this.config.get<string>('RATE_LIMIT_WEBSITE_LEAD_MAX') ?? '5', 10);
+  }
+
   windowMs(): number {
     return parseInt(this.config.get<string>('RATE_LIMIT_WINDOW_MS') ?? '60000', 10);
   }

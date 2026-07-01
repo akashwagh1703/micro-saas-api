@@ -19,6 +19,36 @@ export interface Paginated<T> {
   total: number;
 }
 
+/** Simple `{ data, meta }` shape used by website leads and similar endpoints. */
+export interface PaginatedMeta {
+  total: number;
+  page: number;
+  perPage: number;
+  totalPages: number;
+}
+
+export interface PaginatedMetaResponse<T> {
+  data: T[];
+  meta: PaginatedMeta;
+}
+
+export function paginatedMeta<T>(
+  data: T[],
+  total: number,
+  page: number,
+  perPage: number,
+): PaginatedMetaResponse<T> {
+  return {
+    data,
+    meta: {
+      total,
+      page,
+      perPage,
+      totalPages: total === 0 ? 0 : Math.ceil(total / perPage),
+    },
+  };
+}
+
 export function paginate<TModel, TOut>(
   items: TModel[],
   total: number,

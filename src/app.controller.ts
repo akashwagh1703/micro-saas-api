@@ -1,9 +1,13 @@
-import { Controller, Get, ServiceUnavailableException } from '@nestjs/common';
+import { Controller, Get, ServiceUnavailableException, Headers, UnauthorizedException } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { PrismaService } from './prisma/prisma.service';
 
 @Controller()
 export class AppController {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly config: ConfigService,
+  ) {}
 
   /** Liveness — process is up (used by load balancers). */
   @Get('up')
@@ -30,9 +34,22 @@ export class AppController {
     }
   }
 
-  /** Lightweight process metrics for operators (no auth — hide behind firewall in prod). */
+  /** Process metrics for operators — requires METRICS_TOKEN in production. */
   @Get('up/metrics')
-  metrics() {
+  metrics(@Headers('x-metrics-token') token?: string) {
+    const expected = this.config.get<string>('METRICS_TOKEN')?.trim();
+    const isProd = this.config.get<string>('NODE_ENV') === 'production';
+
+    if (expected) {
+      if (!token || token !== expected) {
+        throw new UnauthorizedException('Invalid or missing metrics token');
+      }
+    } else if (isProd) {
+      throw new UnauthorizedException(
+        'METRICS_TOKEN must be set in production to access /up/metrics',
+      );
+    }
+
     const mem = process.memoryUsage();
     return {
       status: 'ok',

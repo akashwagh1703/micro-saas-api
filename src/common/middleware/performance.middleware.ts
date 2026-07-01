@@ -37,10 +37,6 @@ export class CacheHeadersMiddleware implements NestMiddleware {
     if (req.path === '/api/website/config') {
       res.setHeader('Cache-Control', 'public, max-age=3600');
     }
-    // Cache health endpoint for 5 minutes
-    else if (req.path === '/api/website/health') {
-      res.setHeader('Cache-Control', 'public, max-age=300');
-    }
     // Don't cache POST requests or form submissions
     else if (req.method === 'POST') {
       res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
