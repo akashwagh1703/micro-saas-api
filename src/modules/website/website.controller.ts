@@ -2,8 +2,8 @@ import { Controller, Post, Get, Body, Param, HttpCode, HttpStatus, Logger, Patch
 import { Response } from 'express';
 import { WebsiteService } from './website.service';
 import { CaptureDemoDto, CaptureDemoResponseDto } from './dto/capture-demo.dto';
-import { ContactUsDto, ContactUsResponseDto } from './dto/contact-us.dto';
 import { UpdateWebsiteLeadDto } from './dto/update-website-lead.dto';
+import { buildWebsitePublicConfig } from './website.config';
 import { TokenAuthGuard } from '../../common/guards/token-auth.guard';
 import { SuperAdminGuard } from '../../common/guards/super-admin.guard';
 
@@ -32,19 +32,6 @@ export class WebsiteController {
   }
 
   /**
-   * POST /api/website/leads/contact-us
-   * Handle contact form submission
-   */
-  @Post('leads/contact-us')
-  @HttpCode(HttpStatus.CREATED)
-  async captureContactForm(
-    @Body() dto: ContactUsDto,
-  ): Promise<ContactUsResponseDto> {
-    this.logger.log(`Contact form received: ${dto.email}`);
-    return this.websiteService.captureContactForm(dto);
-  }
-
-  /**
    * GET /api/website/leads/confirm/:token
    * Confirm demo attendance via email link
    */
@@ -64,44 +51,7 @@ export class WebsiteController {
   @Get('config')
   @HttpCode(HttpStatus.OK)
   async getWebsiteConfig(): Promise<any> {
-    return {
-      apiUrl: process.env.APP_URL || process.env.API_URL || 'https://api.autowave.playltp.in',
-      websiteUrl: process.env.WEBSITE_URL || 'https://autowave.playltp.in',
-      features: {
-        demoRequest: true,
-        contactForm: true,
-        trialSignup: true,
-      },
-      industries: [
-        { id: 'healthcare', label: 'Healthcare Clinic', color: '#06B6D4' },
-        { id: 'retail', label: 'Retail Shop', color: '#EC4899' },
-        { id: 'coaching', label: 'Coaching Center', color: '#9333EA' },
-        { id: 'real-estate', label: 'Real Estate Agent', color: '#F59E0B' },
-        { id: 'agency', label: 'Agency/Freelancer', color: '#3B82F6' },
-      ],
-      pricing: {
-        trial: {
-          days: 14,
-          price: 0,
-        },
-        plans: [
-          {
-            name: 'Starter',
-            price: 499,
-            currency: 'INR',
-            period: 'month',
-            features: ['Up to 10 workflows', '1000 conversations/month', 'Basic support'],
-          },
-          {
-            name: 'Business',
-            price: 2499,
-            currency: 'INR',
-            period: 'month',
-            features: ['Unlimited workflows', 'Unlimited conversations', 'Priority support', 'Custom integration'],
-          },
-        ],
-      },
-    };
+    return buildWebsitePublicConfig();
   }
 
   /**

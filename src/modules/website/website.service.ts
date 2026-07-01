@@ -2,8 +2,8 @@ import { Injectable, BadRequestException, Logger, NotFoundException, OnModuleIni
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CaptureDemoDto, CaptureDemoResponseDto } from './dto/capture-demo.dto';
-import { ContactUsDto, ContactUsResponseDto } from './dto/contact-us.dto';
 import { UpdateWebsiteLeadDto } from './dto/update-website-lead.dto';
+import { scoreForBusinessType } from './website.config';
 import { randomBytes } from 'crypto';
 import * as nodemailer from 'nodemailer';
 
@@ -145,20 +145,7 @@ Company: ${lead.companyName || 'Not specified'}</p>
   }
 
   private calculateLeadScore(lead: any): number {
-    let score = 0;
-    
-    // Business type scoring (higher value businesses get more points)
-    const highValueBusinesses = ['E-commerce', 'Real Estate', 'Healthcare', 'Agency'];
-    const mediumValueBusinesses = ['Retail', 'Coaching', 'Consulting', 'Services'];
-    
-    if (highValueBusinesses.includes(lead.businessType)) {
-      score += 30;
-    } else if (mediumValueBusinesses.includes(lead.businessType)) {
-      score += 20;
-    } else {
-      score += 10;
-    }
-    
+    let score = scoreForBusinessType(lead.businessType);
     // Monthly message volume scoring
     if (lead.monthlyMessages) {
       const messages = parseInt(lead.monthlyMessages);
@@ -258,28 +245,6 @@ Company: ${lead.companyName || 'Not specified'}</p>
       };
     } catch (error) {
       this.logger.error(`Error capturing demo request: ${error.message}`, error);
-      throw error;
-    }
-  }
-
-  /**
-   * Handle contact form submission
-   * @param dto Contact form data
-   * @returns Response
-   */
-  async captureContactForm(dto: ContactUsDto): Promise<ContactUsResponseDto> {
-    try {
-      const referenceId = randomBytes(6).toString('hex').toUpperCase();
-
-      this.logger.log(`Contact form submitted: ${referenceId} - ${dto.email}`);
-
-      return {
-        success: true,
-        message: 'Thank you for reaching out! Our team will get back to you within 24 hours.',
-        referenceId,
-      };
-    } catch (error) {
-      this.logger.error(`Error capturing contact form: ${error.message}`, error);
       throw error;
     }
   }

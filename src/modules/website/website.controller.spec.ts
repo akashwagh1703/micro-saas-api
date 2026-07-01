@@ -3,13 +3,11 @@ import assert from 'node:assert/strict';
 import { WebsiteController } from './website.controller';
 import { WebsiteService } from './website.service';
 import { CaptureDemoDto } from './dto/capture-demo.dto';
-import { ContactUsDto } from './dto/contact-us.dto';
 
 /** Minimal mock — tracks calls without Jest (project uses node:test). */
 function createWebsiteServiceMock() {
   const calls = {
     captureDemoRequest: [] as CaptureDemoDto[],
-    captureContactForm: [] as ContactUsDto[],
     confirmDemo: [] as string[],
     getWebsiteLeads: [] as Array<[string | undefined, string | undefined, string | undefined]>,
     getWebsiteLeadsStats: [] as number[],
@@ -26,14 +24,6 @@ function createWebsiteServiceMock() {
         leadId: 1,
         message: 'Demo request received!',
         demoLink: 'https://autowave.playltp.in/demo/confirm/?token=abc123',
-      };
-    },
-    captureContactForm: async (dto: ContactUsDto) => {
-      calls.captureContactForm.push(dto);
-      return {
-        success: true,
-        message: 'Thank you for reaching out!',
-        referenceId: 'A1B2C3D4',
       };
     },
     confirmDemo: async (token: string) => {
@@ -87,7 +77,7 @@ describe('WebsiteController', () => {
       const config = await controller.getWebsiteConfig();
       assert.ok(config.apiUrl);
       assert.ok(config.websiteUrl);
-      assert.equal(config.industries.length, 5);
+      assert.equal(config.industries.length, 6);
       assert.ok(config.pricing);
       assert.equal(config.features.demoRequest, true);
     });
@@ -97,7 +87,7 @@ describe('WebsiteController', () => {
       const ids = config.industries.map((i: { id: string }) => i.id);
       assert.deepEqual(
         ids.sort(),
-        ['agency', 'coaching', 'healthcare', 'real-estate', 'retail'].sort(),
+        ['agency', 'coaching', 'healthcare', 'other', 'real-estate', 'retail'].sort(),
       );
     });
   });
@@ -119,23 +109,6 @@ describe('WebsiteController', () => {
       assert.equal(result.leadId, 1);
       assert.equal(serviceMock.calls.captureDemoRequest.length, 1);
       assert.deepEqual(serviceMock.calls.captureDemoRequest[0], dto);
-    });
-  });
-
-  describe('captureContactForm', () => {
-    it('delegates to WebsiteService with the DTO', async () => {
-      const dto: ContactUsDto = {
-        name: 'Jane Smith',
-        email: 'jane@example.com',
-        subject: 'Integration help',
-        message: 'Can I integrate?',
-      };
-
-      const result = await controller.captureContactForm(dto);
-
-      assert.equal(result.success, true);
-      assert.equal(serviceMock.calls.captureContactForm.length, 1);
-      assert.deepEqual(serviceMock.calls.captureContactForm[0], dto);
     });
   });
 

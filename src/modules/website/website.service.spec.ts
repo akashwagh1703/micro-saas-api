@@ -1,4 +1,5 @@
 import { Test, TestingModule } from '@nestjs/testing';
+import { ConfigService } from '@nestjs/config';
 import { BadRequestException } from '@nestjs/common';
 import { WebsiteService } from './website.service';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -19,6 +20,16 @@ describe('WebsiteService', () => {
               create: jest.fn(),
               update: jest.fn(),
             },
+          },
+        },
+        {
+          provide: ConfigService,
+          useValue: {
+            get: jest.fn((key: string) => {
+              if (key === 'WEBSITE_URL') return 'https://autowave.playltp.in';
+              if (key === 'SMTP_HOST') return '';
+              return undefined;
+            }),
           },
         },
       ],
@@ -49,6 +60,9 @@ describe('WebsiteService', () => {
         source: 'website',
         status: 'new',
         confirmationToken: 'abc123',
+        score: 55,
+        qualification: 'warm',
+        notes: null,
         createdAt: new Date(),
         updatedAt: new Date(),
         monthlyMessages: null,
@@ -87,6 +101,9 @@ describe('WebsiteService', () => {
         challenge: null,
         source: 'website',
         status: 'new',
+        score: 0,
+        qualification: 'cold',
+        notes: null,
         demoDate: null,
         demoConfirmed: false,
         confirmationToken: 'old-token',
@@ -113,6 +130,9 @@ describe('WebsiteService', () => {
         challenge: null,
         source: 'website',
         status: 'new',
+        score: 40,
+        qualification: 'warm',
+        notes: null,
         demoDate: null,
         demoConfirmed: false,
         confirmationToken: token,
@@ -139,24 +159,6 @@ describe('WebsiteService', () => {
       jest.spyOn(prismaService.websiteLead, 'findUnique').mockResolvedValue(null);
 
       await expect(service.confirmDemo('invalid-token')).rejects.toThrow(BadRequestException);
-    });
-  });
-
-  describe('captureContactForm', () => {
-    it('should handle contact form submission', async () => {
-      const dto = {
-        name: 'Jane Smith',
-        email: 'jane@example.com',
-        subject: 'Integration question',
-        message: 'Can I integrate with my system?',
-      };
-
-      const result = await service.captureContactForm(dto);
-
-      expect(result.success).toBe(true);
-      expect(result.message).toContain('Thank you');
-      expect(result.referenceId).toBeDefined();
-      expect(result.referenceId).toMatch(/^[A-F0-9]+$/);
     });
   });
 });
