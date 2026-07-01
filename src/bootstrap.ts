@@ -5,7 +5,7 @@ import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
 const corsLogger = new Logger('CORS');
 
 /** Allowed browser origins for portal, marketing site, and explicit CORS_ORIGINS. */
-function resolveCorsOrigins(): string[] {
+export function resolveCorsOrigins(): string[] {
   const origins = new Set<string>();
 
   const add = (raw?: string) => {
@@ -39,27 +39,43 @@ function resolveCorsOrigins(): string[] {
   return [...origins];
 }
 
+function isOriginAllowed(origin: string | undefined, allowed: Set<string>): boolean {
+  if (!origin) {
+    return true;
+  }
+  return allowed.has(origin.replace(/\/$/, ''));
+}
+
 /** Shared app configuration used by both the standalone server and the serverless handler. */
 export function configureApp(app: INestApplication): void {
-  const allowedOrigins = resolveCorsOrigins();
+  const allowedList = resolveCorsOrigins();
+  const allowed = new Set(allowedList);
 
-  if (allowedOrigins.length === 0) {
-    corsLogger.warn('CORS_ORIGINS / PORTAL_URL not set — allowing all origins (dev only)');
+  const corsOptions = {
+    credentials: false,
+    methods: ['GET', 'HEAD', 'PUT', 'PATCH', 'POST', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'Accept'],
+    optionsSuccessStatus: 204 as const,
+  };
+
+  if (allowedList.length === 0) {
+    corsLogger.warn('CORS_ORIGINS / PORTAL_URL / APP_URL not set — allowing all origins (dev only)');
     app.enableCors({
+      ...corsOptions,
       origin: true,
-      credentials: false,
-      methods: ['GET', 'HEAD', 'PUT', 'PATCH', 'POST', 'DELETE', 'OPTIONS'],
-      allowedHeaders: ['Content-Type', 'Authorization', 'Accept'],
-      optionsSuccessStatus: 204,
     });
   } else {
-    corsLogger.log(`Allowed origins: ${allowedOrigins.join(', ')}`);
+    corsLogger.log(`Allowed origins: ${allowedList.join(', ')}`);
     app.enableCors({
-      origin: allowedOrigins,
-      credentials: false,
-      methods: ['GET', 'HEAD', 'PUT', 'PATCH', 'POST', 'DELETE', 'OPTIONS'],
-      allowedHeaders: ['Content-Type', 'Authorization', 'Accept'],
-      optionsSuccessStatus: 204,
+      ...corsOptions,
+      origin: (origin: string | undefined, callback: (err: Error | null, allow?: boolean) => void) => {
+        if (isOriginAllowed(origin, allowed)) {
+          callback(null, true);
+          return;
+        }
+        corsLogger.warn(`Blocked CORS origin: ${origin ?? '(none)'}`);
+        callback(null, false);
+      },
     });
   }
   app.setGlobalPrefix('api', { exclude: ['up', 'up/ready'] });

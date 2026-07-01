@@ -1,135 +1,175 @@
-import { Test, TestingModule } from '@nestjs/testing';
-import { INestApplication, BadRequestException } from '@nestjs/common';
+import { describe, it, beforeEach } from 'node:test';
+import assert from 'node:assert/strict';
 import { WebsiteController } from './website.controller';
 import { WebsiteService } from './website.service';
+import { CaptureDemoDto } from './dto/capture-demo.dto';
+import { ContactUsDto } from './dto/contact-us.dto';
 
-describe('WebsiteController', () => {
-  let app: INestApplication;
-  let controller: WebsiteController;
-  let service: WebsiteService;
+/** Minimal mock — tracks calls without Jest (project uses node:test). */
+function createWebsiteServiceMock() {
+  const calls = {
+    captureDemoRequest: [] as CaptureDemoDto[],
+    captureContactForm: [] as ContactUsDto[],
+    confirmDemo: [] as string[],
+    getWebsiteLeads: [] as Array<[string | undefined, string | undefined]>,
+    getWebsiteLeadsStats: [] as number[],
+    getWebsiteLead: [] as number[],
+    updateWebsiteLead: [] as Array<[number, unknown]>,
+  };
 
-  beforeEach(async () => {
-    const module: TestingModule = await Test.createTestingModule({
-      controllers: [WebsiteController],
-      providers: [
-        {
-          provide: WebsiteService,
-          useValue: {
-            captureDemoRequest: jest.fn(),
-            captureContactForm: jest.fn(),
-            confirmDemo: jest.fn(),
-          },
-        },
-      ],
-    }).compile();
-
-    controller = module.get<WebsiteController>(WebsiteController);
-    service = module.get<WebsiteService>(WebsiteService);
-    app = module.createNestApplication();
-    await app.init();
-  });
-
-  afterEach(async () => {
-    await app.close();
-  });
-
-  it('should be defined', () => {
-    expect(controller).toBeDefined();
-  });
-
-  describe('health', () => {
-    it('should return health status', async () => {
-      const result = await controller.health();
-      expect(result.status).toBe('ok');
-      expect(result.message).toBe('Website API is running');
-    });
-  });
-
-  describe('getWebsiteConfig', () => {
-    it('should return website configuration', async () => {
-      const config = await controller.getWebsiteConfig();
-      expect(config.apiUrl).toBeDefined();
-      expect(config.websiteUrl).toBeDefined();
-      expect(config.industries).toBeDefined();
-      expect(config.industries.length).toBe(5);
-      expect(config.pricing).toBeDefined();
-    });
-
-    it('should include all industries', async () => {
-      const config = await controller.getWebsiteConfig();
-      const industries = config.industries.map((i: any) => i.id);
-      expect(industries).toContain('healthcare');
-      expect(industries).toContain('retail');
-      expect(industries).toContain('coaching');
-      expect(industries).toContain('real-estate');
-      expect(industries).toContain('agency');
-    });
-  });
-
-  describe('captureDemoRequest', () => {
-    it('should call service with correct DTO', async () => {
-      const dto = {
-        name: 'John Doe',
-        email: 'john@example.com',
-        phone: '+919876543210',
-        businessType: 'healthcare',
-      };
-
-      const mockResponse = {
+  const mock = {
+    calls,
+    captureDemoRequest: async (dto: CaptureDemoDto) => {
+      calls.captureDemoRequest.push(dto);
+      return {
         success: true,
         leadId: 1,
         confirmationToken: 'abc123',
         message: 'Demo request received!',
         demoLink: 'https://autowave.playltp.in/demo/confirm/abc123',
       };
+    },
+    captureContactForm: async (dto: ContactUsDto) => {
+      calls.captureContactForm.push(dto);
+      return {
+        success: true,
+        message: 'Thank you for reaching out!',
+        referenceId: 'A1B2C3D4',
+      };
+    },
+    confirmDemo: async (token: string) => {
+      calls.confirmDemo.push(token);
+      return { success: true, message: 'Demo confirmed!' };
+    },
+    getWebsiteLeads: async (status?: string, page?: string) => {
+      calls.getWebsiteLeads.push([status, page]);
+      return { data: [], total: 0 };
+    },
+    getWebsiteLeadsStats: async () => {
+      calls.getWebsiteLeadsStats.push(1);
+      return { total: 0, new: 0 };
+    },
+    getWebsiteLead: async (id: number) => {
+      calls.getWebsiteLead.push(id);
+      return { id, email: 'lead@example.com' };
+    },
+    updateWebsiteLead: async (id: number, dto: unknown) => {
+      calls.updateWebsiteLead.push([id, dto]);
+      return { id, status: 'contacted' };
+    },
+  };
 
-      jest.spyOn(service, 'captureDemoRequest').mockResolvedValue(mockResponse);
+  return mock as unknown as WebsiteService & { calls: typeof calls };
+}
+
+describe('WebsiteController', () => {
+  let controller: WebsiteController;
+  let serviceMock: ReturnType<typeof createWebsiteServiceMock>;
+
+  beforeEach(() => {
+    serviceMock = createWebsiteServiceMock();
+    controller = new WebsiteController(serviceMock);
+  });
+
+  it('should be defined', () => {
+    assert.ok(controller);
+  });
+
+  describe('health', () => {
+    it('returns health status', async () => {
+      const result = await controller.health();
+      assert.equal(result.status, 'ok');
+      assert.equal(result.message, 'Website API is running');
+    });
+  });
+
+  describe('getWebsiteConfig', () => {
+    it('returns website configuration with industries and pricing', async () => {
+      const config = await controller.getWebsiteConfig();
+      assert.ok(config.apiUrl);
+      assert.ok(config.websiteUrl);
+      assert.equal(config.industries.length, 5);
+      assert.ok(config.pricing);
+      assert.equal(config.features.demoRequest, true);
+    });
+
+    it('includes expected industry ids', async () => {
+      const config = await controller.getWebsiteConfig();
+      const ids = config.industries.map((i: { id: string }) => i.id);
+      assert.deepEqual(
+        ids.sort(),
+        ['agency', 'coaching', 'healthcare', 'real-estate', 'retail'].sort(),
+      );
+    });
+  });
+
+  describe('captureDemoRequest', () => {
+    it('delegates to WebsiteService with the DTO', async () => {
+      const dto: CaptureDemoDto = {
+        name: 'John Doe',
+        email: 'john@example.com',
+        phone: '+919876543210',
+        businessType: 'healthcare',
+        companyName: 'Health Clinic',
+        source: 'website',
+      };
 
       const result = await controller.captureDemoRequest(dto);
 
-      expect(result).toEqual(mockResponse);
-      expect(service.captureDemoRequest).toHaveBeenCalledWith(dto);
+      assert.equal(result.success, true);
+      assert.equal(result.leadId, 1);
+      assert.equal(serviceMock.calls.captureDemoRequest.length, 1);
+      assert.deepEqual(serviceMock.calls.captureDemoRequest[0], dto);
     });
   });
 
   describe('captureContactForm', () => {
-    it('should call service with correct DTO', async () => {
-      const dto = {
+    it('delegates to WebsiteService with the DTO', async () => {
+      const dto: ContactUsDto = {
         name: 'Jane Smith',
         email: 'jane@example.com',
         subject: 'Integration help',
         message: 'Can I integrate?',
       };
 
-      const mockResponse = {
-        success: true,
-        message: 'Thank you for reaching out!',
-        referenceId: 'A1B2C3D4',
-      };
-
-      jest.spyOn(service, 'captureContactForm').mockResolvedValue(mockResponse);
-
       const result = await controller.captureContactForm(dto);
 
-      expect(result).toEqual(mockResponse);
-      expect(service.captureContactForm).toHaveBeenCalledWith(dto);
+      assert.equal(result.success, true);
+      assert.equal(serviceMock.calls.captureContactForm.length, 1);
+      assert.deepEqual(serviceMock.calls.captureContactForm[0], dto);
     });
   });
 
   describe('confirmDemo', () => {
-    it('should confirm demo with valid token', async () => {
+    it('delegates to WebsiteService with the token', async () => {
       const token = 'valid-token-123';
-      const mockResponse = {
-        success: true,
-        message: 'Demo confirmed!',
-      };
-
-      jest.spyOn(service, 'confirmDemo').mockResolvedValue(mockResponse);
-
       const result = await controller.confirmDemo(token);
 
-      expect(result).toEqual(mockResponse);
-      expect(service.confirmDemo).toHaveBeenCalledWith(token);
+      assert.equal(result.success, true);
+      assert.deepEqual(serviceMock.calls.confirmDemo, [token]);
+    });
+  });
+
+  describe('admin lead endpoints', () => {
+    it('getWebsiteLeads forwards status and page query params', async () => {
+      await controller.getWebsiteLeads(42, 'new', '2');
+      assert.deepEqual(serviceMock.calls.getWebsiteLeads, [['new', '2']]);
+    });
+
+    it('getWebsiteLeadsStats delegates to service', async () => {
+      await controller.getWebsiteLeadsStats(42);
+      assert.equal(serviceMock.calls.getWebsiteLeadsStats.length, 1);
+    });
+
+    it('getWebsiteLead parses id and delegates', async () => {
+      await controller.getWebsiteLead(42, '7');
+      assert.deepEqual(serviceMock.calls.getWebsiteLead, [7]);
+    });
+
+    it('updateWebsiteLead parses id and forwards dto', async () => {
+      const dto = { status: 'contacted' };
+      await controller.updateWebsiteLead(42, '9', dto as never);
+      assert.deepEqual(serviceMock.calls.updateWebsiteLead, [[9, dto]]);
     });
   });
 });

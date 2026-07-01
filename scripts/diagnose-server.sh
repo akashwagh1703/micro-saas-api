@@ -14,7 +14,7 @@ PORT="$(grep '^PORT=' .env 2>/dev/null | cut -d= -f2- | tr -d '"' | tr -d "'" ||
 PORT="${PORT:-3000}"
 
 echo "==> .env (non-secret keys)"
-grep -E '^(NODE_ENV|PORT|QUEUE_DRIVER|APP_URL|CORS_ORIGINS|PORTAL_URL|APP_ENCRYPTION_KEY)=' .env 2>/dev/null | sed 's/APP_ENCRYPTION_KEY=.*/APP_ENCRYPTION_KEY=***set***/' || echo "MISSING .env"
+grep -E '^(NODE_ENV|PORT|QUEUE_DRIVER|APP_URL|CORS_ORIGINS|PORTAL_URL|WEBSITE_URL|APP_ENCRYPTION_KEY)=' .env 2>/dev/null | sed 's/APP_ENCRYPTION_KEY=.*/APP_ENCRYPTION_KEY=***set***/' || echo "MISSING .env"
 echo ""
 
 echo "==> dist/main.js"
@@ -42,11 +42,26 @@ curl -sS -m 5 "http://127.0.0.1:${PORT}/up" && echo "" || echo "FAIL /up"
 curl -sS -m 5 "http://127.0.0.1:${PORT}/up/ready" && echo "" || echo "FAIL /up/ready"
 echo ""
 
-echo "==> Local CORS preflight"
+echo "==> Local CORS preflight (portal)"
 curl -sSI -m 5 -X OPTIONS "http://127.0.0.1:${PORT}/api/auth/login" \
   -H "Origin: https://app.autowave.playltp.in" \
   -H "Access-Control-Request-Method: POST" \
   -H "Access-Control-Request-Headers: content-type" | grep -iE 'HTTP/|access-control' || echo "FAIL preflight"
+echo ""
+
+echo "==> Local CORS preflight (marketing website)"
+curl -sSI -m 5 -X OPTIONS "http://127.0.0.1:${PORT}/api/website/leads/capture-demo" \
+  -H "Origin: https://autowave.playltp.in" \
+  -H "Access-Control-Request-Method: POST" \
+  -H "Access-Control-Request-Headers: content-type" | grep -iE 'HTTP/|access-control' || echo "FAIL preflight — add autowave.playltp.in to CORS_ORIGINS and restart"
+echo ""
+
+echo "==> Website demo route"
+curl -sS -m 5 -o /dev/null -w "POST /api/website/leads/capture-demo HTTP:%{http_code}\n" \
+  -X POST "http://127.0.0.1:${PORT}/api/website/leads/capture-demo" \
+  -H "Content-Type: application/json" \
+  -d '{"name":"Test","email":"test@example.com","phone":"+919876543210","businessType":"General Business","companyName":"Test","source":"website"}' \
+  || echo "FAIL capture-demo (404 = old code not deployed)"
 echo ""
 
 echo "==> PM2 logs (last 40 lines)"
