@@ -28,24 +28,25 @@ export class PerformanceMiddleware implements NestMiddleware {
 
 /**
  * Response Cache Headers Middleware
- * Sets appropriate cache headers for different endpoints
+ * Only cache truly public endpoints. Portal/authenticated data must never be browser-cached.
  */
 @Injectable()
 export class CacheHeadersMiddleware implements NestMiddleware {
   use(req: Request, res: Response, next: NextFunction) {
-    // Cache config endpoint for 1 hour
-    if (req.path === '/api/website/config') {
+    const path = req.path;
+
+    if (path === '/api/website/config' || path.endsWith('/website/config')) {
       res.setHeader('Cache-Control', 'public, max-age=3600');
-    }
-    // Don't cache POST requests or form submissions
-    else if (req.method === 'POST') {
+    } else if (req.method === 'GET' && path.includes('/platform/verticals')) {
+      res.setHeader('Cache-Control', 'public, max-age=300');
+    } else if (req.method !== 'GET' && req.method !== 'HEAD') {
       res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
       res.setHeader('Pragma', 'no-cache');
       res.setHeader('Expires', '0');
-    }
-    // Default: cache for 5 minutes
-    else {
-      res.setHeader('Cache-Control', 'public, max-age=300');
+    } else {
+      res.setHeader('Cache-Control', 'private, no-cache, no-store, must-revalidate');
+      res.setHeader('Pragma', 'no-cache');
+      res.setHeader('Expires', '0');
     }
 
     next();
