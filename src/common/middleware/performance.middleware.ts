@@ -12,28 +12,15 @@ export class PerformanceMiddleware implements NestMiddleware {
   use(req: Request, res: Response, next: NextFunction) {
     const startTime = performance.now();
     const startMemory = process.memoryUsage().heapUsed;
+    const logger = this.logger;
 
-    // Intercept res.send to measure response time
-    const originalSend = res.send;
-
-    res.send = function (data: any) {
-      const endTime = performance.now();
-      const endMemory = process.memoryUsage().heapUsed;
-      const duration = endTime - startTime;
-      const memoryDelta = (endMemory - startMemory) / 1024 / 1024; // Convert to MB
-
-      // Log performance metrics
-      this.logger.log(
+    res.on('finish', () => {
+      const duration = performance.now() - startTime;
+      const memoryDelta = (process.memoryUsage().heapUsed - startMemory) / 1024 / 1024;
+      logger.log(
         `${req.method} ${req.path} - ${res.statusCode} - ${duration.toFixed(2)}ms - Memory: ${memoryDelta.toFixed(2)}MB`,
       );
-
-      // Add performance headers
-      res.setHeader('X-Response-Time', `${duration.toFixed(2)}ms`);
-      res.setHeader('X-Memory-Delta', `${memoryDelta.toFixed(2)}MB`);
-
-      // Return original response
-      return originalSend.call(this, data);
-    };
+    });
 
     next();
   }

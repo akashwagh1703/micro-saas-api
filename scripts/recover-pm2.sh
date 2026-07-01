@@ -8,6 +8,9 @@ cd "$APP_DIR"
 
 echo "==> Recover API in $APP_DIR"
 
+# Remove build cache file that blocks git pull and breaks incremental builds
+rm -f tsconfig.build.tsbuildinfo
+
 if [[ ! -f .env ]]; then
   echo "ERROR: .env missing in $APP_DIR"
   exit 1
