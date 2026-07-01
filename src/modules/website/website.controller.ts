@@ -10,7 +10,7 @@ import { CurrentUser } from '../../common/decorators/current-user.decorator';
  * Website Controller
  * Public endpoints for marketing website lead capture
  */
-@Controller('api/website')
+@Controller('website')
 export class WebsiteController {
   private readonly logger = new Logger(WebsiteController.name);
 
