@@ -2,7 +2,17 @@ import { Prisma } from '@prisma/client';
 import { SettingsService } from '../modules/settings/settings.service';
 import { STARTER_TEMPLATE_SLUGS } from '../modules/workflows/workflow-templates';
 
-/** Workflows visible in the portal: current business only, not archived, not starter demos. */
+/**
+ * Legacy template-gallery clones (no business profile). Business-setup workflows
+ * reuse the same template slugs but always have businessCategory set — keep those visible.
+ */
+export function legacyStarterCloneFilter(): Prisma.WorkflowWhereInput {
+  return {
+    AND: [{ sourceTemplate: { in: STARTER_TEMPLATE_SLUGS } }, { businessCategory: null }],
+  };
+}
+
+/** Workflows visible in the portal: current business only, not archived, not legacy demos. */
 export async function buildVisibleWorkflowsWhere(
   userId: number,
   settings: SettingsService,
@@ -12,9 +22,7 @@ export async function buildVisibleWorkflowsWhere(
   const where: Prisma.WorkflowWhereInput = {
     userId,
     isArchived: false,
-    NOT: {
-      sourceTemplate: { in: STARTER_TEMPLATE_SLUGS },
-    },
+    NOT: legacyStarterCloneFilter(),
   };
 
   if (businessCategory) {
@@ -53,4 +61,9 @@ export function parseUseCases(settings: Record<string, string | null | undefined
     return [settings.use_case];
   }
   return [];
+}
+
+/** True when a workflow is actively sending auto-replies. */
+export function isWorkflowLive(status: string, isActive: boolean): boolean {
+  return status === 'published' && isActive;
 }
