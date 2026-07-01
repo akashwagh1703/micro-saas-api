@@ -32,15 +32,44 @@ fi
 
 echo "==> Install, build, migrate"
 npm ci
+rm -rf dist
 npm run build
 npx prisma migrate deploy
 
-echo "==> Restart API"
-pm2 restart autowave-api || pm2 start dist/main.js --name autowave-api
-sleep 3
+if [[ ! -f dist/main.js ]]; then
+  if [[ -f dist/src/main.js ]]; then
+    echo "WARN: dist/main.js missing — using legacy dist/src/main.js (push latest tsconfig.build.json)"
+  else
+    echo "ERROR: build failed — no dist/main.js or dist/src/main.js. Run: npm run build 2>&1 | tail -50"
+    exit 1
+  fi
+fi
+
+if [[ -f dist/app.module.js ]] && ! grep -q 'website' dist/app.module.js 2>/dev/null; then
+  if [[ -f dist/src/app.module.js ]] && grep -q 'website' dist/src/app.module.js 2>/dev/null; then
+    echo "WARN: WebsiteModule in dist/src/ only — legacy build layout"
+  else
+    echo "ERROR: WebsiteModule not found in build output"
+    exit 1
+  fi
+fi
+
+echo "==> Build OK"
 
 PORT="$(grep '^PORT=' .env 2>/dev/null | cut -d= -f2- | tr -d '"' | tr -d "'" || true)"
 PORT="${PORT:-3000}"
+
+echo "==> Restart API via scripts/api-entry.cjs"
+pm2 delete autowave-api 2>/dev/null || true
+pm2 start ecosystem.config.cjs --update-env
+pm2 save
+sleep 5
+
+if ! curl -fsS "http://127.0.0.1:${PORT:-3000}/up" >/dev/null 2>&1; then
+  echo "ERROR: API not responding — last PM2 logs:"
+  pm2 logs autowave-api --lines 40 --nostream || true
+  exit 1
+fi
 
 echo "==> Verify CORS (marketing site)"
 curl -sSI -X OPTIONS "http://127.0.0.1:${PORT}/api/website/leads/capture-demo" \

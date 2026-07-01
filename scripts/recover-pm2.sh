@@ -29,15 +29,20 @@ npm ci
 echo "==> prisma migrate deploy"
 npx prisma migrate deploy
 
-echo "==> npm run build"
+echo "==> npm run build (clean dist first)"
+rm -rf dist
 npm run build
 
-if [[ ! -f dist/main.js ]]; then
-  echo "ERROR: build failed — dist/main.js still missing. Run: npm run build 2>&1 | tail -50"
+if [[ ! -f dist/main.js ]] && [[ ! -f dist/src/main.js ]]; then
+  echo "ERROR: build failed — no dist/main.js or dist/src/main.js. Run: npm run build 2>&1 | tail -50"
   exit 1
 fi
 
-echo "==> dist/main.js OK ($(wc -c < dist/main.js) bytes)"
+if [[ -f dist/main.js ]]; then
+  echo "==> dist/main.js OK ($(wc -c < dist/main.js) bytes)"
+elif [[ -f dist/src/main.js ]]; then
+  echo "==> dist/src/main.js OK ($(wc -c < dist/src/main.js) bytes) — push tsconfig.build.json fix for dist/main.js"
+fi
 
 pm2 start ecosystem.config.cjs --update-env
 pm2 save
