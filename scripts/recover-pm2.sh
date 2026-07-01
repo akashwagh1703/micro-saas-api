@@ -29,19 +29,30 @@ npm ci
 echo "==> prisma migrate deploy"
 npx prisma migrate deploy
 
-echo "==> npm run build (clean dist first)"
+echo "==> npm run build (clean dist + tsbuildinfo cache first)"
 rm -rf dist
+rm -f tsconfig.build.tsbuildinfo
 npm run build
 
-if [[ ! -f dist/main.js ]] && [[ ! -f dist/src/main.js ]]; then
-  echo "ERROR: build failed — no dist/main.js or dist/src/main.js. Run: npm run build 2>&1 | tail -50"
+if [[ ! -f dist/main.js ]]; then
+  if [[ -f dist/src/main.js ]]; then
+    echo "WARN: dist/main.js missing — using legacy dist/src/main.js (push latest tsconfig.build.json)"
+  else
+    echo "ERROR: build failed — no dist/main.js or dist/src/main.js. Run: npm run build 2>&1 | tail -50"
+    exit 1
+  fi
+fi
+
+if [[ ! -f dist/config/env.validation.js ]]; then
+  echo "ERROR: incomplete build — dist/config/env.validation.js missing."
+  echo "       Fix: rm -rf dist tsconfig.build.tsbuildinfo && npm run build"
   exit 1
 fi
 
-if [[ -f dist/main.js ]]; then
-  echo "==> dist/main.js OK ($(wc -c < dist/main.js) bytes)"
-elif [[ -f dist/src/main.js ]]; then
-  echo "==> dist/src/main.js OK ($(wc -c < dist/src/main.js) bytes) — push tsconfig.build.json fix for dist/main.js"
+JS_COUNT="$(find dist -name '*.js' 2>/dev/null | wc -l | tr -d ' ')"
+if [[ "${JS_COUNT:-0}" -lt 50 ]]; then
+  echo "ERROR: dist/ looks incomplete (only ${JS_COUNT} .js files). Expected 200+."
+  exit 1
 fi
 
 pm2 start ecosystem.config.cjs --update-env

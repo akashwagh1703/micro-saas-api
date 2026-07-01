@@ -33,6 +33,7 @@ fi
 echo "==> Install, build, migrate"
 npm ci
 rm -rf dist
+rm -f tsconfig.build.tsbuildinfo
 npm run build
 npx prisma migrate deploy
 
@@ -43,6 +44,12 @@ if [[ ! -f dist/main.js ]]; then
     echo "ERROR: build failed — no dist/main.js or dist/src/main.js. Run: npm run build 2>&1 | tail -50"
     exit 1
   fi
+fi
+
+if [[ ! -f dist/config/env.validation.js ]]; then
+  echo "ERROR: incomplete build — dist/config/env.validation.js missing."
+  echo "       Fix: rm -rf dist tsconfig.build.tsbuildinfo && npm run build"
+  exit 1
 fi
 
 if [[ -f dist/app.module.js ]] && ! grep -q 'website' dist/app.module.js 2>/dev/null; then
