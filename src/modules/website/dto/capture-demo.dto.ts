@@ -50,7 +50,6 @@ export class CaptureDemoDto {
 export class CaptureDemoResponseDto {
   success: boolean;
   leadId: number;
-  confirmationToken: string;
   message: string;
   demoLink?: string;
 }

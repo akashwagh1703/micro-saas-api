@@ -217,7 +217,7 @@ Company: ${lead.companyName || 'Not specified'}</p>
       const websiteUrl =
         this.config.get<string>('WEBSITE_URL')?.replace(/\/$/, '') ??
         'https://autowave.playltp.in';
-      const demoLink = `${websiteUrl}/demo/confirm/${confirmationToken}`;
+      const demoLink = `${websiteUrl}/demo/confirm/?token=${confirmationToken}`;
 
       const score = this.calculateLeadScore(dto);
       const qualification = score >= 70 ? 'hot' : score >= 40 ? 'warm' : 'cold';
@@ -253,7 +253,6 @@ Company: ${lead.companyName || 'Not specified'}</p>
       return {
         success: true,
         leadId: lead.id,
-        confirmationToken: lead.confirmationToken || '',
         message: 'Demo request received! Check your email for confirmation.',
         demoLink,
       };
@@ -328,17 +327,95 @@ Company: ${lead.companyName || 'Not specified'}</p>
   }
 
   /**
-   * Get all website leads with optional filtering
+   * Build Prisma filter for website lead list/export queries.
    */
-  async getWebsiteLeads(status?: string, page?: string) {
-    const currentPage = page ? parseInt(page) : 1;
-    const perPage = 20;
-    const skip = (currentPage - 1) * perPage;
-
+  private buildWebsiteLeadWhere(status?: string, search?: string) {
     const where: any = {};
     if (status) {
       where.status = status;
     }
+    const term = search?.trim();
+    if (term) {
+      where.OR = [
+        { name: { contains: term, mode: 'insensitive' } },
+        { email: { contains: term, mode: 'insensitive' } },
+        { phone: { contains: term } },
+        { companyName: { contains: term, mode: 'insensitive' } },
+        { businessType: { contains: term, mode: 'insensitive' } },
+      ];
+    }
+    return where;
+  }
+
+  buildExportCsv(leads: Array<{
+    id: number;
+    name: string;
+    email: string;
+    phone: string;
+    businessType: string;
+    companyName: string | null;
+    status: string;
+    score: number | null;
+    qualification: string | null;
+    source: string;
+    notes: string | null;
+    demoConfirmed: boolean;
+    createdAt: Date;
+  }>): string {
+    const headers = [
+      'id',
+      'name',
+      'email',
+      'phone',
+      'business_type',
+      'company_name',
+      'status',
+      'score',
+      'qualification',
+      'source',
+      'demo_confirmed',
+      'notes',
+      'created_at',
+    ];
+    const rows = leads.map((lead) =>
+      [
+        lead.id,
+        lead.name,
+        lead.email,
+        lead.phone,
+        lead.businessType,
+        lead.companyName ?? '',
+        lead.status,
+        lead.score ?? 0,
+        lead.qualification ?? '',
+        lead.source,
+        lead.demoConfirmed ? 'yes' : 'no',
+        lead.notes ?? '',
+        lead.createdAt?.toISOString() ?? '',
+      ]
+        .map((cell) => `"${String(cell).replace(/"/g, '""')}"`)
+        .join(','),
+    );
+    return [headers.join(','), ...rows].join('\n');
+  }
+
+  async exportWebsiteLeads(status?: string, search?: string): Promise<string> {
+    const items = await this.prisma.websiteLead.findMany({
+      where: this.buildWebsiteLeadWhere(status, search),
+      orderBy: { createdAt: 'desc' },
+      take: 5000,
+    });
+    return this.buildExportCsv(items);
+  }
+
+  /**
+   * Get all website leads with optional filtering
+   */
+  async getWebsiteLeads(status?: string, page?: string, search?: string) {
+    const currentPage = page ? parseInt(page, 10) : 1;
+    const perPage = 20;
+    const skip = (currentPage - 1) * perPage;
+    const where = this.buildWebsiteLeadWhere(status, search);
 
     const [leads, total] = await this.prisma.$transaction([
       this.prisma.websiteLead.findMany({

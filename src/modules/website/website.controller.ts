@@ -1,4 +1,5 @@
-import { Controller, Post, Get, Body, Param, HttpCode, HttpStatus, Logger, BadRequestException, Patch, Query, UseGuards, Headers } from '@nestjs/common';
+import { Controller, Post, Get, Body, Param, HttpCode, HttpStatus, Logger, Patch, Query, UseGuards, Headers, Res } from '@nestjs/common';
+import { Response } from 'express';
 import { WebsiteService } from './website.service';
 import { CaptureDemoDto, CaptureDemoResponseDto } from './dto/capture-demo.dto';
 import { ContactUsDto, ContactUsResponseDto } from './dto/contact-us.dto';
@@ -124,8 +125,9 @@ export class WebsiteController {
   async getWebsiteLeads(
     @Query('status') status?: string,
     @Query('page') page?: string,
+    @Query('search') search?: string,
   ) {
-    return this.websiteService.getWebsiteLeads(status, page);
+    return this.websiteService.getWebsiteLeads(status, page, search);
   }
 
   /**
@@ -136,6 +138,23 @@ export class WebsiteController {
   @UseGuards(TokenAuthGuard, SuperAdminGuard)
   async getWebsiteLeadsStats() {
     return this.websiteService.getWebsiteLeadsStats();
+  }
+
+  /**
+   * GET /api/website/leads/export
+   * Export website leads as CSV (super-admin only)
+   */
+  @Get('leads/export')
+  @UseGuards(TokenAuthGuard, SuperAdminGuard)
+  async exportWebsiteLeads(
+    @Query('status') status: string | undefined,
+    @Query('search') search: string | undefined,
+    @Res() res: Response,
+  ) {
+    const csv = await this.websiteService.exportWebsiteLeads(status, search);
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', 'attachment; filename="website-leads.csv"');
+    res.send(csv);
   }
 
   /**

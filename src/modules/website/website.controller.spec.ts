@@ -11,7 +11,7 @@ function createWebsiteServiceMock() {
     captureDemoRequest: [] as CaptureDemoDto[],
     captureContactForm: [] as ContactUsDto[],
     confirmDemo: [] as string[],
-    getWebsiteLeads: [] as Array<[string | undefined, string | undefined]>,
+    getWebsiteLeads: [] as Array<[string | undefined, string | undefined, string | undefined]>,
     getWebsiteLeadsStats: [] as number[],
     getWebsiteLead: [] as number[],
     updateWebsiteLead: [] as Array<[number, unknown]>,
@@ -24,9 +24,8 @@ function createWebsiteServiceMock() {
       return {
         success: true,
         leadId: 1,
-        confirmationToken: 'abc123',
         message: 'Demo request received!',
-        demoLink: 'https://autowave.playltp.in/demo/confirm/abc123',
+        demoLink: 'https://autowave.playltp.in/demo/confirm/?token=abc123',
       };
     },
     captureContactForm: async (dto: ContactUsDto) => {
@@ -41,9 +40,9 @@ function createWebsiteServiceMock() {
       calls.confirmDemo.push(token);
       return { success: true, message: 'Demo confirmed!' };
     },
-    getWebsiteLeads: async (status?: string, page?: string) => {
-      calls.getWebsiteLeads.push([status, page]);
-      return { data: [], total: 0 };
+    getWebsiteLeads: async (status?: string, page?: string, search?: string) => {
+      calls.getWebsiteLeads.push([status, page, search]);
+      return { data: [], meta: { total: 0, page: 1, perPage: 20, totalPages: 0 } };
     },
     getWebsiteLeadsStats: async () => {
       calls.getWebsiteLeadsStats.push(1);
@@ -151,9 +150,9 @@ describe('WebsiteController', () => {
   });
 
   describe('admin lead endpoints', () => {
-    it('getWebsiteLeads forwards status and page query params', async () => {
-      await controller.getWebsiteLeads('new', '2');
-      assert.deepEqual(serviceMock.calls.getWebsiteLeads, [['new', '2']]);
+    it('getWebsiteLeads forwards status, page, and search query params', async () => {
+      await controller.getWebsiteLeads('new', '2', 'acme');
+      assert.deepEqual(serviceMock.calls.getWebsiteLeads, [['new', '2', 'acme']]);
     });
 
     it('getWebsiteLeadsStats delegates to service', async () => {
