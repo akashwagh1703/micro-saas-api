@@ -1,4 +1,4 @@
-import { Controller, Post, Get, Body, Param, HttpCode, HttpStatus, Logger, BadRequestException, Patch, Query, UseGuards } from '@nestjs/common';
+import { Controller, Post, Get, Body, Param, HttpCode, HttpStatus, Logger, BadRequestException, Patch, Query, UseGuards, Headers } from '@nestjs/common';
 import { WebsiteService } from './website.service';
 import { CaptureDemoDto, CaptureDemoResponseDto } from './dto/capture-demo.dto';
 import { ContactUsDto, ContactUsResponseDto } from './dto/contact-us.dto';
@@ -24,9 +24,10 @@ export class WebsiteController {
   @HttpCode(HttpStatus.CREATED)
   async captureDemoRequest(
     @Body() dto: CaptureDemoDto,
+    @Headers('user-agent') userAgent?: string,
   ): Promise<CaptureDemoResponseDto> {
     this.logger.log(`Demo request received: ${dto.email}`);
-    return this.websiteService.captureDemoRequest(dto);
+    return this.websiteService.captureDemoRequest(dto, userAgent);
   }
 
   /**
@@ -63,7 +64,7 @@ export class WebsiteController {
   @HttpCode(HttpStatus.OK)
   async getWebsiteConfig(): Promise<any> {
     return {
-      apiUrl: process.env.API_URL || 'https://api.autowave.playltp.in',
+      apiUrl: process.env.APP_URL || process.env.API_URL || 'https://api.autowave.playltp.in',
       websiteUrl: process.env.WEBSITE_URL || 'https://autowave.playltp.in',
       features: {
         demoRequest: true,

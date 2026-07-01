@@ -1,4 +1,4 @@
-import { Injectable, BadRequestException, Logger, NotFoundException } from '@nestjs/common';
+import { Injectable, BadRequestException, Logger, NotFoundException, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CaptureDemoDto, CaptureDemoResponseDto } from './dto/capture-demo.dto';
@@ -8,7 +8,7 @@ import { randomBytes } from 'crypto';
 import * as nodemailer from 'nodemailer';
 
 @Injectable()
-export class WebsiteService {
+export class WebsiteService implements OnModuleInit {
   private readonly logger = new Logger(WebsiteService.name);
   private transporter: nodemailer.Transporter | null = null;
 
@@ -16,6 +16,14 @@ export class WebsiteService {
     private prisma: PrismaService,
     private config: ConfigService,
   ) {}
+
+  onModuleInit(): void {
+    if (!this.config.get<string>('SMTP_HOST')?.trim()) {
+      this.logger.warn(
+        'SMTP_HOST is not configured — demo confirmation and sales notification emails will be skipped',
+      );
+    }
+  }
 
   private getTransporter(): nodemailer.Transporter | null {
     if (!this.transporter) {
@@ -92,7 +100,7 @@ Please follow up with this lead promptly.
     await this.sendEmail(salesEmail, subject, text);
   }
 
-  private async sendConfirmationEmail(lead: any): Promise<void> {
+  private async sendConfirmationEmail(lead: any, demoLink: string): Promise<void> {
     const subject = 'Demo Request Confirmed - AutoWave';
     const text = `
 Hi ${lead.name},
@@ -103,9 +111,12 @@ Request Details:
 - Business Type: ${lead.businessType}
 - Company: ${lead.companyName || 'Not specified'}
 
+Confirm your demo slot:
+${demoLink}
+
 What happens next:
-1. Our team will review your request
-2. We'll reach out within 24 hours to schedule your demo
+1. Click the link above to confirm your interest
+2. Our team will reach out within 24 hours to schedule your demo
 3. You'll receive a calendar invitation with meeting details
 
 If you have any questions in the meantime, feel free to reply to this email.
@@ -114,7 +125,23 @@ Best regards,
 The AutoWave Team
 `;
 
-    await this.sendEmail(lead.email, subject, text);
+    const html = `
+<p>Hi ${lead.name},</p>
+<p>Thank you for your interest in AutoWave! We've received your demo request and our team will contact you shortly.</p>
+<p><strong>Request Details:</strong><br>
+Business Type: ${lead.businessType}<br>
+Company: ${lead.companyName || 'Not specified'}</p>
+<p><a href="${demoLink}">Confirm your demo slot</a></p>
+<p>What happens next:</p>
+<ol>
+<li>Click the link above to confirm your interest</li>
+<li>Our team will reach out within 24 hours to schedule your demo</li>
+<li>You'll receive a calendar invitation with meeting details</li>
+</ol>
+<p>If you have any questions, reply to this email.</p>
+<p>Best regards,<br>The AutoWave Team</p>`;
+
+    await this.sendEmail(lead.email, subject, text, html);
   }
 
   private calculateLeadScore(lead: any): number {
@@ -155,7 +182,10 @@ The AutoWave Team
     }
     
     // Phone number validation (Indian numbers starting with 6-9 are valid)
-    if (lead.phone && /^[6-9]\d{9}$/.test(lead.phone.replace(/\D/g, ''))) {
+    const phoneDigits = String(lead.phone ?? '').replace(/\D/g, '');
+    const mobile =
+      phoneDigits.length >= 10 ? phoneDigits.slice(-10) : phoneDigits;
+    if (/^[6-9]\d{9}$/.test(mobile)) {
       score += 10;
     }
     
@@ -168,23 +198,30 @@ The AutoWave Team
    * @param dto Demo request data
    * @returns Response with lead ID and confirmation token
    */
-  async captureDemoRequest(dto: CaptureDemoDto): Promise<CaptureDemoResponseDto> {
+  async captureDemoRequest(
+    dto: CaptureDemoDto,
+    userAgent?: string,
+  ): Promise<CaptureDemoResponseDto> {
     try {
-      // Check if email already exists
       const existingLead = await this.prisma.websiteLead.findUnique({
         where: { email: dto.email },
       });
 
       if (existingLead) {
         throw new BadRequestException(
-          'This email has already been used for a demo request. Please check your email for the confirmation link.'
+          'This email has already been used for a demo request. Please check your email for the confirmation link.',
         );
       }
 
-      // Generate confirmation token
       const confirmationToken = randomBytes(32).toString('hex');
+      const websiteUrl =
+        this.config.get<string>('WEBSITE_URL')?.replace(/\/$/, '') ??
+        'https://autowave.playltp.in';
+      const demoLink = `${websiteUrl}/demo/confirm/${confirmationToken}`;
 
-      // Create website lead
+      const score = this.calculateLeadScore(dto);
+      const qualification = score >= 70 ? 'hot' : score >= 40 ? 'warm' : 'cold';
+
       const lead = await this.prisma.websiteLead.create({
         data: {
           name: dto.name,
@@ -192,40 +229,25 @@ The AutoWave Team
           phone: dto.phone,
           businessType: dto.businessType,
           companyName: dto.companyName,
-          monthlyMessages: dto.monthlyMessages ? parseInt(dto.monthlyMessages) : null,
+          monthlyMessages: dto.monthlyMessages
+            ? parseInt(dto.monthlyMessages, 10)
+            : null,
           challenge: dto.challenge,
           source: dto.source || 'website',
           status: 'new',
           confirmationToken,
+          score,
+          qualification,
           metadata: {
-            userAgent: process.env.NODE_ENV,
+            userAgent: userAgent?.trim() || 'unknown',
             timestamp: new Date().toISOString(),
           },
         },
       });
 
-      this.logger.log(`Demo request created: ${lead.id} - ${lead.email}`);
+      this.logger.log(`Demo request created: ${lead.id} - ${lead.email} (score: ${score})`);
 
-      // Calculate and save lead score
-      const score = this.calculateLeadScore(lead);
-      const qualification = score >= 70 ? 'hot' : score >= 40 ? 'warm' : 'cold';
-      
-      // Note: This requires database migration to add score and qualification fields
-      // Run: npx prisma migrate dev --name add_lead_scoring
-      try {
-        await this.prisma.websiteLead.update({
-          where: { id: lead.id },
-          data: { 
-            score,
-            qualification,
-          } as any,
-        });
-      } catch (error) {
-        this.logger.warn(`Could not update lead score (migration may be needed): ${error.message}`);
-      }
-
-      // Send email notifications
-      await this.sendConfirmationEmail(lead);
+      await this.sendConfirmationEmail(lead, demoLink);
       await this.sendLeadNotificationEmail(lead);
 
       return {
@@ -233,7 +255,7 @@ The AutoWave Team
         leadId: lead.id,
         confirmationToken: lead.confirmationToken || '',
         message: 'Demo request received! Check your email for confirmation.',
-        demoLink: `${process.env.WEBSITE_URL}/demo/confirm/${confirmationToken}`,
+        demoLink,
       };
     } catch (error) {
       this.logger.error(`Error capturing demo request: ${error.message}`, error);
