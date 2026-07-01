@@ -63,8 +63,8 @@ export class WebsiteController {
   @HttpCode(HttpStatus.OK)
   async getWebsiteConfig(): Promise<any> {
     return {
-      apiUrl: process.env.API_URL || 'https://api.autowave.in',
-      websiteUrl: process.env.WEBSITE_URL || 'https://autowave.in',
+      apiUrl: process.env.API_URL || 'https://api.autowave.playltp.in',
+      websiteUrl: process.env.WEBSITE_URL || 'https://autowave.playltp.in',
       features: {
         demoRequest: true,
         contactForm: true,

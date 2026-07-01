@@ -80,7 +80,7 @@ describe('WebsiteController', () => {
         leadId: 1,
         confirmationToken: 'abc123',
         message: 'Demo request received!',
-        demoLink: 'https://autowave.in/demo/confirm/abc123',
+        demoLink: 'https://autowave.playltp.in/demo/confirm/abc123',
       };
 
       jest.spyOn(service, 'captureDemoRequest').mockResolvedValue(mockResponse);
