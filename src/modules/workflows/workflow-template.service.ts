@@ -96,6 +96,16 @@ export class WorkflowTemplateService {
 
     if (isBusinessChange) {
       await this.assertNoPublishedWorkflows(userId, currentCategory, 'business_category');
+      // Unpublish any other live workflows (legacy rows without businessCategory).
+      await this.prisma.workflow.updateMany({
+        where: {
+          userId,
+          isArchived: false,
+          status: 'published',
+          isActive: true,
+        },
+        data: { status: 'draft', isActive: false },
+      });
       await this.prisma.workflow.updateMany({
         where: { userId, businessCategory: currentCategory, isArchived: false },
         data: { isArchived: true, status: 'draft', isActive: false },

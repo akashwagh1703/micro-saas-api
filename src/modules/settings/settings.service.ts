@@ -1,6 +1,8 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CryptoService } from '../../common/crypto/crypto.service';
+import { currentBusinessPublishedWhere, parseUseCases } from '../../common/workflow-scope';
+import { businessLabel, useCaseLabel } from '../workflows/business-workflow';
 
 const ENCRYPTED_KEYS = [
   'openrouter_api_key',
@@ -59,5 +61,37 @@ export class SettingsService {
       result[key] = await this.get(userId, key);
     }
     return result;
+  }
+
+  /** Portal business profile — shared by GET /settings/business-profile and setup-business. */
+  async getBusinessProfile(userId: number) {
+    const settings = await this.getMany(userId, [
+      'business_category',
+      'use_cases',
+      'use_case',
+      'business_description',
+    ]);
+    const use_cases = parseUseCases(settings);
+    const business_category = settings.business_category ?? null;
+
+    let published_count = 0;
+    if (business_category) {
+      published_count = await this.prisma.workflow.count({
+        where: currentBusinessPublishedWhere(userId, business_category),
+      });
+    }
+
+    return {
+      business_category,
+      use_cases,
+      business_description: settings.business_description ?? null,
+      business_label: business_category ? businessLabel(business_category) : null,
+      use_case_labels: use_cases.map((uc) => useCaseLabel(uc)),
+      configured:
+        !!business_category &&
+        (business_category === 'career_ai' || use_cases.length > 0),
+      published_count,
+      can_change_business: published_count === 0,
+    };
   }
 }

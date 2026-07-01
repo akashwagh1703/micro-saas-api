@@ -144,9 +144,12 @@ export class WorkflowsController {
       `Business configured: ${dto.business_category} (${dto.use_cases.length} use case(s))`,
     );
 
+    const business_profile = await this.settings.getBusinessProfile(userId);
+
     return {
       business_category: dto.business_category,
       use_cases: dto.use_cases,
+      business_profile,
       workflows: workflows.map(serializeWorkflow),
     };
   }

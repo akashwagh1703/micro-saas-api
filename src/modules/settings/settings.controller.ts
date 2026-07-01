@@ -12,11 +12,6 @@ import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CryptoService } from '../../common/crypto/crypto.service';
 import { serializeUser } from '../../common/serializers';
-import {
-  currentBusinessPublishedWhere,
-  parseUseCases,
-} from '../../common/workflow-scope';
-import { businessLabel, useCaseLabel } from '../workflows/business-workflow';
 import { SettingsService } from './settings.service';
 import {
   ChangePasswordDto,
@@ -81,34 +76,7 @@ export class SettingsController {
 
   @Get('business-profile')
   async getBusinessProfile(@CurrentUser('id') userId: number) {
-    const settings = await this.settings.getMany(userId, [
-      'business_category',
-      'use_cases',
-      'use_case',
-      'business_description',
-    ]);
-    const use_cases = parseUseCases(settings);
-    const business_category = settings.business_category ?? null;
-
-    let published_count = 0;
-    if (business_category) {
-      published_count = await this.prisma.workflow.count({
-        where: currentBusinessPublishedWhere(userId, business_category),
-      });
-    }
-
-    return {
-      business_category,
-      use_cases,
-      business_description: settings.business_description ?? null,
-      business_label: business_category ? businessLabel(business_category) : null,
-      use_case_labels: use_cases.map((uc) => useCaseLabel(uc)),
-      configured:
-        !!business_category &&
-        (business_category === 'career_ai' || use_cases.length > 0),
-      published_count,
-      can_change_business: published_count === 0,
-    };
+    return this.settings.getBusinessProfile(userId);
   }
 
   @Get('integrations')
