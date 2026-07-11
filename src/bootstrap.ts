@@ -39,11 +39,34 @@ export function resolveCorsOrigins(): string[] {
   return [...origins];
 }
 
+function isLocalDevOrigin(origin: string): boolean {
+  try {
+    const url = new URL(origin);
+    return (
+      url.protocol === 'http:' &&
+      (url.hostname === 'localhost' || url.hostname === '127.0.0.1')
+    );
+  } catch {
+    return false;
+  }
+}
+
+function shouldAllowLocalhostOrigins(): boolean {
+  if (process.env.NODE_ENV !== 'production') {
+    return true;
+  }
+  return process.env.CORS_ALLOW_LOCALHOST === 'true';
+}
+
 function isOriginAllowed(origin: string | undefined, allowed: Set<string>): boolean {
   if (!origin) {
     return true;
   }
-  return allowed.has(origin.replace(/\/$/, ''));
+  const normalized = origin.replace(/\/$/, '');
+  if (allowed.has(normalized)) {
+    return true;
+  }
+  return shouldAllowLocalhostOrigins() && isLocalDevOrigin(normalized);
 }
 
 /** Shared app configuration used by both the standalone server and the serverless handler. */
