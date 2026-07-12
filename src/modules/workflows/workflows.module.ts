@@ -4,6 +4,7 @@ import { SettingsModule } from '../settings/settings.module';
 import { BillingModule } from '../billing/billing.module';
 import { LeadsModule } from '../leads/leads.module';
 import { AvailabilityModule } from '../availability/availability.module';
+import { InboxModule } from '../inbox/inbox.module';
 import { WorkflowsController } from './workflows.controller';
 import { WorkflowWebhookController } from './workflow-webhook.controller';
 import { WorkflowValidator } from './workflow-validator.service';
@@ -29,9 +30,10 @@ import { InteractiveMessageNodeExecutor } from './nodes/interactive-message-node
 import { UserStateService } from './user-state.service';
 import { InteractiveMessageHandlerService } from './interactive-message-handler.service';
 import { WorkflowValidationInteractiveService } from './workflow-validation-interactive.service';
+import { WorkflowInteractiveSendService } from './workflow-interactive-send.service';
 
 @Module({
-  imports: [IntegrationsModule, SettingsModule, BillingModule, LeadsModule, AvailabilityModule],
+  imports: [IntegrationsModule, SettingsModule, BillingModule, LeadsModule, AvailabilityModule, InboxModule],
   controllers: [
     WorkflowsController,
     WorkflowWebhookController,
@@ -60,6 +62,7 @@ import { WorkflowValidationInteractiveService } from './workflow-validation-inte
     UserStateService,
     InteractiveMessageHandlerService,
     WorkflowValidationInteractiveService,
+    WorkflowInteractiveSendService,
   ],
   exports: [
     WorkflowValidator,
@@ -70,6 +73,7 @@ import { WorkflowValidationInteractiveService } from './workflow-validation-inte
     UserStateService,
     InteractiveMessageHandlerService,
     WorkflowValidationInteractiveService,
+    WorkflowInteractiveSendService,
   ],
 })
 export class WorkflowsModule {}

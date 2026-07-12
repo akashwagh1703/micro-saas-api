@@ -419,7 +419,8 @@ export class WorkflowTemplateService {
     return (
       types.includes('collect_input') ||
       !types.includes('pick_options') ||
-      !types.includes('list_slots')
+      !types.includes('list_slots') ||
+      !types.includes('ai')
     );
   }
 

@@ -29,13 +29,13 @@ export class InteractiveMessageProcessor {
 
       if (!account) {
         this.logger.warn(`No WhatsApp account found for user ${payload.userId}`);
-        return;
+        throw new Error('No WhatsApp account configured');
       }
 
       const accessToken = this.crypto.decrypt(account.accessToken);
       if (!accessToken || !account.phoneNumberId) {
         this.logger.warn(`Missing WhatsApp credentials for user ${payload.userId}`);
-        return;
+        throw new Error('WhatsApp credentials missing');
       }
 
       const template = await this.prisma.interactiveMessageTemplate.findUnique({
@@ -48,7 +48,7 @@ export class InteractiveMessageProcessor {
 
       if (!template) {
         this.logger.warn(`Interactive template ${payload.templateId} not found`);
-        return;
+        throw new Error(`Interactive template ${payload.templateId} not found`);
       }
 
       let result;
@@ -97,7 +97,7 @@ export class InteractiveMessageProcessor {
 
         default:
           this.logger.warn(`Unknown message type: ${template.messageType.name}`);
-          return;
+          throw new Error(`Unknown interactive message type: ${template.messageType.name}`);
       }
 
       if (result.success) {

@@ -4,6 +4,7 @@ import { AvailabilityService } from '../../availability/availability.service';
 import { JOB_DISPATCHER, JobDispatcher } from '../../queue/job-dispatcher';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { UserStateService } from '../user-state.service';
+import { WorkflowInteractiveSendService } from '../workflow-interactive-send.service';
 import { NodeExecutor, NodeExecutionResult } from './node-executor.interface';
 import {
   createDynamicInteractiveTemplate,
@@ -24,6 +25,7 @@ export class ListSlotsNodeExecutor implements NodeExecutor {
     private readonly prisma: PrismaService,
     private readonly availability: AvailabilityService,
     private readonly userStateService: UserStateService,
+    private readonly interactiveSend: WorkflowInteractiveSendService,
     @Inject(JOB_DISPATCHER) private readonly jobs: JobDispatcher,
   ) {}
 
@@ -131,14 +133,16 @@ export class ListSlotsNodeExecutor implements NodeExecutor {
         useButtons: slots.length <= 3,
       });
 
-      await this.jobs.enqueueSendInteractiveMessage({
-        userId: execution.userId,
-        phoneNumber: contactPhone,
-        conversationId: execution.conversationId || 0,
+      const delivered = await this.interactiveSend.deliverTemplate({
+        execution,
+        contactPhone,
         templateId: template.id,
-        workflowId: execution.workflowId,
         nodeId: node.id,
       });
+
+      if (!delivered.success) {
+        return { success: false, error: delivered.error ?? 'Failed to send slot picker' };
+      }
 
       await this.userStateService.saveUserState(
         execution.userId,

@@ -30,7 +30,6 @@ export const DEFAULT_APPOINTMENT_SERVICES: Record<SchedulingVertical, Appointmen
     { text: 'Haircut', description: 'Classic cut & finish', value: 'Haircut' },
     { text: 'Beard trim', description: 'Shape & tidy', value: 'Beard trim' },
     { text: 'Styling', description: 'Blow-dry & style', value: 'Styling' },
-    { text: 'Hair coloring', description: 'Color & highlights', value: 'Hair coloring' },
   ],
   clinic: [
     { text: 'Consultation', description: 'General visit', value: 'Consultation' },

@@ -324,7 +324,12 @@ export class InboxService {
     conversationId: number,
     bodyText: string,
     buttons: WhatsAppReplyButton[],
-    options?: { source?: string },
+    options?: {
+      source?: string;
+      workflowId?: number;
+      nodeId?: string;
+      templateId?: number;
+    },
   ): Promise<SendResult> {
     const conversation = await this.prisma.conversation.findFirst({
       where: { userId, id: conversationId },
@@ -361,7 +366,75 @@ export class InboxService {
     return this.persistOutgoingMessage(conversation, label, {
       success: result.success,
       waMessageId: result.data?.messages?.[0]?.id ?? null,
-      metadata: this.mergeOutgoingMetadata(result, options?.source),
+      metadata: {
+        ...this.mergeOutgoingMetadata(result, options?.source),
+        from_bot: true,
+        workflow_id: options?.workflowId ?? null,
+        node_id: options?.nodeId ?? null,
+        template_id: options?.templateId ?? null,
+      },
+      error: result.message ?? null,
+    });
+  }
+
+  async sendInteractiveList(
+    userId: number,
+    conversationId: number,
+    headerText: string,
+    bodyText: string,
+    rows: Array<{ id: string; title: string; description?: string }>,
+    options?: {
+      source?: string;
+      workflowId?: number;
+      nodeId?: string;
+      templateId?: number;
+      listButton?: string;
+    },
+  ): Promise<SendResult> {
+    const conversation = await this.prisma.conversation.findFirst({
+      where: { userId, id: conversationId },
+      include: { contact: true },
+    });
+    if (!conversation) {
+      throw new NotFoundException();
+    }
+
+    if (conversation.channel !== CHANNEL_WHATSAPP) {
+      return this.sendOutgoingMessage(userId, conversationId, bodyText, options);
+    }
+
+    const creds = await this.whatsapp.credentials(userId);
+    if (!creds?.account.isConnected) {
+      return { success: false, message: null, error: 'WhatsApp not connected' };
+    }
+
+    const label = [
+      headerText.trim(),
+      bodyText.trim(),
+      ...rows.map((r) => `• ${r.title}${r.description ? ` — ${r.description}` : ''}`),
+    ]
+      .filter(Boolean)
+      .join('\n');
+
+    const result = await this.whatsAppApi.sendListMessage(
+      creds.accessToken ?? '',
+      creds.phoneNumberId ?? '',
+      conversation.contact.phone ?? '',
+      headerText,
+      bodyText,
+      rows,
+    );
+
+    return this.persistOutgoingMessage(conversation, label, {
+      success: result.success,
+      waMessageId: result.data?.messages?.[0]?.id ?? null,
+      metadata: {
+        ...this.mergeOutgoingMetadata(result, options?.source),
+        from_bot: true,
+        workflow_id: options?.workflowId ?? null,
+        node_id: options?.nodeId ?? null,
+        template_id: options?.templateId ?? null,
+      },
       error: result.message ?? null,
     });
   }
