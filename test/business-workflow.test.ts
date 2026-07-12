@@ -32,6 +32,7 @@ describe('business workflow templates', () => {
     assert.ok(nodeTypes.includes('book_slot'));
     const bookSlot = (template?.definition.nodes ?? []).find((n) => n.type === 'book_slot');
     assert.equal((bookSlot?.data as Record<string, unknown>)?.status, 'pending');
+    assert.ok(typeof (bookSlot?.data as Record<string, unknown>)?.confirmed_message === 'string');
     assert.ok(!nodeTypes.includes('collect_input'), 'Appointment flow is tap-to-pick only');
   });
 

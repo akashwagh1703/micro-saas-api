@@ -194,7 +194,16 @@ function listSlotsNode(
   };
 }
 
-function bookSlotNode(id: string, y: number, label: string, pendingMessage: string) {
+const DEFAULT_CONFIRMED_BOOK =
+  '✅ *Appointment confirmed!*\n\n*{{business_name}}* has confirmed your booking.\n\nWith: *{{resource_name}}*\nWhen: *{{booking_time}}*\nService: *{{service_type}}*\n\nSee you then!';
+
+function bookSlotNode(
+  id: string,
+  y: number,
+  label: string,
+  pendingMessage: string,
+  confirmedMessage: string = DEFAULT_CONFIRMED_BOOK,
+) {
   return {
     id,
     type: 'book_slot',
@@ -204,6 +213,9 @@ function bookSlotNode(id: string, y: number, label: string, pendingMessage: stri
       summary: 'Creates a pending booking request for owner approval',
       pending_header: '{{business_name}}',
       pending_message: pendingMessage,
+      confirmed_header: '{{business_name}}',
+      confirmed_message: confirmedMessage,
+      confirmed_button: 'Thank you!',
       status: 'pending',
       conflict_message:
         'Sorry, that slot was just taken. Tap *View options* again and pick another time.',
@@ -287,6 +299,7 @@ interface LiveAppointmentMeta {
   slotsHeader: string;
   slotsBody: string;
   pendingBook: string;
+  confirmedBook: string;
   leadNotes: string;
 }
 
@@ -311,6 +324,7 @@ const LIVE_APPOINTMENT_BY_VERTICAL: Record<SchedulingVertical, LiveAppointmentMe
       'Available times with *{{resource_name}}* on *{{preferred_date}}*.\n\nTap *View options* to see all slots:',
     pendingBook:
       'Thanks {{contact_name}}! We received your request for *{{service_type}}* with *{{resource_name}}* on *{{booking_time}}*.\n\nWe will check availability and confirm your booking shortly.',
+    confirmedBook: DEFAULT_CONFIRMED_BOOK,
     leadNotes: 'Salon appointment booking request from WhatsApp',
   },
   clinic: {
@@ -332,6 +346,7 @@ const LIVE_APPOINTMENT_BY_VERTICAL: Record<SchedulingVertical, LiveAppointmentMe
       'Open times with *{{resource_name}}* on *{{preferred_date}}*.\n\nTap *View options* for all slots:',
     pendingBook:
       'Thank you! Your request for *{{service_type}}* with *{{resource_name}}* on *{{booking_time}}* is received.\n\nWe will verify and confirm your appointment shortly.',
+    confirmedBook: DEFAULT_CONFIRMED_BOOK,
     leadNotes: 'Clinic appointment booking request from WhatsApp',
   },
   coaching: {
@@ -353,6 +368,7 @@ const LIVE_APPOINTMENT_BY_VERTICAL: Record<SchedulingVertical, LiveAppointmentMe
       'Slots with *{{resource_name}}* on *{{preferred_date}}*.\n\nTap *View options* for all times:',
     pendingBook:
       'Thanks! Your *{{service_type}}* session with *{{resource_name}}* on *{{booking_time}}* is submitted.\n\nWe will check availability and confirm your booking.',
+    confirmedBook: DEFAULT_CONFIRMED_BOOK,
     leadNotes: 'Coaching demo/session booking request from WhatsApp',
   },
   real_estate: {
@@ -374,6 +390,7 @@ const LIVE_APPOINTMENT_BY_VERTICAL: Record<SchedulingVertical, LiveAppointmentMe
       'Times with *{{resource_name}}* on *{{preferred_date}}*.\n\nTap *View options* for all slots:',
     pendingBook:
       'Thanks! Your *{{service_type}}* visit with *{{resource_name}}* on *{{booking_time}}* is submitted.\n\nWe will confirm your appointment shortly.',
+    confirmedBook: DEFAULT_CONFIRMED_BOOK,
     leadNotes: 'Real estate site visit booking request from WhatsApp',
   },
   ca_accountant: {
@@ -395,6 +412,7 @@ const LIVE_APPOINTMENT_BY_VERTICAL: Record<SchedulingVertical, LiveAppointmentMe
       'Open slots with *{{resource_name}}* on *{{preferred_date}}*.\n\nTap *View options* for all times:',
     pendingBook:
       'Thank you! Your *{{service_type}}* with *{{resource_name}}* on *{{booking_time}}* is received.\n\nWe will verify and confirm your appointment.',
+    confirmedBook: DEFAULT_CONFIRMED_BOOK,
     leadNotes: 'CA consultation booking request from WhatsApp',
   },
   travel: {
@@ -416,6 +434,7 @@ const LIVE_APPOINTMENT_BY_VERTICAL: Record<SchedulingVertical, LiveAppointmentMe
       'Call times with *{{resource_name}}* on *{{preferred_date}}*.\n\nTap *View options* for all slots:',
     pendingBook:
       'Thanks! Your *{{service_type}}* call with *{{resource_name}}* on *{{booking_time}}* is submitted.\n\nWe will check availability and confirm your booking.',
+    confirmedBook: DEFAULT_CONFIRMED_BOOK,
     leadNotes: 'Travel consultation booking request from WhatsApp',
   },
 };
@@ -455,7 +474,7 @@ function buildLiveAppointmentFlow(vertical: SchedulingVertical): WorkflowTemplat
         meta.resourceHeader,
       ),
       listSlotsNode('list-slots', 520, 'Pick Slot', meta.slotsBody, meta.slotsHeader),
-      bookSlotNode('book-slot', 640, 'Request Booking', meta.pendingBook),
+      bookSlotNode('book-slot', 640, 'Request Booking', meta.pendingBook, meta.confirmedBook),
       ...leadSaveOnly(760, {
         collectedFields: ['service_type', 'preferred_date', 'resource_name', 'booking_time'],
         notes: meta.leadNotes,

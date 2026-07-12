@@ -6,7 +6,15 @@ import { SettingsService } from '../settings/settings.service';
 import { WhatsAppApiService } from '../integrations/whatsapp-api.service';
 import { InboxService } from '../inbox/inbox.service';
 import { extractDigits } from '../../common/phone.util';
-import { formatSlotLabel } from '../workflows/nodes/booking-node.helpers';
+import { localDateStrInTimeZone } from './timezone.util';
+import {
+  buildBookingMessageContext,
+  DEFAULT_BOOKING_CONFIRMED_BUTTON,
+  DEFAULT_BOOKING_CONFIRMED_MESSAGE,
+  formatSlotLabel,
+  resolveBookSlotNodeData,
+  substituteContext,
+} from '../workflows/nodes/booking-node.helpers';
 
 interface OwnerBookingAlert {
   id: number;
@@ -18,6 +26,8 @@ interface OwnerBookingAlert {
 
 interface SerializedBooking extends OwnerBookingAlert {
   resource_id: number;
+  contact_id?: number | null;
+  workflow_execution_id?: number | null;
   ends_at: string;
   status: string;
 }
@@ -92,26 +102,49 @@ export class BookingNotificationService {
     const timeZone = (await this.settings.get(userId, 'timezone')) || 'Asia/Kolkata';
     const businessName = await this.resolveBusinessName(userId);
     const when = formatSlotLabel(booking.starts_at, timeZone);
-    const resource = booking.resource_name ?? 'your appointment';
-    const service = booking.service_label ? `\nService: *${booking.service_label}*` : '';
+    const preferredDate = localDateStrInTimeZone(new Date(booking.starts_at), timeZone);
 
-    const body = [
-      `✅ *Appointment confirmed!*`,
-      '',
-      `*${businessName}* has confirmed your booking.`,
-      '',
-      `With: *${resource}*`,
-      `When: *${when}*${service}`,
-      '',
-      'See you then!',
-    ].join('\n');
+    let contactName: string | null = null;
+    if (booking.contact_id) {
+      const contact = await this.prisma.contact.findUnique({ where: { id: booking.contact_id } });
+      contactName = contact?.name ?? null;
+    }
+
+    const bookSlotData = await resolveBookSlotNodeData(
+      this.prisma,
+      userId,
+      booking.workflow_execution_id,
+    );
+
+    const messageContext = buildBookingMessageContext({
+      businessName,
+      contactName,
+      resourceName: booking.resource_name,
+      serviceType: booking.service_label,
+      bookingTime: when,
+      preferredDate,
+      bookingId: booking.id,
+    });
+
+    const confirmedTemplate = String(
+      bookSlotData.confirmed_message ?? DEFAULT_BOOKING_CONFIRMED_MESSAGE,
+    );
+    const confirmedHeader = String(bookSlotData.confirmed_header ?? '').trim();
+    const confirmedButton = String(
+      bookSlotData.confirmed_button ?? DEFAULT_BOOKING_CONFIRMED_BUTTON,
+    ).slice(0, 20);
+
+    const confirmedBody = substituteContext(confirmedTemplate, messageContext);
+    const body = confirmedHeader
+      ? `${substituteContext(confirmedHeader, messageContext)}\n\n${confirmedBody}`
+      : confirmedBody;
 
     try {
       const result = await this.inbox.sendInteractiveButtons(
         userId,
         booking.conversation_id,
         body,
-        [{ id: `booking_confirmed_${booking.id}`, title: 'Thank you!' }],
+        [{ id: `booking_confirmed_${booking.id}`, title: confirmedButton || 'Thank you!' }],
         { source: 'booking_confirmed' },
       );
       if (!result.success) {

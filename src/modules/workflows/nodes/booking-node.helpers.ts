@@ -210,6 +210,57 @@ function formatShortDayLabel(date: Date): string {
   }
 }
 
+export const DEFAULT_BOOKING_CONFIRMED_MESSAGE =
+  '✅ *Appointment confirmed!*\n\n*{{business_name}}* has confirmed your booking.\n\nWith: *{{resource_name}}*\nWhen: *{{booking_time}}*\nService: *{{service_type}}*\n\nSee you then!';
+
+export const DEFAULT_BOOKING_CONFIRMED_BUTTON = 'Thank you!';
+
+/** Loads book_slot node data from the workflow that created this booking. */
+export async function resolveBookSlotNodeData(
+  prisma: PrismaService,
+  userId: number,
+  workflowExecutionId: number | null | undefined,
+): Promise<Record<string, unknown>> {
+  if (!workflowExecutionId) return {};
+
+  const execution = await prisma.workflowExecution.findFirst({
+    where: { id: workflowExecutionId, userId },
+    select: { workflowId: true },
+  });
+  if (!execution) return {};
+
+  const workflow = await prisma.workflow.findFirst({
+    where: { id: execution.workflowId, userId },
+    select: { definition: true },
+  });
+
+  const nodes =
+    (workflow?.definition as { nodes?: { type?: string; data?: Record<string, unknown> }[] })
+      ?.nodes ?? [];
+  const bookSlot = nodes.find((n) => n.type === 'book_slot');
+  return (bookSlot?.data ?? {}) as Record<string, unknown>;
+}
+
+export function buildBookingMessageContext(params: {
+  businessName: string;
+  contactName?: string | null;
+  resourceName?: string | null;
+  serviceType?: string | null;
+  bookingTime: string;
+  preferredDate?: string;
+  bookingId?: number;
+}): Record<string, string> {
+  return {
+    business_name: params.businessName,
+    contact_name: params.contactName?.trim() || 'there',
+    resource_name: params.resourceName ?? '',
+    service_type: params.serviceType ?? '',
+    booking_time: params.bookingTime,
+    preferred_date: params.preferredDate ?? '',
+    booking_id: String(params.bookingId ?? ''),
+  };
+}
+
 /** Today / Tomorrow quick-pick buttons with normalized YYYY-MM-DD values. */
 export function buildQuickDatePickItems(nextNodeId: string, field = 'preferred_date'): DynamicInteractiveItem[] {
   const today = startOfLocalDay(new Date());

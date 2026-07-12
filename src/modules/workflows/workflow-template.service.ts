@@ -422,6 +422,7 @@ export class WorkflowTemplateService {
     const bookData = (bookSlot?.data ?? {}) as Record<string, unknown>;
     const hasPendingFlow =
       bookData.status === 'pending' || typeof bookData.pending_message === 'string';
+    const hasConfirmedMessage = typeof bookData.confirmed_message === 'string';
 
     return (
       types.includes('collect_input') ||
@@ -434,7 +435,8 @@ export class WorkflowTemplateService {
       nodeIds.includes('ai-service-ack') ||
       nodeIds.includes('ai-thanks') ||
       nodeIds.includes('send-thanks') ||
-      !hasPendingFlow
+      !hasPendingFlow ||
+      !hasConfirmedMessage
     );
   }
 

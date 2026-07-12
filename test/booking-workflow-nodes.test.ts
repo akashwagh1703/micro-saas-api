@@ -1,9 +1,11 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  buildBookingMessageContext,
   formatSlotLabel,
   normalizePreferredDate,
   substituteContext,
+  DEFAULT_BOOKING_CONFIRMED_MESSAGE,
 } from '../src/modules/workflows/nodes/booking-node.helpers';
 
 describe('booking workflow helpers', () => {
@@ -35,5 +37,21 @@ describe('booking workflow helpers', () => {
     const label = formatSlotLabel('2026-07-14T08:30:00.000Z', 'Asia/Kolkata');
     assert.match(label, /Jul/);
     assert.match(label, /14/);
+  });
+
+  it('builds booking confirmation message from workflow template variables', () => {
+    const ctx = buildBookingMessageContext({
+      businessName: 'City Care Clinic',
+      contactName: 'Amit',
+      resourceName: 'Dr. Mehta',
+      serviceType: 'General visit',
+      bookingTime: 'Mon, Jul 14, 2:00 pm',
+      bookingId: 42,
+    });
+    const message = substituteContext(DEFAULT_BOOKING_CONFIRMED_MESSAGE, ctx);
+    assert.match(message, /City Care Clinic/);
+    assert.match(message, /Dr\. Mehta/);
+    assert.match(message, /General visit/);
+    assert.match(message, /Appointment confirmed/);
   });
 });
