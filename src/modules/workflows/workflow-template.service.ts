@@ -415,12 +415,17 @@ export class WorkflowTemplateService {
 
   /** True when workflow still uses free-text booking instead of tap-to-pick buttons. */
   appointmentWorkflowNeedsUpgrade(definition: WorkflowDefinition | null | undefined): boolean {
-    const types = (definition?.nodes ?? []).map((n) => n.type);
+    const nodes = definition?.nodes ?? [];
+    const types = nodes.map((n) => n.type);
+    const nodeIds = nodes.map((n) => n.id);
     return (
       types.includes('collect_input') ||
       !types.includes('pick_options') ||
       !types.includes('list_slots') ||
-      !types.includes('ai')
+      !types.includes('ai') ||
+      nodeIds.includes('ai-welcome') ||
+      nodeIds.includes('send-welcome') ||
+      nodeIds.includes('ai-service-ack')
     );
   }
 

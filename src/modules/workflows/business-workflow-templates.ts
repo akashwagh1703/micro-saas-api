@@ -15,7 +15,7 @@ const DEFAULT_AI = {
   temperature: 0.6,
   max_tokens: 250,
   fallback_message:
-    'Hello! Thanks for reaching out to {{business_name}}. Tap the buttons in our next message to book your appointment — it only takes a moment.',
+    'Your appointment is confirmed! Thank you for booking with {{business_name}}.',
 };
 
 
@@ -262,16 +262,6 @@ function leadSaveOnly(
 }
 
 const LIVE_APPOINTMENT_AI = {
-  welcome: (role: string) =>
-    `You are the WhatsApp booking assistant for *{{business_name}}* (${role}). ` +
-    `{{contact_name}} just messaged: "{{message}}". ` +
-    `Reply in 2-3 warm, professional lines. Greet them by name if available. ` +
-    `Explain they can book in a few taps — service, day, and time buttons are coming next. ` +
-    `Do NOT ask them to type answers. Use *bold* for the business name.`,
-  serviceAck:
-    `You are booking for *{{business_name}}*. {{contact_name}} chose *{{service_type}}*. ` +
-    `Reply in 1-2 friendly lines confirming their choice. ` +
-    `Tell them to tap *Today* or *Tomorrow* on the next message to pick a date. No typed replies.`,
   thankYou:
     `Write a cheerful booking confirmation for *{{business_name}}*. ` +
     `Customer: {{contact_name}}. Service: *{{service_type}}*. ` +
@@ -303,7 +293,8 @@ const LIVE_APPOINTMENT_BY_VERTICAL: Record<SchedulingVertical, LiveAppointmentMe
     role: 'salon/beauty',
     emoji: '✂️',
     serviceHeader: 'Book at {{business_name}} ✂️',
-    serviceBody: 'Hi {{contact_name}}! Choose the service you would like:',
+    serviceBody:
+      'Hi {{contact_name}}! Welcome to *{{business_name}}*.\n\nTap a service below to book your appointment:',
     resourceHeader: 'Pick your stylist',
     resourceBody: 'Who would you like on {{preferred_date}}?',
     slotsBody: 'Available times with {{resource_name}} on {{preferred_date}}:',
@@ -318,7 +309,8 @@ const LIVE_APPOINTMENT_BY_VERTICAL: Record<SchedulingVertical, LiveAppointmentMe
     role: 'clinic/doctor',
     emoji: '🏥',
     serviceHeader: '{{business_name}} 🏥',
-    serviceBody: 'Hi {{contact_name}}! Select the type of visit you need:',
+    serviceBody:
+      'Hi {{contact_name}}! Welcome to *{{business_name}}*.\n\nTap the visit type you need:',
     resourceHeader: 'Choose your doctor',
     resourceBody: 'Select a doctor for {{preferred_date}}:',
     slotsBody: 'Pick a time with {{resource_name}} on {{preferred_date}}:',
@@ -333,7 +325,8 @@ const LIVE_APPOINTMENT_BY_VERTICAL: Record<SchedulingVertical, LiveAppointmentMe
     role: 'coaching institute',
     emoji: '🎓',
     serviceHeader: '{{business_name}} 🎓',
-    serviceBody: 'Hi {{contact_name}}! What would you like to book?',
+    serviceBody:
+      'Hi {{contact_name}}! Welcome to *{{business_name}}*.\n\nWhat would you like to book?',
     resourceHeader: 'Choose your counsellor',
     resourceBody: 'Who will you meet on {{preferred_date}}?',
     slotsBody: 'Choose a slot with {{resource_name}} on {{preferred_date}}:',
@@ -348,7 +341,8 @@ const LIVE_APPOINTMENT_BY_VERTICAL: Record<SchedulingVertical, LiveAppointmentMe
     role: 'real estate agency',
     emoji: '🏠',
     serviceHeader: '{{business_name}} 🏠',
-    serviceBody: 'Hi {{contact_name}}! Select the visit type you need:',
+    serviceBody:
+      'Hi {{contact_name}}! Welcome to *{{business_name}}*.\n\nTap the visit type you need:',
     resourceHeader: 'Choose your agent',
     resourceBody: 'Which agent should meet you on {{preferred_date}}?',
     slotsBody: 'Available times with {{resource_name}} on {{preferred_date}}:',
@@ -363,7 +357,8 @@ const LIVE_APPOINTMENT_BY_VERTICAL: Record<SchedulingVertical, LiveAppointmentMe
     role: 'CA/accountant firm',
     emoji: '📊',
     serviceHeader: '{{business_name}} 📊',
-    serviceBody: 'Hi {{contact_name}}! Choose the consultation you need:',
+    serviceBody:
+      'Hi {{contact_name}}! Welcome to *{{business_name}}*.\n\nTap the consultation you need:',
     resourceHeader: 'Choose your consultant',
     resourceBody: 'Select a consultant for {{preferred_date}}:',
     slotsBody: 'Pick a slot with {{resource_name}} on {{preferred_date}}:',
@@ -378,7 +373,8 @@ const LIVE_APPOINTMENT_BY_VERTICAL: Record<SchedulingVertical, LiveAppointmentMe
     role: 'travel agency',
     emoji: '✈️',
     serviceHeader: '{{business_name}} ✈️',
-    serviceBody: 'Hi {{contact_name}}! How can we help with your trip?',
+    serviceBody:
+      'Hi {{contact_name}}! Welcome to *{{business_name}}*.\n\nHow can we help with your trip?',
     resourceHeader: 'Choose your travel expert',
     resourceBody: 'Select an expert for {{preferred_date}}:',
     slotsBody: 'Available call times with {{resource_name}} on {{preferred_date}}:',
@@ -400,55 +396,39 @@ function buildLiveAppointmentFlow(vertical: SchedulingVertical): WorkflowTemplat
     trigger_type: 'message_received',
     definition: linearFlow([
       triggerNode(),
-      aiNode(
-        'ai-welcome',
-        160,
-        'AI Welcome',
-        'Personalized AI greeting',
-        LIVE_APPOINTMENT_AI.welcome(meta.role),
-      ),
-      sendNode('send-welcome', 240, 'Send Welcome', '{{ai_response}}'),
       pickAppointmentServicesNode(
         'pick-service',
-        320,
+        160,
         'Pick Service',
         meta.serviceHeader,
         meta.serviceBody,
-        'Tap a button to continue',
+        'Tap a button to book',
       ),
-      aiNode(
-        'ai-service-ack',
-        400,
-        'AI Service Ack',
-        'Acknowledges service selection',
-        LIVE_APPOINTMENT_AI.serviceAck,
-      ),
-      sendNode('send-service-ack', 480, 'Send Ack', '{{ai_response}}'),
       pickDateNode(
         'pick-date',
-        560,
+        280,
         'Pick Date',
-        'When would you like to visit? Tap *Today* or *Tomorrow* below 👇',
+        'You chose *{{service_type}}* ✓\n\nWhen would you like to visit? Tap *Today* or *Tomorrow*:',
         '📅 Choose your day',
       ),
       listResourcesNode(
         'list-resources',
-        640,
+        400,
         `Pick ${resourceLabel}`,
         meta.resourceBody,
         meta.resourceHeader,
       ),
-      listSlotsNode('list-slots', 760, 'Pick Slot', meta.slotsBody),
-      bookSlotNode('book-slot', 880, 'Confirm Booking', meta.bookConfirm),
+      listSlotsNode('list-slots', 520, 'Pick Slot', meta.slotsBody),
+      bookSlotNode('book-slot', 640, 'Confirm Booking', meta.bookConfirm),
       aiNode(
         'ai-thanks',
-        1000,
+        760,
         'AI Thank You',
         'Personalized confirmation',
         LIVE_APPOINTMENT_AI.thankYou,
       ),
-      sendNode('send-thanks', 1080, 'Send Thanks', '{{ai_response}}'),
-      ...leadSaveOnly(1200, {
+      sendNode('send-thanks', 840, 'Send Thanks', '{{ai_response}}'),
+      ...leadSaveOnly(960, {
         collectedFields: ['service_type', 'preferred_date', 'resource_name', 'booking_time'],
         notes: meta.leadNotes,
       }),

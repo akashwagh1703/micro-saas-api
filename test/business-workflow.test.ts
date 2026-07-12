@@ -22,7 +22,9 @@ describe('business workflow templates', () => {
     assert.equal(template?.category, 'guided');
 
     const nodeTypes = (template?.definition.nodes ?? []).map((n) => n.type);
-    assert.ok(nodeTypes.includes('ai'), 'Live appointment flow uses AI for welcome messages');
+    assert.ok(nodeTypes.includes('ai'), 'Live appointment flow uses AI for confirmation');
+    assert.equal(nodeTypes.filter((t) => t === 'ai').length, 1);
+    assert.equal(nodeTypes[1], 'pick_options', 'Service buttons are the first customer-facing step');
     assert.ok(nodeTypes.includes('pick_options'));
     assert.ok(nodeTypes.includes('list_resources'));
     assert.ok(nodeTypes.includes('list_slots'));

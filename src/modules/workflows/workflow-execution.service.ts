@@ -18,7 +18,6 @@ import { BookSlotNodeExecutor } from './nodes/book-slot-node.executor';
 import { PickOptionsNodeExecutor } from './nodes/pick-options-node.executor';
 // Phase 5: Interactive Message Node Executor
 import { InteractiveMessageNodeExecutor } from './nodes/interactive-message-node.executor';
-import { WorkflowTemplateService } from './workflow-template.service';
 
 const MAX_NODES = 30;
 
@@ -51,7 +50,6 @@ export class WorkflowExecutionService {
     listSlots: ListSlotsNodeExecutor,
     bookSlot: BookSlotNodeExecutor,
     pickOptions: PickOptionsNodeExecutor,
-    private readonly templates: WorkflowTemplateService,
     @Inject(JOB_DISPATCHER) private readonly jobs: JobDispatcher,
   ) {
     this.executors = {
@@ -90,13 +88,8 @@ export class WorkflowExecutionService {
       return;
     }
 
-    const upgraded = await this.templates.upgradeAppointmentWorkflowIfNeeded(
-      execution.userId,
-      workflow,
-    );
-    if (upgraded) {
-      workflow = upgraded;
-    }
+    // Run the published workflow as saved in the portal. Template upgrades happen only on
+    // publish or POST /workflows/sync-appointment-booking — not on every customer message.
 
     if (workflow.status !== 'published' || !workflow.isActive) {
       await this.fail(execution.id, 'Workflow not active');

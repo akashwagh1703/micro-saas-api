@@ -199,8 +199,8 @@ export class WorkflowsController {
     return {
       message:
         result.upgraded > 0
-          ? `Updated ${result.upgraded} appointment workflow(s) with button booking.`
-          : 'Appointment workflows are already up to date.',
+          ? `Updated ${result.upgraded} appointment auto-reply workflow(s) with the latest booking flow. Republish if they were already live.`
+          : 'Appointment auto-reply workflows are already up to date.',
       ...result,
     };
   }
@@ -222,7 +222,13 @@ export class WorkflowsController {
       data: { status: 'published', isActive: true },
     });
     const synced = await this.triggers.onPublished(updated);
-    return { workflow: serializeWorkflow(synced) };
+    return {
+      workflow: serializeWorkflow(synced),
+      upgraded: !!upgraded,
+      hint: upgraded
+        ? 'Workflow was refreshed to the latest appointment booking flow before going live.'
+        : undefined,
+    };
   }
 
   @Post(':id/unpublish')

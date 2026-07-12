@@ -28,8 +28,8 @@ describe('Release B — salon booking workflow template', () => {
     assert.ok(nodeTypes.includes('list_slots'));
     assert.ok(nodeTypes.includes('book_slot'));
     assert.ok(!nodeTypes.includes('collect_input'), 'Salon flow uses tap-to-pick instead of free-text');
-    assert.ok(nodeTypes.includes('ai'), 'AI generates welcome and confirmation messages');
-    assert.ok(nodeTypes.includes('send_message'), 'AI replies are sent to WhatsApp');
+    assert.ok(nodeTypes.includes('ai'), 'AI generates confirmation after booking');
+    assert.equal(nodeTypes[1], 'pick_options', 'First reply is service action buttons');
   });
 });
 
