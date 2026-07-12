@@ -10,6 +10,7 @@ import {
 import { resolveLeadApiChannelFromTrigger } from './workflow-trigger-channel';
 import { currentBusinessPublishedWhere, parseUseCases } from '../../common/workflow-scope';
 import { validateBusinessSetup } from '../../platform/catalog-validation';
+import { isSchedulingVertical } from '../../platform/appointment-services';
 import { WORKFLOW_TEMPLATES, WorkflowDefinition, findTemplate } from './workflow-templates';
 import { findAnyTemplate } from './business-workflow-templates';
 import { AiWorkflowGeneratorService } from './ai-workflow-generator.service';
@@ -162,8 +163,8 @@ export class WorkflowTemplateService {
     if (businessDescription !== undefined && businessDescription !== null) {
       await this.settings.set(userId, 'business_description', businessDescription.trim());
     }
-    if (businessCategory === 'salon') {
-      await this.settings.ensureSalonServicesDefaults(userId);
+    if (businessCategory === 'salon' || isSchedulingVertical(businessCategory)) {
+      await this.settings.ensureAppointmentServicesDefaults(userId, businessCategory);
     }
 
     // CareerAI uses a dedicated WhatsApp bot — no generic auto-reply workflows needed.

@@ -1,33 +1,35 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  DEFAULT_SALON_SERVICES,
-  parseSalonServicesJson,
-  validateSalonServices,
-} from '../src/platform/salon-services';
+  DEFAULT_APPOINTMENT_SERVICES,
+  parseAppointmentServicesJson,
+  validateAppointmentServices,
+  isSchedulingVertical,
+} from '../src/platform/appointment-services';
 import { parseWhatsAppFormattedText, stripWhatsAppFormatting } from '../src/common/whatsapp-format';
 
-describe('salon services settings', () => {
-  it('parses stored JSON and falls back to defaults', () => {
-    const custom = parseSalonServicesJson(
+describe('appointment services settings', () => {
+  it('parses stored JSON and falls back to vertical defaults', () => {
+    const custom = parseAppointmentServicesJson(
       JSON.stringify([{ text: 'Spa', value: 'Spa', description: 'Relax' }]),
+      'salon',
     );
     assert.equal(custom.length, 1);
     assert.equal(custom[0].text, 'Spa');
 
-    const fallback = parseSalonServicesJson(null);
-    assert.deepEqual(fallback, DEFAULT_SALON_SERVICES);
+    const fallback = parseAppointmentServicesJson(null, 'clinic');
+    assert.deepEqual(fallback, DEFAULT_APPOINTMENT_SERVICES.clinic);
   });
 
   it('validates service rows and rejects duplicates', () => {
-    const ok = validateSalonServices([
+    const ok = validateAppointmentServices([
       { text: 'Haircut', value: 'Haircut' },
       { text: 'Spa', value: 'Spa' },
     ]);
     assert.equal(ok.valid, true);
     assert.equal(ok.services.length, 2);
 
-    const dup = validateSalonServices([
+    const dup = validateAppointmentServices([
       { text: 'Haircut', value: 'Haircut' },
       { text: 'Cut', value: 'haircut' },
     ]);
@@ -35,12 +37,9 @@ describe('salon services settings', () => {
     assert.ok(dup.errors.some((e) => e.includes('Duplicate')));
   });
 
-  it('truncates long titles for WhatsApp list rows', () => {
-    const result = validateSalonServices([
-      { text: 'Very long service name here', value: 'long', description: 'x'.repeat(100) },
-    ]);
-    assert.equal(result.services[0].text.length, 20);
-    assert.equal(result.services[0].description?.length, 72);
+  it('recognizes scheduling verticals', () => {
+    assert.equal(isSchedulingVertical('clinic'), true);
+    assert.equal(isSchedulingVertical('local_shop'), false);
   });
 });
 

@@ -6,6 +6,8 @@
 
 import { findTemplate, linearFlow, WorkflowTemplate } from './workflow-templates';
 import { buildSaveLeadApiPlaceholder } from '../leads/lead-api.config';
+import type { SchedulingVertical } from '../../platform/appointment-services';
+import { getVerticalAvailabilityDefaults } from '../availability/availability-vertical-defaults';
 
 const DEFAULT_AI = {
   provider: 'openrouter',
@@ -72,7 +74,7 @@ function collectNode(
   };
 }
 
-function pickSalonServicesNode(
+function pickAppointmentServicesNode(
   id: string,
   y: number,
   label: string,
@@ -86,14 +88,25 @@ function pickSalonServicesNode(
     y,
     data: {
       label,
-      summary: 'Salon services picker (from Settings)',
+      summary: 'Booking services picker (from Settings)',
       field: 'service_type',
-      options_source: 'salon_services',
+      options_source: 'appointment_services',
       header,
       body,
       footer,
     },
   };
+}
+
+function pickSalonServicesNode(
+  id: string,
+  y: number,
+  label: string,
+  header: string,
+  body: string,
+  footer?: string,
+) {
+  return pickAppointmentServicesNode(id, y, label, header, body, footer);
 }
 
 function pickOptionsNode(
@@ -188,7 +201,7 @@ function bookSlotNode(id: string, y: number, label: string, confirmMessage: stri
       summary: 'Books the selected slot and confirms to customer',
       confirm_message: confirmMessage,
       conflict_message:
-        'Sorry, that slot was just taken. Reply with another date and we will show fresh times.',
+        'Sorry, that slot was just taken. Tap another time from the buttons below.',
     },
   };
 }
@@ -224,60 +237,223 @@ function leadCaptureTail(
   ];
 }
 
+function leadSaveOnly(
+  yStart: number,
+  options?: { collectedFields?: string[]; notes?: string; channel?: 'whatsapp' | 'instagram' | 'both' },
+) {
+  const collectedFields = options?.collectedFields ?? [];
+  const notes = options?.notes;
+  const channel = options?.channel ?? 'whatsapp';
+  return [
+    {
+      id: 'save-lead-1',
+      type: 'save_lead',
+      y: yStart,
+      data: {
+        label: 'Save Lead',
+        summary: 'Saves booking to AutoWave Leads',
+        notes,
+        collected_fields: collectedFields,
+        api: buildSaveLeadApiPlaceholder(collectedFields, notes, channel),
+      },
+    },
+  ];
+}
+
+const LIVE_APPOINTMENT_AI = {
+  welcome: (role: string) =>
+    `You are a friendly WhatsApp booking assistant for {{business_name}} (${role}). ` +
+    `Customer {{contact_name}} wrote: "{{message}}". Reply in 2-3 short lines. Welcome them warmly and tell them to *tap the buttons* coming next to book — no typing needed. ` +
+    `Use WhatsApp *bold* for the business name. Keep it concise.`,
+  serviceAck:
+    `You are a booking assistant for {{business_name}}. {{contact_name}} selected *{{service_type}}*. ` +
+    `Write 1-2 cheerful lines thanking them. Say date buttons are coming next — ask them to *tap Today or Tomorrow*. No questions requiring typed replies.`,
+  thankYou:
+    `Write a warm appointment confirmation for {{business_name}}. Customer: {{contact_name}}. ` +
+    `Service: {{service_type}}. With: {{resource_name}}. When: {{booking_time}}. ` +
+    `Use 3-4 short lines with emoji. Use *bold* for date, service, and provider. End with a friendly see-you-soon.`,
+};
+
+interface LiveAppointmentMeta {
+  slug: string;
+  name: string;
+  description: string;
+  role: string;
+  emoji: string;
+  serviceHeader: string;
+  serviceBody: string;
+  resourceHeader: string;
+  resourceBody: string;
+  slotsBody: string;
+  bookConfirm: string;
+  leadNotes: string;
+}
+
+const LIVE_APPOINTMENT_BY_VERTICAL: Record<SchedulingVertical, LiveAppointmentMeta> = {
+  salon: {
+    slug: 'salon-appointment',
+    name: 'Salon Appointment Booking',
+    description:
+      'AI welcome + button booking: services, date, stylist, and live slot confirmation.',
+    role: 'salon/beauty',
+    emoji: '✂️',
+    serviceHeader: 'Welcome to {{business_name}} ✂️',
+    serviceBody: 'Tap a service to continue:',
+    resourceHeader: 'Choose your stylist',
+    resourceBody: 'Pick who you would like for {{preferred_date}}:',
+    slotsBody: 'Select a time for {{resource_name}} on {{preferred_date}}:',
+    bookConfirm:
+      '✅ Appointment confirmed!\n\nStylist: {{resource_name}}\nWhen: {{booking_time}}\nService: {{service_type}}',
+    leadNotes: 'Salon appointment booking from WhatsApp',
+  },
+  clinic: {
+    slug: 'clinic-appointment',
+    name: 'Clinic Appointment Booking',
+    description: 'AI welcome + button booking: service, date, doctor, and slot confirmation.',
+    role: 'clinic/doctor',
+    emoji: '🏥',
+    serviceHeader: '{{business_name}} 🏥',
+    serviceBody: 'Tap the type of visit you need:',
+    resourceHeader: 'Choose your doctor',
+    resourceBody: 'Select a doctor for {{preferred_date}}:',
+    slotsBody: 'Pick a slot with {{resource_name}} on {{preferred_date}}:',
+    bookConfirm:
+      '✅ Appointment confirmed!\n\nDoctor: {{resource_name}}\nWhen: {{booking_time}}\nVisit: {{service_type}}',
+    leadNotes: 'Clinic appointment booking from WhatsApp',
+  },
+  coaching: {
+    slug: 'coaching-appointment',
+    name: 'Coaching Demo Class Booking',
+    description: 'AI welcome + button booking for demo classes and counselling sessions.',
+    role: 'coaching institute',
+    emoji: '🎓',
+    serviceHeader: '{{business_name}} 🎓',
+    serviceBody: 'What would you like to book?',
+    resourceHeader: 'Choose your counsellor',
+    resourceBody: 'Select who you will meet on {{preferred_date}}:',
+    slotsBody: 'Choose a slot with {{resource_name}} on {{preferred_date}}:',
+    bookConfirm:
+      '✅ Session confirmed!\n\nCounsellor: {{resource_name}}\nWhen: {{booking_time}}\nSession: {{service_type}}',
+    leadNotes: 'Coaching demo/session booking from WhatsApp',
+  },
+  real_estate: {
+    slug: 'real-estate-appointment',
+    name: 'Real Estate Site Visit Booking',
+    description: 'AI welcome + button booking for site visits and property consultations.',
+    role: 'real estate agency',
+    emoji: '🏠',
+    serviceHeader: '{{business_name}} 🏠',
+    serviceBody: 'Tap the visit type you need:',
+    resourceHeader: 'Choose your agent',
+    resourceBody: 'Select an agent for {{preferred_date}}:',
+    slotsBody: 'Pick a time with {{resource_name}} on {{preferred_date}}:',
+    bookConfirm:
+      '✅ Visit confirmed!\n\nAgent: {{resource_name}}\nWhen: {{booking_time}}\nVisit: {{service_type}}',
+    leadNotes: 'Real estate site visit booking from WhatsApp',
+  },
+  ca_accountant: {
+    slug: 'ca-accountant-appointment',
+    name: 'CA Consultation Booking',
+    description: 'AI welcome + button booking for tax and compliance consultations.',
+    role: 'CA/accountant firm',
+    emoji: '📊',
+    serviceHeader: '{{business_name}} 📊',
+    serviceBody: 'Tap the consultation you need:',
+    resourceHeader: 'Choose your consultant',
+    resourceBody: 'Select a consultant for {{preferred_date}}:',
+    slotsBody: 'Pick a slot with {{resource_name}} on {{preferred_date}}:',
+    bookConfirm:
+      '✅ Consultation confirmed!\n\nConsultant: {{resource_name}}\nWhen: {{booking_time}}\nService: {{service_type}}',
+    leadNotes: 'CA consultation booking from WhatsApp',
+  },
+  travel: {
+    slug: 'travel-booking',
+    name: 'Travel Trip Booking Assistant',
+    description: 'AI welcome + button booking for trip planning and travel consultations.',
+    role: 'travel agency',
+    emoji: '✈️',
+    serviceHeader: '{{business_name}} ✈️',
+    serviceBody: 'Tap how we can help with your trip:',
+    resourceHeader: 'Choose your travel expert',
+    resourceBody: 'Select an expert for {{preferred_date}}:',
+    slotsBody: 'Pick a call slot with {{resource_name}} on {{preferred_date}}:',
+    bookConfirm:
+      '✅ Session confirmed!\n\nExpert: {{resource_name}}\nWhen: {{booking_time}}\nTopic: {{service_type}}',
+    leadNotes: 'Travel consultation booking from WhatsApp',
+  },
+};
+
+function buildLiveAppointmentFlow(vertical: SchedulingVertical): WorkflowTemplate {
+  const meta = LIVE_APPOINTMENT_BY_VERTICAL[vertical];
+  const resourceLabel = getVerticalAvailabilityDefaults(vertical).resourceLabel.toLowerCase();
+
+  return {
+    slug: meta.slug,
+    name: meta.name,
+    description: meta.description,
+    category: 'guided',
+    trigger_type: 'message_received',
+    definition: linearFlow([
+      triggerNode(),
+      aiNode(
+        'ai-welcome',
+        160,
+        'AI Welcome',
+        'Personalized AI greeting',
+        LIVE_APPOINTMENT_AI.welcome(meta.role),
+      ),
+      sendNode('send-welcome', 240, 'Send Welcome', '{{ai_response}}'),
+      pickAppointmentServicesNode(
+        'pick-service',
+        320,
+        'Pick Service',
+        meta.serviceHeader,
+        meta.serviceBody,
+        'Tap a service',
+      ),
+      aiNode(
+        'ai-service-ack',
+        400,
+        'AI Service Ack',
+        'Acknowledges service selection',
+        LIVE_APPOINTMENT_AI.serviceAck,
+      ),
+      sendNode('send-service-ack', 480, 'Send Ack', '{{ai_response}}'),
+      pickDateNode(
+        'pick-date',
+        560,
+        'Pick Date',
+        'Tap *Today* or *Tomorrow* below:',
+        '📅 Choose your day',
+      ),
+      listResourcesNode(
+        'list-resources',
+        640,
+        `Pick ${resourceLabel}`,
+        meta.resourceBody,
+        meta.resourceHeader,
+      ),
+      listSlotsNode('list-slots', 760, 'Pick Slot', meta.slotsBody),
+      bookSlotNode('book-slot', 880, 'Confirm Booking', meta.bookConfirm),
+      aiNode(
+        'ai-thanks',
+        1000,
+        'AI Thank You',
+        'Personalized confirmation',
+        LIVE_APPOINTMENT_AI.thankYou,
+      ),
+      sendNode('send-thanks', 1080, 'Send Thanks', '{{ai_response}}'),
+      ...leadSaveOnly(1200, {
+        collectedFields: ['service_type', 'preferred_date', 'resource_name', 'booking_time'],
+        notes: meta.leadNotes,
+      }),
+    ]),
+  };
+}
+
 // --- Salon ---
 
-const salonAppointment: WorkflowTemplate = {
-  slug: 'salon-appointment',
-  name: 'Salon Appointment Booking',
-  description:
-    'Live slot booking: pick a stylist, choose a date, select an available time, and get instant confirmation.',
-  category: 'guided',
-  trigger_type: 'message_received',
-  definition: linearFlow([
-    triggerNode(),
-    pickSalonServicesNode(
-      'pick-service',
-      200,
-      'Pick Service',
-      'Welcome to {{business_name}} ✂️',
-      'Hi {{contact_name}}! 👋 Thanks for messaging *{{business_name}}*.\n\nTap a service below to start your booking — no typing needed:',
-      'Tap a service to continue',
-    ),
-    pickDateNode(
-      'pick-date',
-      320,
-      'Pick Date',
-      'Great choice — *{{service_type}}*! ✨\n\nWhen would you like to visit us? Tap a day below:',
-      '📅 Choose your day',
-    ),
-    listResourcesNode(
-      'list-resources',
-      440,
-      'Pick Stylist',
-      'Perfect! Now choose your stylist for {{preferred_date}}:',
-    ),
-    listSlotsNode(
-      'list-slots',
-      560,
-      'Pick Slot',
-      'Select an available time for {{resource_name}} on {{preferred_date}}:',
-    ),
-    bookSlotNode(
-      'book-slot',
-      680,
-      'Confirm Booking',
-      '✅ Appointment confirmed!\n\nStylist: {{resource_name}}\nWhen: {{booking_time}}\nService: {{service_type}}\n\nSee you at the salon!',
-    ),
-    ...leadCaptureTail(
-      800,
-      "Thanks {{contact_name}}! ✂️ Your appointment is saved.\n\nStylist: {{resource_name}}\nWhen: {{booking_time}}\nService: {{service_type}}",
-      {
-        collectedFields: ['service_type', 'preferred_date', 'resource_name', 'booking_time'],
-        notes: 'Salon appointment booking from WhatsApp',
-      },
-    ),
-  ]),
-};
+const salonAppointment = buildLiveAppointmentFlow('salon');
 
 // --- Real Estate ---
 
@@ -322,30 +498,7 @@ const realEstateLeadGen: WorkflowTemplate = {
   ]),
 };
 
-const realEstateAppointment: WorkflowTemplate = {
-  slug: 'real-estate-appointment',
-  name: 'Real Estate Site Visit Booking',
-  description: 'Collect site-visit requests and preferred times for property viewings.',
-  category: 'guided',
-  trigger_type: 'message_received',
-  definition: linearFlow([
-    triggerNode(),
-    sendNode(
-      'send-1',
-      200,
-      'Visit Booking Intro',
-      "Hi {{contact_name}}! 🏠 We'd love to schedule a site visit.\n\nPlease share:\n• Property or project name\n• Preferred date & time\n• Number of people visiting",
-    ),
-    aiNode(
-      'ai-1',
-      320,
-      'Visit Coordinator',
-      'Confirms visit details',
-      'You are a real estate assistant scheduling site visits. Customer message: "{{message}}". Confirm what you understood, suggest next steps, and ask for any missing detail (property name, date/time). Keep it brief for WhatsApp.',
-    ),
-    sendNode('send-2', 440, 'Send Reply', '{{ai_response}}'),
-  ]),
-};
+const realEstateAppointment = buildLiveAppointmentFlow('real_estate');
 
 const realEstateFaq: WorkflowTemplate = {
   slug: 'real-estate-faq',
@@ -378,30 +531,7 @@ const realEstateFaq: WorkflowTemplate = {
 
 // --- Clinic ---
 
-const clinicAppointment: WorkflowTemplate = {
-  slug: 'clinic-appointment',
-  name: 'Clinic Appointment Booking',
-  description: 'Welcome patients and help book appointments via WhatsApp.',
-  category: 'guided',
-  trigger_type: 'message_received',
-  definition: linearFlow([
-    triggerNode(),
-    sendNode(
-      'send-1',
-      200,
-      'Booking Welcome',
-      "Hello {{contact_name}}! 🏥 Thank you for contacting our clinic.\n\nTo book an appointment, please share:\n• Your name\n• Preferred date & time\n• Reason for visit (brief)\n\nWe'll confirm your slot shortly.",
-    ),
-    aiNode(
-      'ai-1',
-      320,
-      'Appointment Assistant',
-      'Helps schedule visits',
-      'You are a clinic reception assistant on WhatsApp. Patient message: "{{message}}". Help with appointment booking politely. Ask for missing details (date, time, doctor/specialty if needed). Do not give medical diagnosis.',
-    ),
-    sendNode('send-2', 440, 'Send Reply', '{{ai_response}}'),
-  ]),
-};
+const clinicAppointment = buildLiveAppointmentFlow('clinic');
 
 const clinicSupport: WorkflowTemplate = {
   slug: 'clinic-support',
@@ -472,30 +602,7 @@ const coachingInstagramLeadGen: WorkflowTemplate = {
   ]),
 };
 
-const coachingAppointment: WorkflowTemplate = {
-  slug: 'coaching-appointment',
-  name: 'Coaching Demo Class Booking',
-  description: 'Book demo classes or counselling sessions for new students.',
-  category: 'guided',
-  trigger_type: 'message_received',
-  definition: linearFlow([
-    triggerNode(),
-    sendNode(
-      'send-1',
-      200,
-      'Demo Invite',
-      "Hi {{contact_name}}! 🎓 Book a free demo class with us.\n\nShare:\n• Course you're interested in\n• Preferred date & time\n• Online or offline",
-    ),
-    aiNode(
-      'ai-1',
-      320,
-      'Demo Scheduler',
-      'Confirms demo slot',
-      'You schedule demo classes for a coaching institute. Message: "{{message}}". Confirm course interest and preferred slot; ask for anything missing.',
-    ),
-    sendNode('send-2', 440, 'Send Reply', '{{ai_response}}'),
-  ]),
-};
+const coachingAppointment = buildLiveAppointmentFlow('coaching');
 
 // --- Local Shop ---
 
@@ -559,30 +666,7 @@ const localShopSupport: WorkflowTemplate = {
 
 // --- Travel ---
 
-const travelBooking: WorkflowTemplate = {
-  slug: 'travel-booking',
-  name: 'Travel Trip Booking Assistant',
-  description: 'Collect trip details and help customers plan bookings.',
-  category: 'guided',
-  trigger_type: 'message_received',
-  definition: linearFlow([
-    triggerNode(),
-    sendNode(
-      'send-1',
-      200,
-      'Trip Inquiry',
-      "Hello {{contact_name}}! ✈️ Planning a trip?\n\nShare:\n• Destination\n• Travel dates\n• Number of travellers\n• Budget range",
-    ),
-    aiNode(
-      'ai-1',
-      320,
-      'Travel Planner',
-      'Suggests next steps',
-      'You are a travel agency WhatsApp assistant. Customer: "{{message}}". Help plan their trip; ask for missing destination, dates, travellers, or budget. Suggest they will receive a customised itinerary.',
-    ),
-    sendNode('send-2', 440, 'Send Reply', '{{ai_response}}'),
-  ]),
-};
+const travelBooking = buildLiveAppointmentFlow('travel');
 
 const travelLeadGen: WorkflowTemplate = {
   slug: 'travel-lead-gen',
@@ -705,6 +789,8 @@ const farmerFaq: WorkflowTemplate = {
 
 // --- CA / Accountant ---
 
+const caAccountantAppointment = buildLiveAppointmentFlow('ca_accountant');
+
 const caAccountantSupport: WorkflowTemplate = {
   slug: 'ca-accountant-support',
   name: 'CA & Tax Support Assistant',
@@ -763,6 +849,7 @@ export const GUIDED_WORKFLOW_TEMPLATES: WorkflowTemplate[] = [
   insuranceSales,
   farmerSupport,
   farmerFaq,
+  caAccountantAppointment,
   caAccountantSupport,
   supportTeamAssistant,
 ];

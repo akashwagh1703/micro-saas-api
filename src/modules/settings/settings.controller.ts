@@ -12,6 +12,7 @@ import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CryptoService } from '../../common/crypto/crypto.service';
 import { serializeUser } from '../../common/serializers';
+import { isSchedulingVertical } from '../../platform/appointment-services';
 import { SettingsService } from './settings.service';
 import {
   ChangePasswordDto,
@@ -106,14 +107,28 @@ export class SettingsController {
     return { message: 'Settings saved' };
   }
 
-  @Get('salon-services')
-  async getSalonServices(@CurrentUser('id') userId: number) {
+  @Get('appointment-services')
+  async getAppointmentServices(@CurrentUser('id') userId: number) {
     const business_category = await this.settings.get(userId, 'business_category');
-    if (business_category !== 'salon') {
+    if (!isSchedulingVertical(business_category)) {
       return { services: null, configured: false };
     }
-    const services = await this.settings.getSalonServices(userId);
-    return { services, configured: true };
+    const services = await this.settings.getAppointmentServices(userId);
+    return { services, configured: true, business_category };
+  }
+
+  @Put('appointment-services')
+  async updateAppointmentServices(
+    @CurrentUser('id') userId: number,
+    @Body() dto: UpdateSalonServicesDto,
+  ) {
+    const services = await this.settings.setAppointmentServices(userId, dto.services);
+    return { services, message: 'Appointment services saved' };
+  }
+
+  @Get('salon-services')
+  async getSalonServices(@CurrentUser('id') userId: number) {
+    return this.getAppointmentServices(userId);
   }
 
   @Put('salon-services')
@@ -121,14 +136,7 @@ export class SettingsController {
     @CurrentUser('id') userId: number,
     @Body() dto: UpdateSalonServicesDto,
   ) {
-    const business_category = await this.settings.get(userId, 'business_category');
-    if (business_category !== 'salon') {
-      throw new UnprocessableEntityException({
-        message: 'Salon services are only available for salon businesses.',
-        errors: { business_category: ['Switch your business type to Salon to manage services.'] },
-      });
-    }
-    const services = await this.settings.setSalonServices(userId, dto.services);
+    const services = await this.settings.setAppointmentServices(userId, dto.services);
     return { services, message: 'Salon services saved' };
   }
 }

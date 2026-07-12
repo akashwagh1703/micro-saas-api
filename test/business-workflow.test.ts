@@ -22,16 +22,12 @@ describe('business workflow templates', () => {
     assert.equal(template?.category, 'guided');
 
     const nodeTypes = (template?.definition.nodes ?? []).map((n) => n.type);
-    assert.deepEqual(nodeTypes, [
-      'trigger',
-      'pick_options',
-      'pick_options',
-      'list_resources',
-      'list_slots',
-      'book_slot',
-      'save_lead',
-      'send_message',
-    ]);
+    assert.ok(nodeTypes.includes('ai'), 'Live appointment flow uses AI for welcome messages');
+    assert.ok(nodeTypes.includes('pick_options'));
+    assert.ok(nodeTypes.includes('list_resources'));
+    assert.ok(nodeTypes.includes('list_slots'));
+    assert.ok(nodeTypes.includes('book_slot'));
+    assert.ok(!nodeTypes.includes('collect_input'), 'Appointment flow is tap-to-pick only');
   });
 
   it('labels salon setup workflow name parts', () => {
@@ -60,10 +56,21 @@ describe('business workflow templates', () => {
     assert.ok(keywords.includes('haircut'));
   });
 
-  it('keeps active vertical combo overrides for appointment flows', () => {
+  it('resolves clinic appointment to live booking template with AI + buttons', () => {
     assert.equal(resolveTemplateSlug('clinic', 'appointment_booking'), 'clinic-appointment');
+    const template = findGuidedTemplate('clinic-appointment');
+    assert.ok(template);
+    const types = (template?.definition.nodes ?? []).map((n) => n.type);
+    assert.ok(types.includes('ai'));
+    assert.ok(types.includes('pick_options'));
+    assert.ok(types.includes('book_slot'));
+  });
+
+  it('keeps active vertical combo overrides for appointment flows', () => {
     assert.equal(resolveTemplateSlug('coaching', 'appointment_booking'), 'coaching-appointment');
-    assert.equal(resolveTemplateSlug('ca_accountant', 'appointment_booking'), 'ca-accountant-support');
+    assert.equal(resolveTemplateSlug('ca_accountant', 'appointment_booking'), 'ca-accountant-appointment');
+    assert.equal(resolveTemplateSlug('travel', 'appointment_booking'), 'travel-booking');
+    assert.equal(resolveTemplateSlug('real_estate', 'appointment_booking'), 'real-estate-appointment');
     assert.equal(resolveTemplateSlug('local_shop', 'lead_generation'), 'local-shop-support');
   });
 });

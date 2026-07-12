@@ -4,12 +4,14 @@ import { CryptoService } from '../../common/crypto/crypto.service';
 import { currentBusinessPublishedWhere, parseUseCases } from '../../common/workflow-scope';
 import { verticalProfileFields } from '../../platform/business-verticals.registry';
 import {
-  DEFAULT_SALON_SERVICES,
-  parseSalonServicesJson,
+  APPOINTMENT_SERVICES_SETTING_KEY,
+  AppointmentServiceOption,
   SALON_SERVICES_SETTING_KEY,
-  SalonServiceOption,
-  validateSalonServices,
-} from '../../platform/salon-services';
+  defaultServicesForVertical,
+  isSchedulingVertical,
+  parseAppointmentServicesJson,
+  validateAppointmentServices,
+} from '../../platform/appointment-services';
 import { businessLabel, useCaseLabel } from '../workflows/business-workflow';
 
 const ENCRYPTED_KEYS = [
@@ -100,38 +102,91 @@ export class SettingsService {
         (business_category === 'career_ai' || use_cases.length > 0),
       published_count,
       can_change_business: published_count === 0,
-      salon_services:
-        business_category === 'salon' ? await this.getSalonServices(userId) : null,
+      appointment_services: isSchedulingVertical(business_category)
+        ? await this.getAppointmentServices(userId)
+        : null,
+      /** @deprecated use appointment_services */
+      salon_services: isSchedulingVertical(business_category)
+        ? await this.getAppointmentServices(userId)
+        : null,
       ...verticalProfileFields(business_category),
     };
   }
 
-  async getSalonServices(userId: number): Promise<SalonServiceOption[]> {
+  async getAppointmentServices(userId: number): Promise<AppointmentServiceOption[]> {
     const category = await this.get(userId, 'business_category');
-    if (category === 'salon') {
-      await this.ensureSalonServicesDefaults(userId);
+    if (isSchedulingVertical(category)) {
+      await this.ensureAppointmentServicesDefaults(userId, category);
     }
-    const raw = await this.get(userId, SALON_SERVICES_SETTING_KEY);
-    return parseSalonServicesJson(raw);
+    const raw =
+      (await this.get(userId, APPOINTMENT_SERVICES_SETTING_KEY)) ??
+      (await this.get(userId, SALON_SERVICES_SETTING_KEY));
+    return parseAppointmentServicesJson(raw, category);
   }
 
-  async setSalonServices(userId: number, services: unknown): Promise<SalonServiceOption[]> {
-    const { valid, services: normalized, errors } = validateSalonServices(services);
+  async setAppointmentServices(userId: number, services: unknown): Promise<AppointmentServiceOption[]> {
+    const category = await this.get(userId, 'business_category');
+    if (!isSchedulingVertical(category)) {
+      throw new UnprocessableEntityException({
+        message: 'Appointment services are only available for businesses with live scheduling.',
+        errors: {
+          business_category: ['Configure a scheduling-enabled business type first.'],
+        },
+      });
+    }
+    const { valid, services: normalized, errors } = validateAppointmentServices(services);
     if (!valid) {
       throw new UnprocessableEntityException({
         message: 'The given data was invalid.',
-        errors: { salon_services: errors },
+        errors: { appointment_services: errors },
       });
     }
-    await this.set(userId, SALON_SERVICES_SETTING_KEY, JSON.stringify(normalized));
+    const json = JSON.stringify(normalized);
+    await this.set(userId, APPOINTMENT_SERVICES_SETTING_KEY, json);
+    if (category === 'salon') {
+      await this.set(userId, SALON_SERVICES_SETTING_KEY, json);
+    }
     return normalized;
   }
 
-  /** Seed default salon services on first salon setup. */
-  async ensureSalonServicesDefaults(userId: number): Promise<void> {
-    const existing = await this.get(userId, SALON_SERVICES_SETTING_KEY);
-    if (!existing) {
-      await this.set(userId, SALON_SERVICES_SETTING_KEY, JSON.stringify(DEFAULT_SALON_SERVICES));
+  /** Seed vertical defaults on first setup / first load. */
+  async ensureAppointmentServicesDefaults(
+    userId: number,
+    businessCategory?: string | null,
+  ): Promise<void> {
+    const category = businessCategory ?? (await this.get(userId, 'business_category'));
+    if (!isSchedulingVertical(category)) return;
+
+    const existing =
+      (await this.get(userId, APPOINTMENT_SERVICES_SETTING_KEY)) ??
+      (await this.get(userId, SALON_SERVICES_SETTING_KEY));
+    if (existing) {
+      if (!(await this.get(userId, APPOINTMENT_SERVICES_SETTING_KEY))) {
+        await this.set(userId, APPOINTMENT_SERVICES_SETTING_KEY, existing);
+      }
+      return;
     }
+
+    const defaults = defaultServicesForVertical(category);
+    const json = JSON.stringify(defaults);
+    await this.set(userId, APPOINTMENT_SERVICES_SETTING_KEY, json);
+    if (category === 'salon') {
+      await this.set(userId, SALON_SERVICES_SETTING_KEY, json);
+    }
+  }
+
+  /** @deprecated Use getAppointmentServices */
+  async getSalonServices(userId: number): Promise<AppointmentServiceOption[]> {
+    return this.getAppointmentServices(userId);
+  }
+
+  /** @deprecated Use setAppointmentServices */
+  async setSalonServices(userId: number, services: unknown): Promise<AppointmentServiceOption[]> {
+    return this.setAppointmentServices(userId, services);
+  }
+
+  /** @deprecated Use ensureAppointmentServicesDefaults */
+  async ensureSalonServicesDefaults(userId: number): Promise<void> {
+    await this.ensureAppointmentServicesDefaults(userId);
   }
 }

@@ -133,8 +133,8 @@ export class PickOptionsNodeExecutor implements NodeExecutor {
     userId: number,
     data: Record<string, unknown>,
   ): Promise<PickOptionRow[]> {
-    if (data.options_source === 'salon_services') {
-      const services = await this.settings.getSalonServices(userId);
+    if (data.options_source === 'salon_services' || data.options_source === 'appointment_services') {
+      const services = await this.settings.getAppointmentServices(userId);
       return services.map((s) => ({
         text: s.text,
         description: s.description,

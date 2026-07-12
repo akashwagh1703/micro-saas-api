@@ -124,7 +124,7 @@ const COMBO_OVERRIDES: Record<string, string> = {
   // CA / Accountant
   'ca_accountant:customer_support': 'ca-accountant-support',
   'ca_accountant:lead_generation': 'ca-accountant-support',
-  'ca_accountant:appointment_booking': 'ca-accountant-support',
+  'ca_accountant:appointment_booking': 'ca-accountant-appointment',
   'ca_accountant:faq_bot': 'ca-accountant-support',
   'ca_accountant:sales_assistant': 'ca-accountant-support',
   'ca_accountant:ai_chat': 'ca-accountant-support',
