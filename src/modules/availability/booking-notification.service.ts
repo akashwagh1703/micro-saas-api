@@ -5,6 +5,7 @@ import { CryptoService } from '../../common/crypto/crypto.service';
 import { SettingsService } from '../settings/settings.service';
 import { WhatsAppApiService } from '../integrations/whatsapp-api.service';
 import { InboxService } from '../inbox/inbox.service';
+import { OwnerNotificationsService } from '../notifications/owner-notifications.service';
 import { extractDigits } from '../../common/phone.util';
 import { localDateStrInTimeZone } from './timezone.util';
 import {
@@ -60,6 +61,7 @@ export class BookingNotificationService {
     private readonly crypto: CryptoService,
     private readonly whatsappApi: WhatsAppApiService,
     private readonly inbox: InboxService,
+    private readonly ownerNotifications: OwnerNotificationsService,
   ) {}
 
   async notifyOwner(
@@ -88,6 +90,21 @@ export class BookingNotificationService {
         pending,
       },
     );
+
+    void this.ownerNotifications.notify(userId, {
+      type: pending ? 'booking_requested' : 'booking_created',
+      title: pending ? 'New booking request' : 'New appointment booked',
+      body: description,
+      metadata: {
+        booking_id: booking.id,
+        route: '/scheduling/bookings',
+        starts_at: booking.starts_at,
+        resource_name: booking.resource_name,
+        service_label: booking.service_label,
+        pending,
+      },
+      sendPush: true,
+    });
 
     await this.sendWhatsAppAlertIfConfigured(userId, resource, when, service, customer, pending);
   }

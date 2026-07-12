@@ -58,6 +58,8 @@ model User {
   interactiveTemplates InteractiveMessageTemplate[]
   serviceResources    ServiceResource[]
   bookings            Booking[]
+  ownerNotifications  OwnerNotification[]
+  pushDeviceTokens    PushDeviceToken[]
 
   @@map("users")
 }
@@ -840,4 +842,36 @@ model Booking {
   @@index([resourceId, startsAt])
   @@index([userId, status])
   @@map("bookings")
+}
+
+model OwnerNotification {
+  id        Int       @id @default(autoincrement())
+  userId    Int       @map("user_id")
+  type      String    @db.VarChar(40)
+  title     String    @db.VarChar(160)
+  body      String
+  metadata  Json?
+  readAt    DateTime? @map("read_at")
+  createdAt DateTime  @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, readAt, createdAt])
+  @@index([userId, createdAt])
+  @@map("owner_notifications")
+}
+
+model PushDeviceToken {
+  id           Int      @id @default(autoincrement())
+  userId       Int      @map("user_id")
+  expoPushToken String  @map("expo_push_token") @db.VarChar(255)
+  platform     String   @db.VarChar(16)
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([expoPushToken])
+  @@index([userId])
+  @@map("push_device_tokens")
 }

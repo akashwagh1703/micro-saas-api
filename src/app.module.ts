@@ -29,6 +29,7 @@ import { WebsiteModule } from './modules/website/website.module';
 import { InteractiveMessagesModule } from './modules/interactive-messages/interactive-messages.module';
 import { IntegrationsModule } from './modules/integrations/integrations.module';
 import { AvailabilityModule } from './modules/availability/availability.module';
+import { NotificationsModule } from './modules/notifications/notifications.module';
 import { AppController } from './app.controller';
 
 @Module({
@@ -60,6 +61,7 @@ import { AppController } from './app.controller';
     InteractiveMessagesModule,
     IntegrationsModule,
     AvailabilityModule,
+    NotificationsModule,
   ],
   controllers: [AppController],
 })
