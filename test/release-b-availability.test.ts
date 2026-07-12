@@ -28,7 +28,8 @@ describe('Release B — salon booking workflow template', () => {
     assert.ok(nodeTypes.includes('list_slots'));
     assert.ok(nodeTypes.includes('book_slot'));
     assert.ok(!nodeTypes.includes('collect_input'), 'Salon flow uses tap-to-pick instead of free-text');
-    assert.ok(nodeTypes.includes('ai'), 'AI generates confirmation after booking');
+    const bookSlot = (template?.definition.nodes ?? []).find((n) => n.type === 'book_slot');
+    assert.equal((bookSlot?.data as Record<string, unknown>)?.status, 'pending');
     assert.equal(nodeTypes[1], 'pick_options', 'First reply is service action buttons');
   });
 });

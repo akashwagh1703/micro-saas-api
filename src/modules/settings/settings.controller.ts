@@ -16,6 +16,7 @@ import { isSchedulingVertical } from '../../platform/appointment-services';
 import { SettingsService } from './settings.service';
 import {
   ChangePasswordDto,
+  UpdateBusinessDetailsDto,
   UpdateIntegrationsDto,
   UpdateProfileDto,
   UpdateSalonServicesDto,
@@ -79,6 +80,15 @@ export class SettingsController {
   @Get('business-profile')
   async getBusinessProfile(@CurrentUser('id') userId: number) {
     return this.settings.getBusinessProfile(userId);
+  }
+
+  @Put('business-details')
+  async updateBusinessDetails(
+    @CurrentUser('id') userId: number,
+    @Body() dto: UpdateBusinessDetailsDto,
+  ) {
+    const result = await this.settings.setBusinessDetails(userId, dto);
+    return { ...result, message: 'Business details saved' };
   }
 
   @Get('integrations')

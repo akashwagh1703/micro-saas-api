@@ -103,3 +103,11 @@ export function isValidDateStr(dateStr: string): boolean {
 export function isValidTimeStr(timeStr: string): boolean {
   return /^([01]\d|2[0-3]):[0-5]\d$/.test(timeStr);
 }
+
+/** YYYY-MM-DD for `instant` in the given IANA timezone. */
+export function localDateStrInTimeZone(instant: Date, timeZone: string): string {
+  const parts = getZonedParts(instant, timeZone);
+  const month = String(parts.month).padStart(2, '0');
+  const day = String(parts.day).padStart(2, '0');
+  return `${parts.year}-${month}-${day}`;
+}

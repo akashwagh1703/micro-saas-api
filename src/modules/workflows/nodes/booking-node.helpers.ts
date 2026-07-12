@@ -138,7 +138,7 @@ export async function createDynamicInteractiveTemplate(
   },
 ) {
   await ensureInteractiveMessageTypes(prisma);
-  const typeName = params.useButtons ? 'QUICK_REPLY' : 'LIST_MESSAGE';
+  const typeName = params.useButtons && params.items.length <= 3 ? 'QUICK_REPLY' : 'LIST_MESSAGE';
   const messageType = await prisma.interactiveMessageType.findUnique({ where: { name: typeName } });
   if (!messageType) {
     throw new Error(`Interactive message type ${typeName} not found`);

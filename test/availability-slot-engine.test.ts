@@ -2,6 +2,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   bookingsOverlap,
+  filterFutureSlotsForToday,
   generateAvailableSlots,
   pickScheduleForDay,
 } from '../src/modules/availability/slot-engine';
@@ -75,5 +76,21 @@ describe('availability slot engine', () => {
       generateAvailableSlots('2026-07-14', TZ, { startTime: '09:00', endTime: '10:00', slotMinutes: 30 }, bookings),
     );
     assert.deepEqual(results.map((r) => r.length), [2, 1, 2]);
+  });
+
+  it('filters past slots when booking date is today', () => {
+    const slots = generateAvailableSlots('2026-07-13', TZ, mondaySchedule, []);
+    const now = zonedLocalDateTimeToUtc('2026-07-13', '10:15', TZ);
+    const filtered = filterFutureSlotsForToday(slots, '2026-07-13', TZ, now);
+    assert.ok(filtered.every((s) => new Date(s.starts_at) > now));
+    assert.equal(filtered.length, 1);
+    assert.equal(filtered[0].starts_at, zonedLocalDateTimeToUtc('2026-07-13', '10:30', TZ).toISOString());
+  });
+
+  it('does not filter slots for a future date', () => {
+    const slots = generateAvailableSlots('2026-07-14', TZ, mondaySchedule, []);
+    const now = zonedLocalDateTimeToUtc('2026-07-13', '10:15', TZ);
+    const filtered = filterFutureSlotsForToday(slots, '2026-07-14', TZ, now);
+    assert.equal(filtered.length, slots.length);
   });
 });

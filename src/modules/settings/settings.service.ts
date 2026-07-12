@@ -80,6 +80,7 @@ export class SettingsService {
       'use_cases',
       'use_case',
       'business_description',
+      'business_name',
     ]);
     const use_cases = parseUseCases(settings);
     const business_category = settings.business_category ?? null;
@@ -95,6 +96,7 @@ export class SettingsService {
       business_category,
       use_cases,
       business_description: settings.business_description ?? null,
+      business_name: settings.business_name ?? null,
       business_label: business_category ? businessLabel(business_category) : null,
       use_case_labels: use_cases.map((uc) => useCaseLabel(uc)),
       configured:
@@ -188,5 +190,17 @@ export class SettingsService {
   /** @deprecated Use ensureAppointmentServicesDefaults */
   async ensureSalonServicesDefaults(userId: number): Promise<void> {
     await this.ensureAppointmentServicesDefaults(userId);
+  }
+
+  async setBusinessDetails(
+    userId: number,
+    details: { business_name?: string | null },
+  ): Promise<{ business_name: string | null }> {
+    if (details.business_name !== undefined) {
+      const trimmed = details.business_name?.trim() ?? '';
+      await this.set(userId, 'business_name', trimmed || null);
+    }
+    const business_name = (await this.get(userId, 'business_name')) ?? null;
+    return { business_name };
   }
 }

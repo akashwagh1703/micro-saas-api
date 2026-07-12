@@ -90,24 +90,33 @@ export class WorkflowInteractiveSendService {
     }
 
     if (template.messageType.name === 'LIST_MESSAGE') {
-      const result = await this.inbox.sendInteractiveList(
-        execution.userId,
-        conversationId,
-        template.headerText || 'Choose an option',
-        body,
-        template.options.slice(0, 10).map((opt) => ({
-          id: String(opt.id),
-          title: opt.optionText,
-          description: opt.description ?? undefined,
-        })),
-        meta,
-      );
-
-      if (!result.success) {
-        this.logger.error(
-          `List picker failed for tenant ${execution.userId} / ${phone}: ${result.error}`,
+      const listButton = 'View options';
+      const chunks = this.chunkOptions(template.options, 10);
+      for (let i = 0; i < chunks.length; i++) {
+        const chunk = chunks[i];
+        const chunkBody =
+          chunks.length > 1
+            ? `${body}\n\n(${i + 1}/${chunks.length} — tap *${listButton}* to choose)`
+            : body;
+        const result = await this.inbox.sendInteractiveList(
+          execution.userId,
+          conversationId,
+          template.headerText || 'Choose an option',
+          chunkBody,
+          chunk.map((opt) => ({
+            id: String(opt.id),
+            title: opt.optionText,
+            description: opt.description ?? undefined,
+          })),
+          { ...meta, listButton },
         );
-        return { success: false, error: result.error ?? 'WhatsApp list send failed' };
+
+        if (!result.success) {
+          this.logger.error(
+            `List picker failed for tenant ${execution.userId} / ${phone}: ${result.error}`,
+          );
+          return { success: false, error: result.error ?? 'WhatsApp list send failed' };
+        }
       }
 
       return { success: true };
@@ -126,5 +135,14 @@ export class WorkflowInteractiveSendService {
     if (body?.trim()) lines.push(body.trim());
     if (footer?.trim()) lines.push(footer.trim());
     return lines.join('\n\n') || 'Tap an option below:';
+  }
+
+  private chunkOptions<T>(options: T[], size: number): T[][] {
+    if (options.length <= size) return [options];
+    const chunks: T[][] = [];
+    for (let i = 0; i < options.length; i += size) {
+      chunks.push(options.slice(i, i + size));
+    }
+    return chunks;
   }
 }

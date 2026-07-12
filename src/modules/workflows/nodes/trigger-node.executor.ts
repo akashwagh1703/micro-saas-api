@@ -15,8 +15,10 @@ export class TriggerNodeExecutor implements NodeExecutor {
   ): Promise<NodeExecutionResult> {
     const businessCategory = await this.settings.get(execution.userId, 'business_category');
     const businessDescription = await this.settings.get(execution.userId, 'business_description');
+    const configuredName = await this.settings.get(execution.userId, 'business_name');
     const business_label = businessCategory ? businessLabel(businessCategory) : '';
-    const business_name = businessDescription?.trim() || business_label || 'Our business';
+    const business_name =
+      configuredName?.trim() || businessDescription?.trim() || business_label || 'Our business';
 
     return {
       success: true,

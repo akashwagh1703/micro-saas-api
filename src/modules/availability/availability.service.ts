@@ -12,6 +12,7 @@ import { BookingNotificationService } from './booking-notification.service';
 import { getVerticalAvailabilityDefaults } from './availability-vertical-defaults';
 import {
   ACTIVE_BOOKING_STATUSES,
+  filterFutureSlotsForToday,
   generateAvailableSlots,
   pickScheduleForDay,
   type ScheduleWindow,
@@ -258,19 +259,29 @@ export class AvailabilityService {
       const contact = await this.prisma.contact.findUnique({ where: { id: dto.contact_id } });
       contactName = contact?.name ?? null;
     }
-    void this.bookingNotifications.notifyOwner(userId, serialized, { contact_name: contactName });
+    void this.bookingNotifications.notifyOwner(userId, serialized, {
+      contact_name: contactName,
+      is_pending: (dto.status ?? 'confirmed') === 'pending',
+    });
 
     return { booking: serialized };
   }
 
   async updateBookingStatus(userId: number, bookingId: number, status: string) {
     const booking = await this.requireBooking(userId, bookingId);
+    const previousStatus = booking.status;
     const updated = await this.prisma.booking.update({
       where: { id: booking.id },
       data: { status },
       include: { resource: true },
     });
-    return { booking: serializeBooking(updated) };
+    const serialized = serializeBooking(updated);
+
+    if (status === 'confirmed' && previousStatus === 'pending') {
+      void this.bookingNotifications.notifyCustomerConfirmed(userId, serialized);
+    }
+
+    return { booking: serialized };
   }
 
   async cancelBooking(userId: number, bookingId: number) {
@@ -312,19 +323,23 @@ export class AvailabilityService {
       },
     });
 
-    return generateAvailableSlots(
+    return filterFutureSlotsForToday(
+      generateAvailableSlots(
+        dateStr,
+        timeZone,
+        {
+          startTime: schedule.startTime,
+          endTime: schedule.endTime,
+          slotMinutes: schedule.slotMinutes,
+        },
+        bookings.map((b) => ({
+          startsAt: b.startsAt,
+          endsAt: b.endsAt,
+          status: b.status,
+        })),
+      ),
       dateStr,
       timeZone,
-      {
-        startTime: schedule.startTime,
-        endTime: schedule.endTime,
-        slotMinutes: schedule.slotMinutes,
-      },
-      bookings.map((b) => ({
-        startsAt: b.startsAt,
-        endsAt: b.endsAt,
-        status: b.status,
-      })),
     );
   }
 

@@ -74,7 +74,7 @@ export class PickOptionsNodeExecutor implements NodeExecutor {
           return { success: false, error: 'pick_options node requires at least one option' };
         }
 
-        items = options.slice(0, 10).map((option, index) => {
+        items = options.map((option, index) => {
           const value = String(option.value ?? option.text ?? '').trim();
           return {
             optionText: String(option.text ?? value).trim(),

@@ -413,19 +413,28 @@ export class WorkflowTemplateService {
     return def;
   }
 
-  /** True when workflow still uses free-text booking instead of tap-to-pick buttons. */
+  /** True when workflow still uses free-text booking or auto-confirm instead of pending approval. */
   appointmentWorkflowNeedsUpgrade(definition: WorkflowDefinition | null | undefined): boolean {
     const nodes = definition?.nodes ?? [];
     const types = nodes.map((n) => n.type);
     const nodeIds = nodes.map((n) => n.id);
+    const bookSlot = nodes.find((n) => n.type === 'book_slot');
+    const bookData = (bookSlot?.data ?? {}) as Record<string, unknown>;
+    const hasPendingFlow =
+      bookData.status === 'pending' || typeof bookData.pending_message === 'string';
+
     return (
       types.includes('collect_input') ||
       !types.includes('pick_options') ||
+      !types.includes('list_resources') ||
       !types.includes('list_slots') ||
-      !types.includes('ai') ||
+      !types.includes('book_slot') ||
       nodeIds.includes('ai-welcome') ||
       nodeIds.includes('send-welcome') ||
-      nodeIds.includes('ai-service-ack')
+      nodeIds.includes('ai-service-ack') ||
+      nodeIds.includes('ai-thanks') ||
+      nodeIds.includes('send-thanks') ||
+      !hasPendingFlow
     );
   }
 

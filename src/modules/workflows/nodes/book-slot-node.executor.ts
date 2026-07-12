@@ -1,17 +1,21 @@
 import { ConflictException, Inject, Injectable, Logger } from '@nestjs/common';
 import { WorkflowExecution } from '@prisma/client';
 import { AvailabilityService } from '../../availability/availability.service';
+import { InboxService } from '../../inbox/inbox.service';
+import { SettingsService } from '../../settings/settings.service';
 import { JOB_DISPATCHER, JobDispatcher } from '../../queue/job-dispatcher';
 import { NodeExecutor, NodeExecutionResult } from './node-executor.interface';
 import { enqueueWorkflowText, formatSlotLabel, substituteContext } from './booking-node.helpers';
 
-/** Confirms a booking for the selected slot and sends the customer a WhatsApp confirmation. */
+/** Creates a pending booking request and sends the customer a WhatsApp acknowledgment. */
 @Injectable()
 export class BookSlotNodeExecutor implements NodeExecutor {
   private readonly logger = new Logger(BookSlotNodeExecutor.name);
 
   constructor(
     private readonly availability: AvailabilityService,
+    private readonly inbox: InboxService,
+    private readonly settings: SettingsService,
     @Inject(JOB_DISPATCHER) private readonly jobs: JobDispatcher,
   ) {}
 
@@ -34,14 +38,16 @@ export class BookSlotNodeExecutor implements NodeExecutor {
         return { success: false, error: 'Missing resource or slot selection for booking' };
       }
 
-      const confirmTemplate = String(
-        data.confirm_message ??
-          '✅ Your appointment is confirmed!\n\nStylist: {{resource_name}}\nWhen: {{booking_time}}\nService: {{service_type}}\n\nSee you soon!',
+      const pendingTemplate = String(
+        data.pending_message ??
+          'Thanks {{contact_name}}! We received your request for *{{service_type}}* with *{{resource_name}}* on *{{booking_time}}*.\n\nWe will check availability and confirm your booking shortly.',
       );
+      const pendingHeader = String(data.pending_header ?? '{{business_name}}');
       const conflictTemplate = String(
         data.conflict_message ??
           'Sorry, that slot was just taken. Please ask for available slots again and pick another time.',
       );
+      const bookingStatus = String(data.status ?? 'pending');
 
       try {
         const { booking } = await this.availability.createBooking(execution.userId, {
@@ -52,19 +58,43 @@ export class BookSlotNodeExecutor implements NodeExecutor {
           conversation_id: execution.conversationId ?? undefined,
           workflow_execution_id: execution.id,
           service_label: context.service_type ? String(context.service_type) : undefined,
+          status: bookingStatus,
         });
 
-        const bookingTime = formatSlotLabel(booking.starts_at);
-        const confirmation = substituteContext(confirmTemplate, {
+        const timeZone = (await this.settings.get(execution.userId, 'timezone')) || 'Asia/Kolkata';
+        const bookingTime = formatSlotLabel(booking.starts_at, timeZone);
+        const businessName = await this.resolveBusinessName(execution.userId, context);
+        const pendingContext = {
           ...context,
+          business_name: businessName,
           booking_id: booking.id,
+          booking_status: booking.status,
           resource_name: booking.resource_name ?? context.resource_name,
           booking_time: bookingTime,
           slot_starts_at: booking.starts_at,
           selected_slot_starts_at: booking.starts_at,
-        });
+        };
 
-        await enqueueWorkflowText(this.jobs, execution, confirmation);
+        const pendingBody = substituteContext(pendingTemplate, pendingContext);
+        const pendingHeaderText = substituteContext(pendingHeader, pendingContext);
+
+        if (execution.conversationId) {
+          const body = pendingHeaderText.trim()
+            ? `${pendingHeaderText.trim()}\n\n${pendingBody}`
+            : pendingBody;
+          const result = await this.inbox.sendInteractiveButtons(
+            execution.userId,
+            execution.conversationId,
+            body,
+            [{ id: `booking_pending_${booking.id}`, title: 'Got it' }],
+            { source: 'booking_pending', workflowId: execution.workflowId, nodeId: node.id },
+          );
+          if (!result.success) {
+            await enqueueWorkflowText(this.jobs, execution, body);
+          }
+        } else {
+          await enqueueWorkflowText(this.jobs, execution, pendingBody);
+        }
 
         return {
           success: true,
@@ -78,6 +108,7 @@ export class BookSlotNodeExecutor implements NodeExecutor {
             slot_ends_at: booking.ends_at,
             selected_resource_id: booking.resource_id,
             selected_slot_starts_at: booking.starts_at,
+            booking_pending: booking.status === 'pending',
           },
         };
       } catch (error: any) {
@@ -96,5 +127,18 @@ export class BookSlotNodeExecutor implements NodeExecutor {
       this.logger.error(`book_slot failed: ${error.message}`);
       return { success: false, error: error.message };
     }
+  }
+
+  private async resolveBusinessName(
+    userId: number,
+    context: Record<string, any>,
+  ): Promise<string> {
+    const fromContext = String(context.business_name ?? '').trim();
+    if (fromContext) return fromContext;
+    const businessName = (await this.settings.get(userId, 'business_name'))?.trim();
+    if (businessName) return businessName;
+    const description = (await this.settings.get(userId, 'business_description'))?.trim();
+    if (description) return description;
+    return 'Our business';
   }
 }

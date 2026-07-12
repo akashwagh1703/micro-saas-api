@@ -22,13 +22,16 @@ describe('business workflow templates', () => {
     assert.equal(template?.category, 'guided');
 
     const nodeTypes = (template?.definition.nodes ?? []).map((n) => n.type);
-    assert.ok(nodeTypes.includes('ai'), 'Live appointment flow uses AI for confirmation');
-    assert.equal(nodeTypes.filter((t) => t === 'ai').length, 1);
+    const nodeIds = (template?.definition.nodes ?? []).map((n) => n.id);
+    assert.ok(!nodeTypes.includes('ai'), 'Pending approval flow does not auto-confirm with AI');
+    assert.ok(!nodeIds.includes('ai-thanks'));
     assert.equal(nodeTypes[1], 'pick_options', 'Service buttons are the first customer-facing step');
     assert.ok(nodeTypes.includes('pick_options'));
     assert.ok(nodeTypes.includes('list_resources'));
     assert.ok(nodeTypes.includes('list_slots'));
     assert.ok(nodeTypes.includes('book_slot'));
+    const bookSlot = (template?.definition.nodes ?? []).find((n) => n.type === 'book_slot');
+    assert.equal((bookSlot?.data as Record<string, unknown>)?.status, 'pending');
     assert.ok(!nodeTypes.includes('collect_input'), 'Appointment flow is tap-to-pick only');
   });
 
@@ -58,12 +61,12 @@ describe('business workflow templates', () => {
     assert.ok(keywords.includes('haircut'));
   });
 
-  it('resolves clinic appointment to live booking template with AI + buttons', () => {
+  it('resolves clinic appointment to live booking template with pending approval', () => {
     assert.equal(resolveTemplateSlug('clinic', 'appointment_booking'), 'clinic-appointment');
     const template = findGuidedTemplate('clinic-appointment');
     assert.ok(template);
     const types = (template?.definition.nodes ?? []).map((n) => n.type);
-    assert.ok(types.includes('ai'));
+    assert.ok(!types.includes('ai'));
     assert.ok(types.includes('pick_options'));
     assert.ok(types.includes('book_slot'));
   });

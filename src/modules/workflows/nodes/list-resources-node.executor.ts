@@ -40,7 +40,7 @@ export class ListResourcesNodeExecutor implements NodeExecutor {
       }
 
       const { data: resources } = await this.availability.listResources(execution.userId);
-      const active = resources.filter((r) => r.is_active).slice(0, 10);
+      const active = resources.filter((r) => r.is_active);
 
       if (active.length === 0) {
         const emptyMessage = substituteContext(

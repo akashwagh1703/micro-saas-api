@@ -1,4 +1,4 @@
-import { zonedLocalDateTimeToUtc } from './timezone.util';
+import { localDateStrInTimeZone, zonedLocalDateTimeToUtc } from './timezone.util';
 
 export interface TimeSlot {
   starts_at: string;
@@ -71,6 +71,19 @@ export function generateAvailableSlots(
   }
 
   return slots;
+}
+
+/** When booking for today, drop slots that start at or before `now`. */
+export function filterFutureSlotsForToday(
+  slots: TimeSlot[],
+  dateStr: string,
+  timeZone: string,
+  now: Date = new Date(),
+): TimeSlot[] {
+  if (localDateStrInTimeZone(now, timeZone) !== dateStr) {
+    return slots;
+  }
+  return slots.filter((slot) => new Date(slot.starts_at) > now);
 }
 
 export function pickScheduleForDay(

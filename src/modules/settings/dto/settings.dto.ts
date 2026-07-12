@@ -69,6 +69,13 @@ export class UpdateBusinessProfileDto {
   business_description?: string;
 }
 
+export class UpdateBusinessDetailsDto {
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  business_name?: string;
+}
+
 export class UpdateIntegrationsDto {
   @IsOptional()
   @IsString()

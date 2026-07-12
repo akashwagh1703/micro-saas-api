@@ -177,6 +177,7 @@ function listSlotsNode(
   y: number,
   label: string,
   body: string,
+  header = 'Pick a time',
   dateField = 'preferred_date',
 ) {
   return {
@@ -186,23 +187,26 @@ function listSlotsNode(
     data: {
       label,
       summary: 'Shows available appointment slots',
+      header,
       body,
       date_field: dateField,
     },
   };
 }
 
-function bookSlotNode(id: string, y: number, label: string, confirmMessage: string) {
+function bookSlotNode(id: string, y: number, label: string, pendingMessage: string) {
   return {
     id,
     type: 'book_slot',
     y,
     data: {
       label,
-      summary: 'Books the selected slot and confirms to customer',
-      confirm_message: confirmMessage,
+      summary: 'Creates a pending booking request for owner approval',
+      pending_header: '{{business_name}}',
+      pending_message: pendingMessage,
+      status: 'pending',
       conflict_message:
-        'Sorry, that slot was just taken. Tap another time from the buttons below.',
+        'Sorry, that slot was just taken. Tap *View options* again and pick another time.',
     },
   };
 }
@@ -263,10 +267,10 @@ function leadSaveOnly(
 
 const LIVE_APPOINTMENT_AI = {
   thankYou:
-    `Write a cheerful booking confirmation for *{{business_name}}*. ` +
+    `Write a cheerful booking request acknowledgment for *{{business_name}}*. ` +
     `Customer: {{contact_name}}. Service: *{{service_type}}*. ` +
     `With: *{{resource_name}}*. When: *{{booking_time}}*. ` +
-    `Use 3-4 short lines with one emoji. Bold the key details. End with "See you then!"`,
+    `Use 3-4 short lines. Mention we will confirm shortly. End warmly.`,
 };
 
 interface LiveAppointmentMeta {
@@ -277,10 +281,12 @@ interface LiveAppointmentMeta {
   emoji: string;
   serviceHeader: string;
   serviceBody: string;
+  dateBody: string;
   resourceHeader: string;
   resourceBody: string;
+  slotsHeader: string;
   slotsBody: string;
-  bookConfirm: string;
+  pendingBook: string;
   leadNotes: string;
 }
 
@@ -289,98 +295,128 @@ const LIVE_APPOINTMENT_BY_VERTICAL: Record<SchedulingVertical, LiveAppointmentMe
     slug: 'salon-appointment',
     name: 'Salon Appointment Booking',
     description:
-      'AI welcome + button booking: services, date, stylist, and live slot confirmation.',
+      'Button booking: services, date, stylist, slots, then pending request until owner confirms.',
     role: 'salon/beauty',
     emoji: '✂️',
-    serviceHeader: 'Book at {{business_name}} ✂️',
+    serviceHeader: '{{business_name}} ✂️',
     serviceBody:
       'Hi {{contact_name}}! Welcome to *{{business_name}}*.\n\nTap a service below to book your appointment:',
-    resourceHeader: 'Pick your stylist',
-    resourceBody: 'Who would you like on {{preferred_date}}?',
-    slotsBody: 'Available times with {{resource_name}} on {{preferred_date}}:',
-    bookConfirm:
-      '✅ Appointment confirmed!\n\nStylist: {{resource_name}}\nWhen: {{booking_time}}\nService: {{service_type}}',
-    leadNotes: 'Salon appointment booking from WhatsApp',
+    dateBody:
+      'You chose *{{service_type}}* ✓\n\nWhen would you like to visit *{{business_name}}*? Tap *Today* or *Tomorrow*:',
+    resourceHeader: '{{business_name}} — pick stylist',
+    resourceBody:
+      'Great! Now choose your stylist for *{{preferred_date}}*.\n\nTap *View options* to see who is available:',
+    slotsHeader: 'Pick a time',
+    slotsBody:
+      'Available times with *{{resource_name}}* on *{{preferred_date}}*.\n\nTap *View options* to see all slots:',
+    pendingBook:
+      'Thanks {{contact_name}}! We received your request for *{{service_type}}* with *{{resource_name}}* on *{{booking_time}}*.\n\nWe will check availability and confirm your booking shortly.',
+    leadNotes: 'Salon appointment booking request from WhatsApp',
   },
   clinic: {
     slug: 'clinic-appointment',
     name: 'Clinic Appointment Booking',
-    description: 'AI welcome + button booking: service, date, doctor, and slot confirmation.',
+    description: 'Button booking: service, date, doctor, slots, pending until confirmed.',
     role: 'clinic/doctor',
     emoji: '🏥',
     serviceHeader: '{{business_name}} 🏥',
     serviceBody:
       'Hi {{contact_name}}! Welcome to *{{business_name}}*.\n\nTap the visit type you need:',
+    dateBody:
+      'Visit type: *{{service_type}}* ✓\n\nPick a day for your appointment at *{{business_name}}*:',
     resourceHeader: 'Choose your doctor',
-    resourceBody: 'Select a doctor for {{preferred_date}}:',
-    slotsBody: 'Pick a time with {{resource_name}} on {{preferred_date}}:',
-    bookConfirm:
-      '✅ Appointment confirmed!\n\nDoctor: {{resource_name}}\nWhen: {{booking_time}}\nVisit: {{service_type}}',
-    leadNotes: 'Clinic appointment booking from WhatsApp',
+    resourceBody:
+      'Select a doctor for *{{preferred_date}}*.\n\nTap *View options* to see the list:',
+    slotsHeader: 'Pick a time slot',
+    slotsBody:
+      'Open times with *{{resource_name}}* on *{{preferred_date}}*.\n\nTap *View options* for all slots:',
+    pendingBook:
+      'Thank you! Your request for *{{service_type}}* with *{{resource_name}}* on *{{booking_time}}* is received.\n\nWe will verify and confirm your appointment shortly.',
+    leadNotes: 'Clinic appointment booking request from WhatsApp',
   },
   coaching: {
     slug: 'coaching-appointment',
     name: 'Coaching Demo Class Booking',
-    description: 'AI welcome + button booking for demo classes and counselling sessions.',
+    description: 'Button booking for demo classes — pending until counsellor confirms.',
     role: 'coaching institute',
     emoji: '🎓',
     serviceHeader: '{{business_name}} 🎓',
     serviceBody:
       'Hi {{contact_name}}! Welcome to *{{business_name}}*.\n\nWhat would you like to book?',
-    resourceHeader: 'Choose your counsellor',
-    resourceBody: 'Who will you meet on {{preferred_date}}?',
-    slotsBody: 'Choose a slot with {{resource_name}} on {{preferred_date}}:',
-    bookConfirm:
-      '✅ Session confirmed!\n\nCounsellor: {{resource_name}}\nWhen: {{booking_time}}\nSession: {{service_type}}',
-    leadNotes: 'Coaching demo/session booking from WhatsApp',
+    dateBody:
+      'Session: *{{service_type}}* ✓\n\nWhen works for you at *{{business_name}}*?',
+    resourceHeader: 'Choose counsellor',
+    resourceBody:
+      'Who will you meet on *{{preferred_date}}*?\n\nTap *View options* to choose:',
+    slotsHeader: 'Choose a slot',
+    slotsBody:
+      'Slots with *{{resource_name}}* on *{{preferred_date}}*.\n\nTap *View options* for all times:',
+    pendingBook:
+      'Thanks! Your *{{service_type}}* session with *{{resource_name}}* on *{{booking_time}}* is submitted.\n\nWe will check availability and confirm your booking.',
+    leadNotes: 'Coaching demo/session booking request from WhatsApp',
   },
   real_estate: {
     slug: 'real-estate-appointment',
     name: 'Real Estate Site Visit Booking',
-    description: 'AI welcome + button booking for site visits and property consultations.',
+    description: 'Button booking for site visits — pending until agent confirms.',
     role: 'real estate agency',
     emoji: '🏠',
     serviceHeader: '{{business_name}} 🏠',
     serviceBody:
       'Hi {{contact_name}}! Welcome to *{{business_name}}*.\n\nTap the visit type you need:',
+    dateBody:
+      'Visit type: *{{service_type}}* ✓\n\nPick a day for your site visit at *{{business_name}}*:',
     resourceHeader: 'Choose your agent',
-    resourceBody: 'Which agent should meet you on {{preferred_date}}?',
-    slotsBody: 'Available times with {{resource_name}} on {{preferred_date}}:',
-    bookConfirm:
-      '✅ Visit confirmed!\n\nAgent: {{resource_name}}\nWhen: {{booking_time}}\nVisit: {{service_type}}',
-    leadNotes: 'Real estate site visit booking from WhatsApp',
+    resourceBody:
+      'Which agent should meet you on *{{preferred_date}}*?\n\nTap *View options* to see agents:',
+    slotsHeader: 'Pick visit time',
+    slotsBody:
+      'Times with *{{resource_name}}* on *{{preferred_date}}*.\n\nTap *View options* for all slots:',
+    pendingBook:
+      'Thanks! Your *{{service_type}}* visit with *{{resource_name}}* on *{{booking_time}}* is submitted.\n\nWe will confirm your appointment shortly.',
+    leadNotes: 'Real estate site visit booking request from WhatsApp',
   },
   ca_accountant: {
     slug: 'ca-accountant-appointment',
     name: 'CA Consultation Booking',
-    description: 'AI welcome + button booking for tax and compliance consultations.',
+    description: 'Button booking for consultations — pending until confirmed.',
     role: 'CA/accountant firm',
     emoji: '📊',
     serviceHeader: '{{business_name}} 📊',
     serviceBody:
       'Hi {{contact_name}}! Welcome to *{{business_name}}*.\n\nTap the consultation you need:',
-    resourceHeader: 'Choose your consultant',
-    resourceBody: 'Select a consultant for {{preferred_date}}:',
-    slotsBody: 'Pick a slot with {{resource_name}} on {{preferred_date}}:',
-    bookConfirm:
-      '✅ Consultation confirmed!\n\nConsultant: {{resource_name}}\nWhen: {{booking_time}}\nService: {{service_type}}',
-    leadNotes: 'CA consultation booking from WhatsApp',
+    dateBody:
+      'Consultation: *{{service_type}}* ✓\n\nPick a day at *{{business_name}}*:',
+    resourceHeader: 'Choose consultant',
+    resourceBody:
+      'Select a consultant for *{{preferred_date}}*.\n\nTap *View options* to choose:',
+    slotsHeader: 'Pick a slot',
+    slotsBody:
+      'Open slots with *{{resource_name}}* on *{{preferred_date}}*.\n\nTap *View options* for all times:',
+    pendingBook:
+      'Thank you! Your *{{service_type}}* with *{{resource_name}}* on *{{booking_time}}* is received.\n\nWe will verify and confirm your appointment.',
+    leadNotes: 'CA consultation booking request from WhatsApp',
   },
   travel: {
     slug: 'travel-booking',
     name: 'Travel Trip Booking Assistant',
-    description: 'AI welcome + button booking for trip planning and travel consultations.',
+    description: 'Button booking for travel consultations — pending until expert confirms.',
     role: 'travel agency',
     emoji: '✈️',
     serviceHeader: '{{business_name}} ✈️',
     serviceBody:
       'Hi {{contact_name}}! Welcome to *{{business_name}}*.\n\nHow can we help with your trip?',
-    resourceHeader: 'Choose your travel expert',
-    resourceBody: 'Select an expert for {{preferred_date}}:',
-    slotsBody: 'Available call times with {{resource_name}} on {{preferred_date}}:',
-    bookConfirm:
-      '✅ Session confirmed!\n\nExpert: {{resource_name}}\nWhen: {{booking_time}}\nTopic: {{service_type}}',
-    leadNotes: 'Travel consultation booking from WhatsApp',
+    dateBody:
+      'Topic: *{{service_type}}* ✓\n\nWhen should we connect at *{{business_name}}*?',
+    resourceHeader: 'Choose travel expert',
+    resourceBody:
+      'Select an expert for *{{preferred_date}}*.\n\nTap *View options* to see the team:',
+    slotsHeader: 'Pick call time',
+    slotsBody:
+      'Call times with *{{resource_name}}* on *{{preferred_date}}*.\n\nTap *View options* for all slots:',
+    pendingBook:
+      'Thanks! Your *{{service_type}}* call with *{{resource_name}}* on *{{booking_time}}* is submitted.\n\nWe will check availability and confirm your booking.',
+    leadNotes: 'Travel consultation booking request from WhatsApp',
   },
 };
 
@@ -408,7 +444,7 @@ function buildLiveAppointmentFlow(vertical: SchedulingVertical): WorkflowTemplat
         'pick-date',
         280,
         'Pick Date',
-        'You chose *{{service_type}}* ✓\n\nWhen would you like to visit? Tap *Today* or *Tomorrow*:',
+        meta.dateBody,
         '📅 Choose your day',
       ),
       listResourcesNode(
@@ -418,17 +454,9 @@ function buildLiveAppointmentFlow(vertical: SchedulingVertical): WorkflowTemplat
         meta.resourceBody,
         meta.resourceHeader,
       ),
-      listSlotsNode('list-slots', 520, 'Pick Slot', meta.slotsBody),
-      bookSlotNode('book-slot', 640, 'Confirm Booking', meta.bookConfirm),
-      aiNode(
-        'ai-thanks',
-        760,
-        'AI Thank You',
-        'Personalized confirmation',
-        LIVE_APPOINTMENT_AI.thankYou,
-      ),
-      sendNode('send-thanks', 840, 'Send Thanks', '{{ai_response}}'),
-      ...leadSaveOnly(960, {
+      listSlotsNode('list-slots', 520, 'Pick Slot', meta.slotsBody, meta.slotsHeader),
+      bookSlotNode('book-slot', 640, 'Request Booking', meta.pendingBook),
+      ...leadSaveOnly(760, {
         collectedFields: ['service_type', 'preferred_date', 'resource_name', 'booking_time'],
         notes: meta.leadNotes,
       }),

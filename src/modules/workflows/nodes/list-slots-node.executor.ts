@@ -60,7 +60,7 @@ export class ListSlotsNodeExecutor implements NodeExecutor {
 
       const slotsResponse = await this.availability.getSlots(execution.userId, date, resourceId);
       const resourceRow = slotsResponse.resources[0];
-      const slots = (resourceRow?.slots ?? []).slice(0, 10);
+      const slots = resourceRow?.slots ?? [];
 
       if (slots.length === 0) {
         const noSlotsMessage = substituteContext(
@@ -96,8 +96,12 @@ export class ListSlotsNodeExecutor implements NodeExecutor {
       const template = await createDynamicInteractiveTemplate(this.prisma, execution.userId, {
         name: `wf-${execution.id}-${node.id}-slots`,
         header: data.header
-          ? substituteContext(String(data.header), context)
-          : `Slots on ${date}`,
+          ? substituteContext(String(data.header), {
+              ...context,
+              preferred_date: date,
+              resource_name: context.resource_name ?? resourceRow?.resource_name ?? 'your stylist',
+            })
+          : substituteContext('{{business_name}} — pick a time', context),
         body: substituteContext(
           String(
             data.body ??
