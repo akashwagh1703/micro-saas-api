@@ -1,0 +1,116 @@
+import { Inject, Injectable, Logger } from '@nestjs/common';
+import { WorkflowExecution } from '@prisma/client';
+import { AvailabilityService } from '../../availability/availability.service';
+import { JOB_DISPATCHER, JobDispatcher } from '../../queue/job-dispatcher';
+import { PrismaService } from '../../../prisma/prisma.service';
+import { UserStateService } from '../user-state.service';
+import { NodeExecutor, NodeExecutionResult } from './node-executor.interface';
+import {
+  createDynamicInteractiveTemplate,
+  enqueueWorkflowText,
+  resolveContactPhone,
+  resolveNextNodeIdFromWorkflow,
+  substituteContext,
+} from './booking-node.helpers';
+
+/** Lists bookable resources (barbers, doctors, etc.) as a WhatsApp interactive picker. */
+@Injectable()
+export class ListResourcesNodeExecutor implements NodeExecutor {
+  private readonly logger = new Logger(ListResourcesNodeExecutor.name);
+
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly availability: AvailabilityService,
+    private readonly userStateService: UserStateService,
+    @Inject(JOB_DISPATCHER) private readonly jobs: JobDispatcher,
+  ) {}
+
+  async execute(
+    execution: WorkflowExecution,
+    node: Record<string, any>,
+    context: Record<string, any>,
+  ): Promise<NodeExecutionResult> {
+    try {
+      const data = node.data ?? {};
+      const contactPhone = await resolveContactPhone(this.prisma, execution, context);
+      if (!contactPhone) {
+        return { success: false, error: 'No contact phone number in context or execution' };
+      }
+
+      const { data: resources } = await this.availability.listResources(execution.userId);
+      const active = resources.filter((r) => r.is_active).slice(0, 10);
+
+      if (active.length === 0) {
+        const emptyMessage = substituteContext(
+          String(
+            data.empty_message ??
+              'Sorry, no team members are available for booking right now. Please try again later.',
+          ),
+          context,
+        );
+        await enqueueWorkflowText(this.jobs, execution, emptyMessage);
+        return { success: true, stop: true, output: { resources_offered: 0 } };
+      }
+
+      const nextNodeId = await resolveNextNodeIdFromWorkflow(
+        this.prisma,
+        execution.workflowId,
+        node.id,
+      );
+      if (!nextNodeId) {
+        return { success: false, error: 'list_resources node has no outgoing edge' };
+      }
+
+      const template = await createDynamicInteractiveTemplate(this.prisma, execution.userId, {
+        name: `wf-${execution.id}-${node.id}-resources`,
+        header: data.header ? substituteContext(String(data.header), context) : 'Choose who to book with',
+        body: substituteContext(
+          String(data.body ?? 'Select a team member to continue with your appointment:'),
+          context,
+        ),
+        items: active.map((resource, index) => ({
+          optionText: resource.name,
+          description: resource.type,
+          displayOrder: index,
+          nextNodeId,
+          metadata: {
+            resource_id: resource.id,
+            resource_name: resource.name,
+            selected_resource_id: resource.id,
+          },
+        })),
+        useButtons: active.length <= 3,
+      });
+
+      await this.jobs.enqueueSendInteractiveMessage({
+        userId: execution.userId,
+        phoneNumber: contactPhone,
+        conversationId: execution.conversationId || 0,
+        templateId: template.id,
+        workflowId: execution.workflowId,
+        nodeId: node.id,
+      });
+
+      await this.userStateService.saveUserState(
+        execution.userId,
+        contactPhone,
+        execution.workflowId,
+        node.id,
+        String(template.id),
+        'WAITING_FOR_RESPONSE',
+      );
+
+      return {
+        success: true,
+        pause: true,
+        output: {
+          resources_offered: active.length,
+          template_id: template.id,
+        },
+      };
+    } catch (error: any) {
+      this.logger.error(`list_resources failed: ${error.message}`);
+      return { success: false, error: error.message };
+    }
+  }
+}

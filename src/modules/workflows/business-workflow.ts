@@ -7,6 +7,7 @@
 import type { WorkflowDefinition } from './workflow-templates';
 
 export const BUSINESS_LABELS: Record<string, string> = {
+  salon: 'Salon / Beauty',
   farmer: 'Farmer / Agriculture',
   real_estate: 'Real Estate',
   coaching: 'Coaching Institute',
@@ -31,6 +32,7 @@ export const USE_CASE_LABELS: Record<string, string> = {
 
 /** Short phrase describing the business, injected into AI prompts. */
 const BUSINESS_CONTEXT: Record<string, string> = {
+  salon: 'a salon/beauty business managing barber/stylist appointments and services',
   farmer: 'an agriculture/farming business helping farmers with produce, crops, and supplies',
   real_estate: 'a real estate agency helping clients buy, sell, or rent property',
   coaching: 'a coaching institute helping students with courses, admissions, and schedules',
@@ -60,6 +62,9 @@ const USE_CASE_FALLBACK: Record<string, string> = {
  * Keys are `<business>:<useCase>`. "other" uses generic fallbacks only.
  */
 const COMBO_OVERRIDES: Record<string, string> = {
+  // Salon
+  'salon:appointment_booking': 'salon-appointment',
+
   // Real Estate
   'real_estate:lead_generation': 'real-estate-lead-gen',
   'real_estate:appointment_booking': 'real-estate-appointment',
@@ -172,7 +177,17 @@ export function businessPromptPrefix(businessCategory: string): string {
  */
 export const USE_CASE_TRIGGER_KEYWORDS: Record<string, string[]> = {
   lead_generation: ['lead', 'buy', 'quote', 'interested', 'inquiry', 'price'],
-  appointment_booking: ['book', 'appointment', 'schedule', 'slot', 'meeting', 'visit'],
+  appointment_booking: [
+    'book',
+    'appointment',
+    'schedule',
+    'slot',
+    'meeting',
+    'visit',
+    'barber',
+    'stylist',
+    'haircut',
+  ],
   faq_bot: ['faq', 'hours', 'location', 'info', 'timing', 'address', 'where'],
   customer_support: ['help', 'support', 'issue', 'problem', 'complaint', 'assist'],
   sales_assistant: ['order', 'purchase', 'catalog', 'product', 'shop', 'buy'],

@@ -12,6 +12,9 @@ import { SendMessageNodeExecutor } from './nodes/send-message-node.executor';
 import { CollectInputNodeExecutor } from './nodes/collect-input-node.executor';
 import { SaveLeadNodeExecutor } from './nodes/save-lead-node.executor';
 import { DelayNodeExecutor } from './nodes/delay-node.executor';
+import { ListResourcesNodeExecutor } from './nodes/list-resources-node.executor';
+import { ListSlotsNodeExecutor } from './nodes/list-slots-node.executor';
+import { BookSlotNodeExecutor } from './nodes/book-slot-node.executor';
 // Phase 5: Interactive Message Node Executor
 import { InteractiveMessageNodeExecutor } from './nodes/interactive-message-node.executor';
 
@@ -42,6 +45,9 @@ export class WorkflowExecutionService {
     delay: DelayNodeExecutor,
     // Phase 5: Inject interactive message executor
     interactiveMessage: InteractiveMessageNodeExecutor,
+    listResources: ListResourcesNodeExecutor,
+    listSlots: ListSlotsNodeExecutor,
+    bookSlot: BookSlotNodeExecutor,
     @Inject(JOB_DISPATCHER) private readonly jobs: JobDispatcher,
   ) {
     this.executors = {
@@ -55,6 +61,9 @@ export class WorkflowExecutionService {
       delay,
       // Phase 5: Register interactive message executor
       interactive_message: interactiveMessage,
+      list_resources: listResources,
+      list_slots: listSlots,
+      book_slot: bookSlot,
     };
   }
 
@@ -106,15 +115,24 @@ export class WorkflowExecutionService {
       return;
     }
 
+    const resumeFromInteractive =
+      context.__resumed_from_interactive_message === true &&
+      typeof context.__resume_at_node_id === 'string';
     const resumeFromPause =
-      context.__resuming === true && typeof context.__paused_at_node_id === 'string';
+      !resumeFromInteractive &&
+      context.__resuming === true &&
+      typeof context.__paused_at_node_id === 'string';
     const resumeFromDelay =
-      context.__resuming === true && typeof context.__resume_at_node_id === 'string';
-    let currentId: string | null = resumeFromPause
-      ? (context.__paused_at_node_id as string)
-      : resumeFromDelay
-        ? (context.__resume_at_node_id as string)
-        : trigger.id;
+      !resumeFromInteractive &&
+      context.__resuming === true &&
+      typeof context.__resume_at_node_id === 'string';
+    let currentId: string | null = resumeFromInteractive
+      ? (context.__resume_at_node_id as string)
+      : resumeFromPause
+        ? (context.__paused_at_node_id as string)
+        : resumeFromDelay
+          ? (context.__resume_at_node_id as string)
+          : trigger.id;
 
     const visited: Record<string, boolean> = {};
     let steps = 0;

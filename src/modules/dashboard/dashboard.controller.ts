@@ -7,6 +7,7 @@ import { serializeActivity } from '../../common/serializers';
 import { buildVisibleWorkflowsWhere } from '../../common/workflow-scope';
 import { SettingsService } from '../settings/settings.service';
 import { buildChannelAnalytics, resolveAnalyticsDays } from './dashboard-analytics';
+import { computeBookingDashboardStats } from './dashboard-booking-stats';
 
 @Controller('dashboard')
 @UseGuards(TokenAuthGuard)
@@ -54,6 +55,8 @@ export class DashboardController {
       this.prisma.executionLog.count({ where: { nodeType: 'ai', execution: { userId } } }),
     ]);
 
+    const bookingStats = await computeBookingDashboardStats(this.prisma, this.settings, userId);
+
     return {
       total_messages: totalMessages,
       whatsapp_messages: whatsappMessages,
@@ -72,6 +75,7 @@ export class DashboardController {
       instagram_username: instagramAccount?.username ?? null,
       instagram_display: instagramAccount?.displayName ?? null,
       ai_usage: aiUsage,
+      ...bookingStats,
     };
   }
 

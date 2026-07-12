@@ -3,6 +3,7 @@ import { IntegrationsModule } from '../integrations/integrations.module';
 import { SettingsModule } from '../settings/settings.module';
 import { BillingModule } from '../billing/billing.module';
 import { LeadsModule } from '../leads/leads.module';
+import { AvailabilityModule } from '../availability/availability.module';
 import { WorkflowsController } from './workflows.controller';
 import { WorkflowWebhookController } from './workflow-webhook.controller';
 import { WorkflowValidator } from './workflow-validator.service';
@@ -19,6 +20,9 @@ import { SendMessageNodeExecutor } from './nodes/send-message-node.executor';
 import { CollectInputNodeExecutor } from './nodes/collect-input-node.executor';
 import { SaveLeadNodeExecutor } from './nodes/save-lead-node.executor';
 import { DelayNodeExecutor } from './nodes/delay-node.executor';
+import { ListResourcesNodeExecutor } from './nodes/list-resources-node.executor';
+import { ListSlotsNodeExecutor } from './nodes/list-slots-node.executor';
+import { BookSlotNodeExecutor } from './nodes/book-slot-node.executor';
 // Phase 5: Interactive Message Services
 import { InteractiveMessageNodeExecutor } from './nodes/interactive-message-node.executor';
 import { UserStateService } from './user-state.service';
@@ -26,7 +30,7 @@ import { InteractiveMessageHandlerService } from './interactive-message-handler.
 import { WorkflowValidationInteractiveService } from './workflow-validation-interactive.service';
 
 @Module({
-  imports: [IntegrationsModule, SettingsModule, BillingModule, LeadsModule],
+  imports: [IntegrationsModule, SettingsModule, BillingModule, LeadsModule, AvailabilityModule],
   controllers: [
     WorkflowsController,
     WorkflowWebhookController,
@@ -46,6 +50,9 @@ import { WorkflowValidationInteractiveService } from './workflow-validation-inte
     CollectInputNodeExecutor,
     SaveLeadNodeExecutor,
     DelayNodeExecutor,
+    ListResourcesNodeExecutor,
+    ListSlotsNodeExecutor,
+    BookSlotNodeExecutor,
     // Phase 5: Interactive Message Services
     InteractiveMessageNodeExecutor,
     UserStateService,

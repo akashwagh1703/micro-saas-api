@@ -9,6 +9,7 @@ import {
 } from '../leads/lead-api.config';
 import { resolveLeadApiChannelFromTrigger } from './workflow-trigger-channel';
 import { currentBusinessPublishedWhere, parseUseCases } from '../../common/workflow-scope';
+import { validateBusinessSetup } from '../../platform/catalog-validation';
 import { WORKFLOW_TEMPLATES, WorkflowDefinition, findTemplate } from './workflow-templates';
 import { findAnyTemplate } from './business-workflow-templates';
 import { AiWorkflowGeneratorService } from './ai-workflow-generator.service';
@@ -90,6 +91,19 @@ export class WorkflowTemplateService {
   ): Promise<Workflow[]> {
     const uniqueUseCases = [...new Set(useCases)];
     const currentCategory = await this.settings.get(userId, 'business_category');
+
+    const validation = validateBusinessSetup({
+      businessCategory,
+      useCases: uniqueUseCases,
+      currentCategory,
+    });
+    if (validation) {
+      throw new UnprocessableEntityException({
+        message: validation.message,
+        errors: validation.errors,
+      });
+    }
+
     const currentSettings = await this.settings.getMany(userId, ['use_cases', 'use_case']);
     const currentUseCases = parseUseCases(currentSettings);
     const isBusinessChange = !!currentCategory && currentCategory !== businessCategory;

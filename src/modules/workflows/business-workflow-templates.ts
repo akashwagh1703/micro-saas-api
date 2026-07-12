@@ -72,6 +72,61 @@ function collectNode(
   };
 }
 
+function listResourcesNode(
+  id: string,
+  y: number,
+  label: string,
+  body: string,
+  header = 'Choose your stylist',
+) {
+  return {
+    id,
+    type: 'list_resources',
+    y,
+    data: {
+      label,
+      summary: 'Shows barbers/stylists as a WhatsApp picker',
+      header,
+      body,
+    },
+  };
+}
+
+function listSlotsNode(
+  id: string,
+  y: number,
+  label: string,
+  body: string,
+  dateField = 'preferred_date',
+) {
+  return {
+    id,
+    type: 'list_slots',
+    y,
+    data: {
+      label,
+      summary: 'Shows available appointment slots',
+      body,
+      date_field: dateField,
+    },
+  };
+}
+
+function bookSlotNode(id: string, y: number, label: string, confirmMessage: string) {
+  return {
+    id,
+    type: 'book_slot',
+    y,
+    data: {
+      label,
+      summary: 'Books the selected slot and confirms to customer',
+      confirm_message: confirmMessage,
+      conflict_message:
+        'Sorry, that slot was just taken. Reply with another date and we will show fresh times.',
+    },
+  };
+}
+
 function leadCaptureTail(
   yStart: number,
   confirmMessage: string,
@@ -102,6 +157,60 @@ function leadCaptureTail(
     ),
   ];
 }
+
+// --- Salon ---
+
+const salonAppointment: WorkflowTemplate = {
+  slug: 'salon-appointment',
+  name: 'Salon Appointment Booking',
+  description:
+    'Live slot booking: pick a stylist, choose a date, select an available time, and get instant confirmation.',
+  category: 'guided',
+  trigger_type: 'message_received',
+  definition: linearFlow([
+    triggerNode(),
+    collectNode(
+      'collect-service',
+      200,
+      'service_type',
+      'Ask Service',
+      'What service would you like? (e.g. haircut, beard trim, styling)',
+    ),
+    collectNode(
+      'collect-date',
+      320,
+      'preferred_date',
+      'Ask Date',
+      'What date works best? Reply with tomorrow, 15 Jul, or 2026-07-15.',
+    ),
+    listResourcesNode(
+      'list-resources',
+      440,
+      'Pick Stylist',
+      'Great! Now choose who you would like to book with:',
+    ),
+    listSlotsNode(
+      'list-slots',
+      560,
+      'Pick Slot',
+      'Select an available time for {{resource_name}} on {{preferred_date}}:',
+    ),
+    bookSlotNode(
+      'book-slot',
+      680,
+      'Confirm Booking',
+      '✅ Appointment confirmed!\n\nStylist: {{resource_name}}\nWhen: {{booking_time}}\nService: {{service_type}}\n\nSee you at the salon!',
+    ),
+    ...leadCaptureTail(
+      800,
+      "Thanks {{contact_name}}! ✂️ Your appointment is saved.\n\nStylist: {{resource_name}}\nWhen: {{booking_time}}\nService: {{service_type}}",
+      {
+        collectedFields: ['service_type', 'preferred_date', 'resource_name', 'booking_time'],
+        notes: 'Salon appointment booking from WhatsApp',
+      },
+    ),
+  ]),
+};
 
 // --- Real Estate ---
 
@@ -570,6 +679,7 @@ const supportTeamAssistant: WorkflowTemplate = {
 };
 
 export const GUIDED_WORKFLOW_TEMPLATES: WorkflowTemplate[] = [
+  salonAppointment,
   realEstateLeadGen,
   realEstateAppointment,
   realEstateFaq,

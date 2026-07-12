@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CryptoService } from '../../common/crypto/crypto.service';
 import { currentBusinessPublishedWhere, parseUseCases } from '../../common/workflow-scope';
+import { verticalProfileFields } from '../../platform/business-verticals.registry';
 import { businessLabel, useCaseLabel } from '../workflows/business-workflow';
 
 const ENCRYPTED_KEYS = [
@@ -92,6 +93,7 @@ export class SettingsService {
         (business_category === 'career_ai' || use_cases.length > 0),
       published_count,
       can_change_business: published_count === 0,
+      ...verticalProfileFields(business_category),
     };
   }
 }

@@ -29,6 +29,7 @@ import { WorkflowValidator } from './workflow-validator.service';
 import { WorkflowTemplateService } from './workflow-template.service';
 import { WorkflowTriggerService } from './workflow-trigger.service';
 import { WorkflowDefinition } from './workflow-templates';
+import { validateBusinessSetup } from '../../platform/catalog-validation';
 import {
   CreateWorkflowDto,
   GenerateWorkflowDto,
@@ -110,7 +111,20 @@ export class WorkflowsController {
   }
 
   @Get('generate/preview')
-  preview(@Query() query: GenerateWorkflowQueryDto) {
+  async preview(@CurrentUser('id') userId: number, @Query() query: GenerateWorkflowQueryDto) {
+    const currentCategory = await this.settings.get(userId, 'business_category');
+    const validation = validateBusinessSetup({
+      businessCategory: query.business_category,
+      useCases: [query.use_case],
+      currentCategory,
+    });
+    if (validation) {
+      throw new UnprocessableEntityException({
+        message: validation.message,
+        errors: validation.errors,
+      });
+    }
+
     const result = this.templates.previewGeneration(
       query.business_category,
       query.use_case,

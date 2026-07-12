@@ -152,11 +152,38 @@ export class InteractiveMessageHandlerService {
         return false;
       }
 
+      const option = await this.prisma.interactiveMessageOption.findUnique({
+        where: { id: parseInt(selectedOptionId, 10) },
+      });
+
       const context = (execution.context as Record<string, any>) || {};
       context.__selected_option_id = selectedOptionId;
       context.__interactive_response_received = true;
       context.__resumed_from_interactive_message = true;
+      context.__resuming = true;
       context.__resume_at_node_id = nextNodeId;
+      delete context.__paused_at_node_id;
+
+      if (option?.metadata && typeof option.metadata === 'object' && !Array.isArray(option.metadata)) {
+        const meta = option.metadata as Record<string, unknown>;
+        if (meta.resource_id != null) {
+          context.resource_id = meta.resource_id;
+          context.selected_resource_id = meta.resource_id;
+        }
+        if (meta.resource_name != null) {
+          context.resource_name = meta.resource_name;
+        }
+        if (meta.starts_at != null) {
+          context.slot_starts_at = meta.starts_at;
+          context.selected_slot_starts_at = meta.starts_at;
+        }
+        if (meta.ends_at != null) {
+          context.slot_ends_at = meta.ends_at;
+        }
+        if (meta.preferred_date != null) {
+          context.preferred_date = meta.preferred_date;
+        }
+      }
 
       await this.prisma.workflowExecution.update({
         where: { id: executionId },

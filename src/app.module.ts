@@ -28,6 +28,7 @@ import { PlatformModule } from './platform/platform.module';
 import { WebsiteModule } from './modules/website/website.module';
 import { InteractiveMessagesModule } from './modules/interactive-messages/interactive-messages.module';
 import { IntegrationsModule } from './modules/integrations/integrations.module';
+import { AvailabilityModule } from './modules/availability/availability.module';
 import { AppController } from './app.controller';
 
 @Module({
@@ -58,6 +59,7 @@ import { AppController } from './app.controller';
     WebsiteModule,
     InteractiveMessagesModule,
     IntegrationsModule,
+    AvailabilityModule,
   ],
   controllers: [AppController],
 })
