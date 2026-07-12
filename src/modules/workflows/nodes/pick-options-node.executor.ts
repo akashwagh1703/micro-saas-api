@@ -3,8 +3,7 @@ import { WorkflowExecution } from '@prisma/client';
 import { SettingsService } from '../../settings/settings.service';
 import {
   defaultServicesForVertical,
-  isSchedulingVertical,
-} from '../../platform/appointment-services';
+} from '../../../platform/appointment-services';
 import { JOB_DISPATCHER, JobDispatcher } from '../../queue/job-dispatcher';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { UserStateService } from '../user-state.service';

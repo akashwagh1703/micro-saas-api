@@ -430,7 +430,9 @@ export class WorkflowTemplateService {
   async upgradeAppointmentWorkflowIfNeeded(userId: number, workflow: Workflow): Promise<Workflow | null> {
     if (workflow.useCase !== 'appointment_booking') return null;
     if (!isSchedulingVertical(workflow.businessCategory)) return null;
-    if (!this.appointmentWorkflowNeedsUpgrade(workflow.definition as WorkflowDefinition)) {
+    if (
+      !this.appointmentWorkflowNeedsUpgrade(workflow.definition as unknown as WorkflowDefinition)
+    ) {
       return null;
     }
 
