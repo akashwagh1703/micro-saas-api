@@ -38,12 +38,22 @@ const INTERACTIVE_MESSAGE_TYPES = [
 
 /** Ensures DB has interactive message types (seed may not have run in production). */
 export async function ensureInteractiveMessageTypes(prisma: PrismaService): Promise<void> {
-  for (const row of INTERACTIVE_MESSAGE_TYPES) {
-    await prisma.interactiveMessageType.upsert({
-      where: { name: row.name },
-      update: {},
-      create: row,
-    });
+  try {
+    for (const row of INTERACTIVE_MESSAGE_TYPES) {
+      await prisma.interactiveMessageType.upsert({
+        where: { name: row.name },
+        update: {},
+        create: row,
+      });
+    }
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (message.includes('interactive_message_types') && message.includes('does not exist')) {
+      throw new Error(
+        'Database missing interactive_message_types table. Run: npx prisma migrate deploy',
+      );
+    }
+    throw error;
   }
 }
 
