@@ -24,8 +24,8 @@ describe('business workflow templates', () => {
     const nodeTypes = (template?.definition.nodes ?? []).map((n) => n.type);
     assert.deepEqual(nodeTypes, [
       'trigger',
-      'collect_input',
-      'collect_input',
+      'pick_options',
+      'pick_options',
       'list_resources',
       'list_slots',
       'book_slot',

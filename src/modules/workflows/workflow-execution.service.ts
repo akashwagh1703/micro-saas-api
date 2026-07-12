@@ -15,6 +15,7 @@ import { DelayNodeExecutor } from './nodes/delay-node.executor';
 import { ListResourcesNodeExecutor } from './nodes/list-resources-node.executor';
 import { ListSlotsNodeExecutor } from './nodes/list-slots-node.executor';
 import { BookSlotNodeExecutor } from './nodes/book-slot-node.executor';
+import { PickOptionsNodeExecutor } from './nodes/pick-options-node.executor';
 // Phase 5: Interactive Message Node Executor
 import { InteractiveMessageNodeExecutor } from './nodes/interactive-message-node.executor';
 
@@ -48,6 +49,7 @@ export class WorkflowExecutionService {
     listResources: ListResourcesNodeExecutor,
     listSlots: ListSlotsNodeExecutor,
     bookSlot: BookSlotNodeExecutor,
+    pickOptions: PickOptionsNodeExecutor,
     @Inject(JOB_DISPATCHER) private readonly jobs: JobDispatcher,
   ) {
     this.executors = {
@@ -64,6 +66,7 @@ export class WorkflowExecutionService {
       list_resources: listResources,
       list_slots: listSlots,
       book_slot: bookSlot,
+      pick_options: pickOptions,
     };
   }
 

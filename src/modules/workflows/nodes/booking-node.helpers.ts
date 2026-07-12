@@ -158,9 +158,52 @@ function addDays(date: Date, days: number): Date {
   return next;
 }
 
-function formatYmd(date: Date): string {
+export function formatYmd(date: Date): string {
   const y = date.getFullYear();
   const m = String(date.getMonth() + 1).padStart(2, '0');
   const d = String(date.getDate()).padStart(2, '0');
   return `${y}-${m}-${d}`;
+}
+
+function formatShortDayLabel(date: Date): string {
+  try {
+    return new Intl.DateTimeFormat('en-IN', {
+      weekday: 'short',
+      day: 'numeric',
+      month: 'short',
+    }).format(date);
+  } catch {
+    return formatYmd(date);
+  }
+}
+
+/** Today / Tomorrow quick-pick buttons with normalized YYYY-MM-DD values. */
+export function buildQuickDatePickItems(nextNodeId: string, field = 'preferred_date'): DynamicInteractiveItem[] {
+  const today = startOfLocalDay(new Date());
+  const tomorrow = addDays(today, 1);
+
+  return [
+    {
+      optionText: 'Today',
+      description: formatShortDayLabel(today),
+      displayOrder: 0,
+      nextNodeId,
+      metadata: {
+        preferred_date: formatYmd(today),
+        context_field: field,
+        context_value: formatYmd(today),
+      },
+    },
+    {
+      optionText: 'Tomorrow',
+      description: formatShortDayLabel(tomorrow),
+      displayOrder: 1,
+      nextNodeId,
+      metadata: {
+        preferred_date: formatYmd(tomorrow),
+        context_field: field,
+        context_value: formatYmd(tomorrow),
+      },
+    },
+  ];
 }

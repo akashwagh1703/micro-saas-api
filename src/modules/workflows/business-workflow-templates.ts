@@ -72,6 +72,48 @@ function collectNode(
   };
 }
 
+function pickOptionsNode(
+  id: string,
+  y: number,
+  label: string,
+  field: string,
+  header: string,
+  body: string,
+  options: { text: string; description?: string; value: string }[],
+  footer?: string,
+) {
+  return {
+    id,
+    type: 'pick_options',
+    y,
+    data: {
+      label,
+      summary: `Tap-to-pick: ${label}`,
+      field,
+      header,
+      body,
+      footer,
+      options,
+    },
+  };
+}
+
+function pickDateNode(id: string, y: number, label: string, body: string, header = 'Pick a day') {
+  return {
+    id,
+    type: 'pick_options',
+    y,
+    data: {
+      label,
+      summary: 'Today / Tomorrow quick-pick buttons',
+      field: 'preferred_date',
+      mode: 'date_quick_pick',
+      header,
+      body,
+    },
+  };
+}
+
 function listResourcesNode(
   id: string,
   y: number,
@@ -169,25 +211,33 @@ const salonAppointment: WorkflowTemplate = {
   trigger_type: 'message_received',
   definition: linearFlow([
     triggerNode(),
-    collectNode(
-      'collect-service',
+    pickOptionsNode(
+      'pick-service',
       200,
+      'Pick Service',
       'service_type',
-      'Ask Service',
-      'What service would you like? (e.g. haircut, beard trim, styling)',
+      'Welcome to {{business_name}} ✂️',
+      'Hi {{contact_name}}! 👋 Thanks for messaging *{{business_name}}*.\n\nTap a service below to start your booking — no typing needed:',
+      [
+        { text: 'Haircut', description: 'Classic cut & finish', value: 'Haircut' },
+        { text: 'Beard trim', description: 'Shape & tidy', value: 'Beard trim' },
+        { text: 'Styling', description: 'Blow-dry & style', value: 'Styling' },
+        { text: 'Hair coloring', description: 'Color & highlights', value: 'Hair coloring' },
+      ],
+      'Tap a service to continue',
     ),
-    collectNode(
-      'collect-date',
+    pickDateNode(
+      'pick-date',
       320,
-      'preferred_date',
-      'Ask Date',
-      'What date works best? Reply with tomorrow, 15 Jul, or 2026-07-15.',
+      'Pick Date',
+      'Great choice — *{{service_type}}*! ✨\n\nWhen would you like to visit us? Tap a day below:',
+      '📅 Choose your day',
     ),
     listResourcesNode(
       'list-resources',
       440,
       'Pick Stylist',
-      'Great! Now choose who you would like to book with:',
+      'Perfect! Now choose your stylist for {{preferred_date}}:',
     ),
     listSlotsNode(
       'list-slots',

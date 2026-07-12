@@ -1,14 +1,23 @@
 import { Injectable } from '@nestjs/common';
 import { WorkflowExecution } from '@prisma/client';
+import { SettingsService } from '../../settings/settings.service';
+import { businessLabel } from '../business-workflow';
 import { NodeExecutionResult, NodeExecutor } from './node-executor.interface';
 
 @Injectable()
 export class TriggerNodeExecutor implements NodeExecutor {
+  constructor(private readonly settings: SettingsService) {}
+
   async execute(
-    _execution: WorkflowExecution,
+    execution: WorkflowExecution,
     _node: Record<string, any>,
     context: Record<string, any>,
   ): Promise<NodeExecutionResult> {
+    const businessCategory = await this.settings.get(execution.userId, 'business_category');
+    const businessDescription = await this.settings.get(execution.userId, 'business_description');
+    const business_label = businessCategory ? businessLabel(businessCategory) : '';
+    const business_name = businessDescription?.trim() || business_label || 'Our salon';
+
     return {
       success: true,
       output: {
@@ -19,6 +28,8 @@ export class TriggerNodeExecutor implements NodeExecutor {
         contact_name: context.contact_name ?? '',
         contact_username: context.contact_username ?? '',
         payload: context.payload ?? null,
+        business_label,
+        business_name,
       },
     };
   }

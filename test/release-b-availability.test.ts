@@ -23,9 +23,11 @@ describe('Release B — salon booking workflow template', () => {
     const template = findGuidedTemplate('salon-appointment');
     assert.ok(template);
     const nodeTypes = (template?.definition.nodes ?? []).map((n) => n.type);
+    assert.ok(nodeTypes.includes('pick_options'));
     assert.ok(nodeTypes.includes('list_resources'));
     assert.ok(nodeTypes.includes('list_slots'));
     assert.ok(nodeTypes.includes('book_slot'));
+    assert.ok(!nodeTypes.includes('collect_input'), 'Salon flow uses tap-to-pick instead of free-text');
     assert.ok(!nodeTypes.includes('ai'), 'Release B replaces AI placeholder with availability nodes');
   });
 });

@@ -166,6 +166,12 @@ export class InteractiveMessageHandlerService {
 
       if (option?.metadata && typeof option.metadata === 'object' && !Array.isArray(option.metadata)) {
         const meta = option.metadata as Record<string, unknown>;
+        if (meta.context_field != null && meta.context_value != null) {
+          context[String(meta.context_field)] = meta.context_value;
+        }
+        if (meta.service_type != null) {
+          context.service_type = meta.service_type;
+        }
         if (meta.resource_id != null) {
           context.resource_id = meta.resource_id;
           context.selected_resource_id = meta.resource_id;

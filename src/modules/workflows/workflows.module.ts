@@ -23,6 +23,7 @@ import { DelayNodeExecutor } from './nodes/delay-node.executor';
 import { ListResourcesNodeExecutor } from './nodes/list-resources-node.executor';
 import { ListSlotsNodeExecutor } from './nodes/list-slots-node.executor';
 import { BookSlotNodeExecutor } from './nodes/book-slot-node.executor';
+import { PickOptionsNodeExecutor } from './nodes/pick-options-node.executor';
 // Phase 5: Interactive Message Services
 import { InteractiveMessageNodeExecutor } from './nodes/interactive-message-node.executor';
 import { UserStateService } from './user-state.service';
@@ -53,6 +54,7 @@ import { WorkflowValidationInteractiveService } from './workflow-validation-inte
     ListResourcesNodeExecutor,
     ListSlotsNodeExecutor,
     BookSlotNodeExecutor,
+    PickOptionsNodeExecutor,
     // Phase 5: Interactive Message Services
     InteractiveMessageNodeExecutor,
     UserStateService,
