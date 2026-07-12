@@ -1,7 +1,8 @@
-import { Inject, Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { WhatsAppApiService } from '../integrations/whatsapp-api.service';
 import { CryptoService } from '../../common/crypto/crypto.service';
+import { InboxService } from '../inbox/inbox.service';
 import { SendInteractiveMessageJob } from '../queue/queue.constants';
 
 /** Sends interactive messages via WhatsApp API with retry logic. */
@@ -13,6 +14,7 @@ export class InteractiveMessageProcessor {
     private readonly prisma: PrismaService,
     private readonly whatsappApi: WhatsAppApiService,
     private readonly crypto: CryptoService,
+    private readonly inbox: InboxService,
   ) {}
 
   async handle(payload: SendInteractiveMessageJob): Promise<void> {
@@ -21,7 +23,6 @@ export class InteractiveMessageProcessor {
     );
 
     try {
-      // Get WhatsApp account credentials
       const account = await this.prisma.whatsAppAccount.findUnique({
         where: { userId: payload.userId },
       });
@@ -37,7 +38,6 @@ export class InteractiveMessageProcessor {
         return;
       }
 
-      // Get interactive template with options
       const template = await this.prisma.interactiveMessageTemplate.findUnique({
         where: { id: payload.templateId },
         include: {
@@ -51,7 +51,6 @@ export class InteractiveMessageProcessor {
         return;
       }
 
-      // Send based on message type
       let result;
       switch (template.messageType.name) {
         case 'QUICK_REPLY':
@@ -98,8 +97,21 @@ export class InteractiveMessageProcessor {
       }
 
       if (result.success) {
-        this.logger.log(
-          `Interactive message ${result.data?.messages?.[0]?.id} sent successfully`,
+        const waMessageId = result.data?.messages?.[0]?.id ?? null;
+        this.logger.log(`Interactive message ${waMessageId} sent successfully`);
+
+        const inboxContent = this.buildInboxLabel(template);
+        await this.inbox.recordBotOutgoing(
+          payload.userId,
+          payload.conversationId,
+          inboxContent,
+          {
+            waMessageId,
+            source: 'workflow_interactive',
+            workflowId: payload.workflowId,
+            nodeId: payload.nodeId,
+            templateId: payload.templateId,
+          },
         );
       } else {
         this.logger.error(`Failed to send interactive message: ${result.message}`);
@@ -110,5 +122,31 @@ export class InteractiveMessageProcessor {
       this.logger.error(`Interactive message processor error: ${message}`);
       throw error;
     }
+  }
+
+  private buildInboxLabel(template: {
+    headerText: string | null;
+    bodyText: string;
+    footerText: string | null;
+    options: { optionText: string; description: string | null }[];
+  }): string {
+    const lines: string[] = [];
+    if (template.headerText?.trim()) {
+      lines.push(template.headerText.trim());
+    }
+    if (template.bodyText?.trim()) {
+      lines.push(template.bodyText.trim());
+    }
+    if (template.footerText?.trim()) {
+      lines.push(template.footerText.trim());
+    }
+    if (template.options.length > 0) {
+      lines.push('');
+      for (const opt of template.options) {
+        const desc = opt.description ? ` — ${opt.description}` : '';
+        lines.push(`• ${opt.optionText}${desc}`);
+      }
+    }
+    return lines.join('\n');
   }
 }

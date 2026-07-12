@@ -162,6 +162,9 @@ export class WorkflowTemplateService {
     if (businessDescription !== undefined && businessDescription !== null) {
       await this.settings.set(userId, 'business_description', businessDescription.trim());
     }
+    if (businessCategory === 'salon') {
+      await this.settings.ensureSalonServicesDefaults(userId);
+    }
 
     // CareerAI uses a dedicated WhatsApp bot — no generic auto-reply workflows needed.
     if (businessCategory === CAREER_AI_BUSINESS) {

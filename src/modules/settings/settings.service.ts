@@ -1,8 +1,15 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, UnprocessableEntityException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CryptoService } from '../../common/crypto/crypto.service';
 import { currentBusinessPublishedWhere, parseUseCases } from '../../common/workflow-scope';
 import { verticalProfileFields } from '../../platform/business-verticals.registry';
+import {
+  DEFAULT_SALON_SERVICES,
+  parseSalonServicesJson,
+  SALON_SERVICES_SETTING_KEY,
+  SalonServiceOption,
+  validateSalonServices,
+} from '../../platform/salon-services';
 import { businessLabel, useCaseLabel } from '../workflows/business-workflow';
 
 const ENCRYPTED_KEYS = [
@@ -93,7 +100,38 @@ export class SettingsService {
         (business_category === 'career_ai' || use_cases.length > 0),
       published_count,
       can_change_business: published_count === 0,
+      salon_services:
+        business_category === 'salon' ? await this.getSalonServices(userId) : null,
       ...verticalProfileFields(business_category),
     };
+  }
+
+  async getSalonServices(userId: number): Promise<SalonServiceOption[]> {
+    const category = await this.get(userId, 'business_category');
+    if (category === 'salon') {
+      await this.ensureSalonServicesDefaults(userId);
+    }
+    const raw = await this.get(userId, SALON_SERVICES_SETTING_KEY);
+    return parseSalonServicesJson(raw);
+  }
+
+  async setSalonServices(userId: number, services: unknown): Promise<SalonServiceOption[]> {
+    const { valid, services: normalized, errors } = validateSalonServices(services);
+    if (!valid) {
+      throw new UnprocessableEntityException({
+        message: 'The given data was invalid.',
+        errors: { salon_services: errors },
+      });
+    }
+    await this.set(userId, SALON_SERVICES_SETTING_KEY, JSON.stringify(normalized));
+    return normalized;
+  }
+
+  /** Seed default salon services on first salon setup. */
+  async ensureSalonServicesDefaults(userId: number): Promise<void> {
+    const existing = await this.get(userId, SALON_SERVICES_SETTING_KEY);
+    if (!existing) {
+      await this.set(userId, SALON_SERVICES_SETTING_KEY, JSON.stringify(DEFAULT_SALON_SERVICES));
+    }
   }
 }

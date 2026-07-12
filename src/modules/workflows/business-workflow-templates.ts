@@ -72,6 +72,30 @@ function collectNode(
   };
 }
 
+function pickSalonServicesNode(
+  id: string,
+  y: number,
+  label: string,
+  header: string,
+  body: string,
+  footer?: string,
+) {
+  return {
+    id,
+    type: 'pick_options',
+    y,
+    data: {
+      label,
+      summary: 'Salon services picker (from Settings)',
+      field: 'service_type',
+      options_source: 'salon_services',
+      header,
+      body,
+      footer,
+    },
+  };
+}
+
 function pickOptionsNode(
   id: string,
   y: number,
@@ -211,19 +235,12 @@ const salonAppointment: WorkflowTemplate = {
   trigger_type: 'message_received',
   definition: linearFlow([
     triggerNode(),
-    pickOptionsNode(
+    pickSalonServicesNode(
       'pick-service',
       200,
       'Pick Service',
-      'service_type',
       'Welcome to {{business_name}} ✂️',
       'Hi {{contact_name}}! 👋 Thanks for messaging *{{business_name}}*.\n\nTap a service below to start your booking — no typing needed:',
-      [
-        { text: 'Haircut', description: 'Classic cut & finish', value: 'Haircut' },
-        { text: 'Beard trim', description: 'Shape & tidy', value: 'Beard trim' },
-        { text: 'Styling', description: 'Blow-dry & style', value: 'Styling' },
-        { text: 'Hair coloring', description: 'Color & highlights', value: 'Hair coloring' },
-      ],
       'Tap a service to continue',
     ),
     pickDateNode(

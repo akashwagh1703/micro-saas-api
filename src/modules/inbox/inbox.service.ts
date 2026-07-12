@@ -194,6 +194,41 @@ export class InboxService {
     }
   }
 
+  /** Persist a bot/workflow outbound message that was already sent via WhatsApp API. */
+  async recordBotOutgoing(
+    userId: number,
+    conversationId: number,
+    content: string,
+    meta?: {
+      waMessageId?: string | null;
+      source?: string;
+      workflowId?: number;
+      nodeId?: string;
+      templateId?: number;
+    },
+  ): Promise<void> {
+    if (!conversationId) return;
+
+    const conversation = await this.prisma.conversation.findFirst({
+      where: { userId, id: conversationId },
+      include: { contact: true },
+    });
+    if (!conversation) return;
+
+    await this.persistOutgoingMessage(conversation, content, {
+      success: true,
+      waMessageId: meta?.waMessageId ?? null,
+      metadata: {
+        from_bot: true,
+        source: meta?.source ?? 'workflow',
+        workflow_id: meta?.workflowId ?? null,
+        node_id: meta?.nodeId ?? null,
+        template_id: meta?.templateId ?? null,
+      },
+      error: null,
+    });
+  }
+
   async sendOutgoingMessage(
     userId: number,
     conversationId: number,

@@ -1,5 +1,29 @@
-import { IsArray, IsEmail, IsIn, IsOptional, IsString, MaxLength, MinLength, ArrayMinSize } from 'class-validator';
+import { IsArray, IsEmail, IsIn, IsOptional, IsString, MaxLength, MinLength, ArrayMinSize, ValidateNested } from 'class-validator';
+import { Type } from 'class-transformer';
 import { BUSINESS_CATEGORY_KEYS, USE_CASE_KEYS } from '../../../platform/business-verticals.registry';
+
+export class SalonServiceOptionDto {
+  @IsString()
+  @MaxLength(20)
+  text: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(72)
+  description?: string;
+
+  @IsString()
+  @MaxLength(40)
+  value: string;
+}
+
+export class UpdateSalonServicesDto {
+  @IsArray()
+  @ArrayMinSize(1)
+  @ValidateNested({ each: true })
+  @Type(() => SalonServiceOptionDto)
+  services: SalonServiceOptionDto[];
+}
 
 export class UpdateProfileDto {
   @IsOptional()

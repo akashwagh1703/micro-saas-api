@@ -1,5 +1,6 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { WorkflowExecution } from '@prisma/client';
+import { SettingsService } from '../../settings/settings.service';
 import { JOB_DISPATCHER, JobDispatcher } from '../../queue/job-dispatcher';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { UserStateService } from '../user-state.service';
@@ -25,6 +26,7 @@ export class PickOptionsNodeExecutor implements NodeExecutor {
 
   constructor(
     private readonly prisma: PrismaService,
+    private readonly settings: SettingsService,
     private readonly userStateService: UserStateService,
     @Inject(JOB_DISPATCHER) private readonly jobs: JobDispatcher,
   ) {}
@@ -61,7 +63,7 @@ export class PickOptionsNodeExecutor implements NodeExecutor {
       if (mode === 'date_quick_pick') {
         items = buildQuickDatePickItems(nextNodeId, field);
       } else {
-        const options = (data.options ?? []) as PickOptionRow[];
+        const options = await this.resolveOptions(execution.userId, data);
         if (!Array.isArray(options) || options.length === 0) {
           return { success: false, error: 'pick_options node requires at least one option' };
         }
@@ -125,5 +127,20 @@ export class PickOptionsNodeExecutor implements NodeExecutor {
       this.logger.error(`pick_options failed: ${error.message}`);
       return { success: false, error: error.message };
     }
+  }
+
+  private async resolveOptions(
+    userId: number,
+    data: Record<string, unknown>,
+  ): Promise<PickOptionRow[]> {
+    if (data.options_source === 'salon_services') {
+      const services = await this.settings.getSalonServices(userId);
+      return services.map((s) => ({
+        text: s.text,
+        description: s.description,
+        value: s.value,
+      }));
+    }
+    return (data.options ?? []) as PickOptionRow[];
   }
 }

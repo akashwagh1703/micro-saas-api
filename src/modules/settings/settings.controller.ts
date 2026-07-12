@@ -17,6 +17,7 @@ import {
   ChangePasswordDto,
   UpdateIntegrationsDto,
   UpdateProfileDto,
+  UpdateSalonServicesDto,
 } from './dto/settings.dto';
 
 @Controller('settings')
@@ -103,5 +104,31 @@ export class SettingsController {
       }
     }
     return { message: 'Settings saved' };
+  }
+
+  @Get('salon-services')
+  async getSalonServices(@CurrentUser('id') userId: number) {
+    const business_category = await this.settings.get(userId, 'business_category');
+    if (business_category !== 'salon') {
+      return { services: null, configured: false };
+    }
+    const services = await this.settings.getSalonServices(userId);
+    return { services, configured: true };
+  }
+
+  @Put('salon-services')
+  async updateSalonServices(
+    @CurrentUser('id') userId: number,
+    @Body() dto: UpdateSalonServicesDto,
+  ) {
+    const business_category = await this.settings.get(userId, 'business_category');
+    if (business_category !== 'salon') {
+      throw new UnprocessableEntityException({
+        message: 'Salon services are only available for salon businesses.',
+        errors: { business_category: ['Switch your business type to Salon to manage services.'] },
+      });
+    }
+    const services = await this.settings.setSalonServices(userId, dto.services);
+    return { services, message: 'Salon services saved' };
   }
 }
