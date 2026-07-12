@@ -12,7 +12,7 @@ import { currentBusinessPublishedWhere, parseUseCases } from '../../common/workf
 import { validateBusinessSetup } from '../../platform/catalog-validation';
 import { isSchedulingVertical } from '../../platform/appointment-services';
 import { WORKFLOW_TEMPLATES, WorkflowDefinition, findTemplate } from './workflow-templates';
-import { findAnyTemplate } from './business-workflow-templates';
+import { findAnyTemplate, findGuidedTemplate } from './business-workflow-templates';
 import { AiWorkflowGeneratorService } from './ai-workflow-generator.service';
 import {
   applyUseCaseTriggerKeywords,
@@ -220,6 +220,9 @@ export class WorkflowTemplateService {
       where: { userId, businessCategory, useCase, isArchived: false },
     });
     if (existing) {
+      if (useCase === 'appointment_booking' && isSchedulingVertical(businessCategory)) {
+        return (await this.upgradeAppointmentWorkflowIfNeeded(userId, existing)) ?? existing;
+      }
       return existing;
     }
 
@@ -408,5 +411,74 @@ export class WorkflowTemplateService {
     }
 
     return def;
+  }
+
+  /** True when workflow still uses free-text booking instead of tap-to-pick buttons. */
+  appointmentWorkflowNeedsUpgrade(definition: WorkflowDefinition | null | undefined): boolean {
+    const types = (definition?.nodes ?? []).map((n) => n.type);
+    return (
+      types.includes('collect_input') ||
+      !types.includes('pick_options') ||
+      !types.includes('list_slots')
+    );
+  }
+
+  /**
+   * Replaces stale appointment workflows with the latest button + AI live-booking template.
+   * Safe to call repeatedly — no-op when already up to date.
+   */
+  async upgradeAppointmentWorkflowIfNeeded(userId: number, workflow: Workflow): Promise<Workflow | null> {
+    if (workflow.useCase !== 'appointment_booking') return null;
+    if (!isSchedulingVertical(workflow.businessCategory)) return null;
+    if (!this.appointmentWorkflowNeedsUpgrade(workflow.definition as WorkflowDefinition)) {
+      return null;
+    }
+
+    const slug = resolveTemplateSlug(workflow.businessCategory!, 'appointment_booking');
+    const template = findGuidedTemplate(slug);
+    if (!template) return null;
+
+    let definition = JSON.parse(JSON.stringify(template.definition)) as WorkflowDefinition;
+    definition = applyUseCaseTriggerKeywords(definition, 'appointment_booking');
+    definition = await this.injectSaveLeadApi(userId, definition);
+
+    return this.prisma.workflow.update({
+      where: { id: workflow.id },
+      data: {
+        definition: definition as any,
+        sourceTemplate: slug,
+        description: template.description,
+        name: workflow.name?.includes('·')
+          ? workflow.name
+          : `${businessLabel(workflow.businessCategory!)} · ${useCaseLabel('appointment_booking')}`,
+      },
+    });
+  }
+
+  /** Upgrades every appointment_booking workflow for a tenant (published or draft). */
+  async syncAllAppointmentBookingWorkflows(userId: number): Promise<{ upgraded: number; workflow_ids: number[] }> {
+    const category = await this.settings.get(userId, 'business_category');
+    if (!isSchedulingVertical(category)) {
+      return { upgraded: 0, workflow_ids: [] };
+    }
+
+    const workflows = await this.prisma.workflow.findMany({
+      where: {
+        userId,
+        businessCategory: category,
+        useCase: 'appointment_booking',
+        isArchived: false,
+      },
+    });
+
+    const workflow_ids: number[] = [];
+    for (const row of workflows) {
+      const updated = await this.upgradeAppointmentWorkflowIfNeeded(userId, row);
+      if (updated) {
+        workflow_ids.push(updated.id);
+      }
+    }
+
+    return { upgraded: workflow_ids.length, workflow_ids };
   }
 }

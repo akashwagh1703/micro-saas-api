@@ -63,6 +63,10 @@ export class InteractiveMessageProcessor {
               id: String(opt.id),
               title: opt.optionText,
             })),
+            {
+              headerText: template.headerText,
+              footerText: template.footerText,
+            },
           );
           break;
 

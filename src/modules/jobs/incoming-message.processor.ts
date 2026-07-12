@@ -6,6 +6,13 @@ import { selectWorkflowForMessage } from '../workflows/workflow-selection.util';
 import { JOB_DISPATCHER, JobDispatcher } from '../queue/job-dispatcher';
 import { CareerIncomingHandler } from '../career/career-incoming.handler';
 
+const INTERACTIVE_PAUSE_NODE_TYPES = new Set([
+  'pick_options',
+  'list_resources',
+  'list_slots',
+  'interactive_message',
+]);
+
 /** Ports ProcessIncomingWhatsAppMessage: matches workflows and fans out executions. */
 @Injectable()
 export class IncomingMessageProcessor {
@@ -52,6 +59,25 @@ export class IncomingMessageProcessor {
 
     if (waiting) {
       const ctx = (waiting.context as Record<string, any>) ?? {};
+      const pausedNodeId = ctx.__paused_at_node_id as string | undefined;
+
+      if (pausedNodeId) {
+        const wf = await this.prisma.workflow.findUnique({ where: { id: waiting.workflowId } });
+        const def = (wf?.definition as { nodes?: { id: string; type: string }[] }) ?? {};
+        const pausedNode = def.nodes?.find((n) => n.id === pausedNodeId);
+        if (pausedNode && INTERACTIVE_PAUSE_NODE_TYPES.has(pausedNode.type)) {
+          if (waiting.conversationId) {
+            await this.queue.enqueueSendMessage({
+              userId: message.userId,
+              conversationId: waiting.conversationId,
+              content:
+                'Please tap one of the buttons in our last message to continue your booking. No need to type — just select an option.',
+            });
+          }
+          return;
+        }
+      }
+
       await this.prisma.workflowExecution.update({
         where: { id: waiting.id },
         data: {

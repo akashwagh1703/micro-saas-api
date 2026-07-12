@@ -15,11 +15,12 @@ export class SendMessageNodeExecutor implements NodeExecutor {
   ): Promise<NodeExecutionResult> {
     const data = node.data ?? {};
     const message = substituteContext(String(data.message ?? ''), context);
+    const fallbackMessage = substituteContext(String(data.fallback_message ?? ''), context);
 
     await this.queue.enqueueSendMessage({
       userId: execution.userId,
       conversationId: execution.conversationId,
-      content: message,
+      content: message.trim() || fallbackMessage || 'Thanks for your message!',
     });
 
     return {

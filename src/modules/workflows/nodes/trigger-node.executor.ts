@@ -16,7 +16,7 @@ export class TriggerNodeExecutor implements NodeExecutor {
     const businessCategory = await this.settings.get(execution.userId, 'business_category');
     const businessDescription = await this.settings.get(execution.userId, 'business_description');
     const business_label = businessCategory ? businessLabel(businessCategory) : '';
-    const business_name = businessDescription?.trim() || business_label || 'Our salon';
+    const business_name = businessDescription?.trim() || business_label || 'Our business';
 
     return {
       success: true,

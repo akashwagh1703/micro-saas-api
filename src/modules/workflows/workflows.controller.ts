@@ -187,10 +187,32 @@ export class WorkflowsController {
     return { workflow: serializeWorkflow(workflow) };
   }
 
+  @Post('sync-appointment-booking')
+  async syncAppointmentBooking(@CurrentUser('id') userId: number) {
+    await this.billing.assertPlatformAccess(userId);
+    const result = await this.templates.syncAllAppointmentBookingWorkflows(userId);
+    await this.activity.log(
+      userId,
+      'workflow_synced',
+      `Appointment booking workflows upgraded: ${result.upgraded}`,
+    );
+    return {
+      message:
+        result.upgraded > 0
+          ? `Updated ${result.upgraded} appointment workflow(s) with button booking.`
+          : 'Appointment workflows are already up to date.',
+      ...result,
+    };
+  }
+
   @Post(':id/publish')
   async publish(@CurrentUser('id') userId: number, @Param('id', ParseIntPipe) id: number) {
     await this.billing.assertPlatformAccess(userId);
-    const workflow = await this.findOrFail(userId, id);
+    let workflow = await this.findOrFail(userId, id);
+    const upgraded = await this.templates.upgradeAppointmentWorkflowIfNeeded(userId, workflow);
+    if (upgraded) {
+      workflow = upgraded;
+    }
     const errors = this.validator.validate(workflow.definition as any);
     if (errors.length > 0) {
       throw new UnprocessableEntityException({ errors });

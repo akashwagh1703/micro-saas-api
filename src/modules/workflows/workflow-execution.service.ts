@@ -18,6 +18,7 @@ import { BookSlotNodeExecutor } from './nodes/book-slot-node.executor';
 import { PickOptionsNodeExecutor } from './nodes/pick-options-node.executor';
 // Phase 5: Interactive Message Node Executor
 import { InteractiveMessageNodeExecutor } from './nodes/interactive-message-node.executor';
+import { WorkflowTemplateService } from './workflow-template.service';
 
 const MAX_NODES = 30;
 
@@ -50,6 +51,7 @@ export class WorkflowExecutionService {
     listSlots: ListSlotsNodeExecutor,
     bookSlot: BookSlotNodeExecutor,
     pickOptions: PickOptionsNodeExecutor,
+    private readonly templates: WorkflowTemplateService,
     @Inject(JOB_DISPATCHER) private readonly jobs: JobDispatcher,
   ) {
     this.executors = {
@@ -79,13 +81,21 @@ export class WorkflowExecutionService {
   }
 
   async execute(execution: WorkflowExecution): Promise<void> {
-    const workflow = await this.prisma.workflow.findFirst({
+    let workflow = await this.prisma.workflow.findFirst({
       where: { id: execution.workflowId, userId: execution.userId },
     });
 
     if (!workflow) {
       await this.fail(execution.id, 'Workflow not found');
       return;
+    }
+
+    const upgraded = await this.templates.upgradeAppointmentWorkflowIfNeeded(
+      execution.userId,
+      workflow,
+    );
+    if (upgraded) {
+      workflow = upgraded;
     }
 
     if (workflow.status !== 'published' || !workflow.isActive) {

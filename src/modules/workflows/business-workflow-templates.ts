@@ -14,7 +14,8 @@ const DEFAULT_AI = {
   model: 'openai/gpt-4o-mini',
   temperature: 0.6,
   max_tokens: 250,
-  fallback_message: 'Thanks for your message! Our team will get back to you shortly.',
+  fallback_message:
+    'Hello! Thanks for reaching out to {{business_name}}. Tap the buttons in our next message to book your appointment — it only takes a moment.',
 };
 
 
@@ -262,16 +263,20 @@ function leadSaveOnly(
 
 const LIVE_APPOINTMENT_AI = {
   welcome: (role: string) =>
-    `You are a friendly WhatsApp booking assistant for {{business_name}} (${role}). ` +
-    `Customer {{contact_name}} wrote: "{{message}}". Reply in 2-3 short lines. Welcome them warmly and tell them to *tap the buttons* coming next to book — no typing needed. ` +
-    `Use WhatsApp *bold* for the business name. Keep it concise.`,
+    `You are the WhatsApp booking assistant for *{{business_name}}* (${role}). ` +
+    `{{contact_name}} just messaged: "{{message}}". ` +
+    `Reply in 2-3 warm, professional lines. Greet them by name if available. ` +
+    `Explain they can book in a few taps — service, day, and time buttons are coming next. ` +
+    `Do NOT ask them to type answers. Use *bold* for the business name.`,
   serviceAck:
-    `You are a booking assistant for {{business_name}}. {{contact_name}} selected *{{service_type}}*. ` +
-    `Write 1-2 cheerful lines thanking them. Say date buttons are coming next — ask them to *tap Today or Tomorrow*. No questions requiring typed replies.`,
+    `You are booking for *{{business_name}}*. {{contact_name}} chose *{{service_type}}*. ` +
+    `Reply in 1-2 friendly lines confirming their choice. ` +
+    `Tell them to tap *Today* or *Tomorrow* on the next message to pick a date. No typed replies.`,
   thankYou:
-    `Write a warm appointment confirmation for {{business_name}}. Customer: {{contact_name}}. ` +
-    `Service: {{service_type}}. With: {{resource_name}}. When: {{booking_time}}. ` +
-    `Use 3-4 short lines with emoji. Use *bold* for date, service, and provider. End with a friendly see-you-soon.`,
+    `Write a cheerful booking confirmation for *{{business_name}}*. ` +
+    `Customer: {{contact_name}}. Service: *{{service_type}}*. ` +
+    `With: *{{resource_name}}*. When: *{{booking_time}}*. ` +
+    `Use 3-4 short lines with one emoji. Bold the key details. End with "See you then!"`,
 };
 
 interface LiveAppointmentMeta {
@@ -297,11 +302,11 @@ const LIVE_APPOINTMENT_BY_VERTICAL: Record<SchedulingVertical, LiveAppointmentMe
       'AI welcome + button booking: services, date, stylist, and live slot confirmation.',
     role: 'salon/beauty',
     emoji: '✂️',
-    serviceHeader: 'Welcome to {{business_name}} ✂️',
-    serviceBody: 'Tap a service to continue:',
-    resourceHeader: 'Choose your stylist',
-    resourceBody: 'Pick who you would like for {{preferred_date}}:',
-    slotsBody: 'Select a time for {{resource_name}} on {{preferred_date}}:',
+    serviceHeader: 'Book at {{business_name}} ✂️',
+    serviceBody: 'Hi {{contact_name}}! Choose the service you would like:',
+    resourceHeader: 'Pick your stylist',
+    resourceBody: 'Who would you like on {{preferred_date}}?',
+    slotsBody: 'Available times with {{resource_name}} on {{preferred_date}}:',
     bookConfirm:
       '✅ Appointment confirmed!\n\nStylist: {{resource_name}}\nWhen: {{booking_time}}\nService: {{service_type}}',
     leadNotes: 'Salon appointment booking from WhatsApp',
@@ -313,10 +318,10 @@ const LIVE_APPOINTMENT_BY_VERTICAL: Record<SchedulingVertical, LiveAppointmentMe
     role: 'clinic/doctor',
     emoji: '🏥',
     serviceHeader: '{{business_name}} 🏥',
-    serviceBody: 'Tap the type of visit you need:',
+    serviceBody: 'Hi {{contact_name}}! Select the type of visit you need:',
     resourceHeader: 'Choose your doctor',
     resourceBody: 'Select a doctor for {{preferred_date}}:',
-    slotsBody: 'Pick a slot with {{resource_name}} on {{preferred_date}}:',
+    slotsBody: 'Pick a time with {{resource_name}} on {{preferred_date}}:',
     bookConfirm:
       '✅ Appointment confirmed!\n\nDoctor: {{resource_name}}\nWhen: {{booking_time}}\nVisit: {{service_type}}',
     leadNotes: 'Clinic appointment booking from WhatsApp',
@@ -328,9 +333,9 @@ const LIVE_APPOINTMENT_BY_VERTICAL: Record<SchedulingVertical, LiveAppointmentMe
     role: 'coaching institute',
     emoji: '🎓',
     serviceHeader: '{{business_name}} 🎓',
-    serviceBody: 'What would you like to book?',
+    serviceBody: 'Hi {{contact_name}}! What would you like to book?',
     resourceHeader: 'Choose your counsellor',
-    resourceBody: 'Select who you will meet on {{preferred_date}}:',
+    resourceBody: 'Who will you meet on {{preferred_date}}?',
     slotsBody: 'Choose a slot with {{resource_name}} on {{preferred_date}}:',
     bookConfirm:
       '✅ Session confirmed!\n\nCounsellor: {{resource_name}}\nWhen: {{booking_time}}\nSession: {{service_type}}',
@@ -343,10 +348,10 @@ const LIVE_APPOINTMENT_BY_VERTICAL: Record<SchedulingVertical, LiveAppointmentMe
     role: 'real estate agency',
     emoji: '🏠',
     serviceHeader: '{{business_name}} 🏠',
-    serviceBody: 'Tap the visit type you need:',
+    serviceBody: 'Hi {{contact_name}}! Select the visit type you need:',
     resourceHeader: 'Choose your agent',
-    resourceBody: 'Select an agent for {{preferred_date}}:',
-    slotsBody: 'Pick a time with {{resource_name}} on {{preferred_date}}:',
+    resourceBody: 'Which agent should meet you on {{preferred_date}}?',
+    slotsBody: 'Available times with {{resource_name}} on {{preferred_date}}:',
     bookConfirm:
       '✅ Visit confirmed!\n\nAgent: {{resource_name}}\nWhen: {{booking_time}}\nVisit: {{service_type}}',
     leadNotes: 'Real estate site visit booking from WhatsApp',
@@ -358,7 +363,7 @@ const LIVE_APPOINTMENT_BY_VERTICAL: Record<SchedulingVertical, LiveAppointmentMe
     role: 'CA/accountant firm',
     emoji: '📊',
     serviceHeader: '{{business_name}} 📊',
-    serviceBody: 'Tap the consultation you need:',
+    serviceBody: 'Hi {{contact_name}}! Choose the consultation you need:',
     resourceHeader: 'Choose your consultant',
     resourceBody: 'Select a consultant for {{preferred_date}}:',
     slotsBody: 'Pick a slot with {{resource_name}} on {{preferred_date}}:',
@@ -373,10 +378,10 @@ const LIVE_APPOINTMENT_BY_VERTICAL: Record<SchedulingVertical, LiveAppointmentMe
     role: 'travel agency',
     emoji: '✈️',
     serviceHeader: '{{business_name}} ✈️',
-    serviceBody: 'Tap how we can help with your trip:',
+    serviceBody: 'Hi {{contact_name}}! How can we help with your trip?',
     resourceHeader: 'Choose your travel expert',
     resourceBody: 'Select an expert for {{preferred_date}}:',
-    slotsBody: 'Pick a call slot with {{resource_name}} on {{preferred_date}}:',
+    slotsBody: 'Available call times with {{resource_name}} on {{preferred_date}}:',
     bookConfirm:
       '✅ Session confirmed!\n\nExpert: {{resource_name}}\nWhen: {{booking_time}}\nTopic: {{service_type}}',
     leadNotes: 'Travel consultation booking from WhatsApp',
@@ -409,7 +414,7 @@ function buildLiveAppointmentFlow(vertical: SchedulingVertical): WorkflowTemplat
         'Pick Service',
         meta.serviceHeader,
         meta.serviceBody,
-        'Tap a service',
+        'Tap a button to continue',
       ),
       aiNode(
         'ai-service-ack',
@@ -423,7 +428,7 @@ function buildLiveAppointmentFlow(vertical: SchedulingVertical): WorkflowTemplat
         'pick-date',
         560,
         'Pick Date',
-        'Tap *Today* or *Tomorrow* below:',
+        'When would you like to visit? Tap *Today* or *Tomorrow* below 👇',
         '📅 Choose your day',
       ),
       listResourcesNode(

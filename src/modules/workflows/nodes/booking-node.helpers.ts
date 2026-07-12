@@ -10,19 +10,41 @@ export interface DynamicInteractiveItem {
   metadata?: Record<string, unknown>;
 }
 
+/** Digits-only phone — must match inbox contacts and WhatsApp webhook `from`. */
+export function normalizeWhatsAppPhone(phone: string | null | undefined): string {
+  return (phone ?? '').replace(/\D/g, '');
+}
+
 export async function resolveContactPhone(
   prisma: PrismaService,
   execution: WorkflowExecution,
   context: Record<string, any>,
 ): Promise<string | null> {
-  const fromContext = context.contact_phone;
-  if (fromContext) return String(fromContext);
+  const fromContext = normalizeWhatsAppPhone(context.contact_phone);
+  if (fromContext) return fromContext;
 
   if (execution.contactId) {
     const contact = await prisma.contact.findUnique({ where: { id: execution.contactId } });
-    if (contact?.phone) return contact.phone;
+    if (contact?.phone) return normalizeWhatsAppPhone(contact.phone);
   }
   return null;
+}
+
+const INTERACTIVE_MESSAGE_TYPES = [
+  { name: 'QUICK_REPLY', description: 'Up to 3 quick reply buttons', maxOptions: 3 },
+  { name: 'LIST_MESSAGE', description: 'Dropdown list with up to 10 options', maxOptions: 10 },
+  { name: 'FLOW_BUTTON', description: 'Single action button', maxOptions: 1 },
+] as const;
+
+/** Ensures DB has interactive message types (seed may not have run in production). */
+export async function ensureInteractiveMessageTypes(prisma: PrismaService): Promise<void> {
+  for (const row of INTERACTIVE_MESSAGE_TYPES) {
+    await prisma.interactiveMessageType.upsert({
+      where: { name: row.name },
+      update: {},
+      create: row,
+    });
+  }
 }
 
 export async function resolveNextNodeIdFromWorkflow(
@@ -105,6 +127,7 @@ export async function createDynamicInteractiveTemplate(
     useButtons: boolean;
   },
 ) {
+  await ensureInteractiveMessageTypes(prisma);
   const typeName = params.useButtons ? 'QUICK_REPLY' : 'LIST_MESSAGE';
   const messageType = await prisma.interactiveMessageType.findUnique({ where: { name: typeName } });
   if (!messageType) {

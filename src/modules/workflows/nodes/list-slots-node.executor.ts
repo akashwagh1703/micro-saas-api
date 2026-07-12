@@ -48,7 +48,7 @@ export class ListSlotsNodeExecutor implements NodeExecutor {
         const invalidMessage = substituteContext(
           String(
             data.invalid_date_message ??
-              'I could not understand that date. Please reply with a date like tomorrow or 2026-07-15.',
+              'Please go back and tap *Today* or *Tomorrow* to pick your visit date.',
           ),
           { ...context, preferred_date: String(rawDate ?? '') },
         );
@@ -64,7 +64,7 @@ export class ListSlotsNodeExecutor implements NodeExecutor {
         const noSlotsMessage = substituteContext(
           String(
             data.no_slots_message ??
-              'Sorry, no slots are available on {{preferred_date}} with {{resource_name}}. Please try another date.',
+              'Sorry, no slots are open on {{preferred_date}} with {{resource_name}}. Please tap *Today* or *Tomorrow* again to try another day.',
           ),
           {
             ...context,

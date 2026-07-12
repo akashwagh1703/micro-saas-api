@@ -1,6 +1,10 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { WorkflowExecution } from '@prisma/client';
 import { SettingsService } from '../../settings/settings.service';
+import {
+  defaultServicesForVertical,
+  isSchedulingVertical,
+} from '../../platform/appointment-services';
 import { JOB_DISPATCHER, JobDispatcher } from '../../queue/job-dispatcher';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { UserStateService } from '../user-state.service';
@@ -135,7 +139,15 @@ export class PickOptionsNodeExecutor implements NodeExecutor {
   ): Promise<PickOptionRow[]> {
     if (data.options_source === 'salon_services' || data.options_source === 'appointment_services') {
       const services = await this.settings.getAppointmentServices(userId);
-      return services.map((s) => ({
+      if (services.length > 0) {
+        return services.map((s) => ({
+          text: s.text,
+          description: s.description,
+          value: s.value,
+        }));
+      }
+      const category = await this.settings.get(userId, 'business_category');
+      return defaultServicesForVertical(category).map((s) => ({
         text: s.text,
         description: s.description,
         value: s.value,

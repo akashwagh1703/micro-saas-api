@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { UserWorkflowState } from '@prisma/client';
+import { normalizeWhatsAppPhone } from './nodes/booking-node.helpers';
 
 /**
  * User State Service
@@ -12,8 +13,12 @@ export class UserStateService {
 
   constructor(private readonly prisma: PrismaService) {}
 
+  private normalizePhone(phoneNumber: string): string {
+    return normalizeWhatsAppPhone(phoneNumber);
+  }
+
   private tenantPhoneKey(userId: number, phoneNumber: string) {
-    return { userId_phoneNumber: { userId, phoneNumber } };
+    return { userId_phoneNumber: { userId, phoneNumber: this.normalizePhone(phoneNumber) } };
   }
 
   async getUserState(
@@ -54,7 +59,7 @@ export class UserStateService {
       },
       create: {
         userId,
-        phoneNumber,
+        phoneNumber: this.normalizePhone(phoneNumber),
         workflowId,
         currentNodeId: nodeId,
         status,

@@ -59,9 +59,12 @@ export class WhatsAppApiService {
     to: string,
     bodyText: string,
     buttons: WhatsAppReplyButton[],
+    options?: { headerText?: string | null; footerText?: string | null },
   ): Promise<WhatsAppApiResult> {
     const phone = (to ?? '').replace(/\D/g, '');
     const trimmed = bodyText.trim().slice(0, 1024);
+    const headerText = options?.headerText?.trim().slice(0, 60);
+    const footerText = options?.footerText?.trim().slice(0, 60);
     const actionButtons = buttons.slice(0, 3).map((b) => ({
       type: 'reply' as const,
       reply: {
@@ -74,6 +77,18 @@ export class WhatsAppApiService {
       return this.sendTextMessage(accessToken, phoneNumberId, to, trimmed);
     }
 
+    const interactive: Record<string, unknown> = {
+      type: 'button',
+      body: { text: trimmed || 'Choose an option:' },
+      action: { buttons: actionButtons },
+    };
+    if (headerText) {
+      interactive.header = { type: 'text', text: headerText };
+    }
+    if (footerText) {
+      interactive.footer = { text: footerText };
+    }
+
     try {
       const { status, data } = await withMetaApiRetry(async () => {
         const response = await axios.post(
@@ -82,11 +97,7 @@ export class WhatsAppApiService {
             messaging_product: 'whatsapp',
             to: phone,
             type: 'interactive',
-            interactive: {
-              type: 'button',
-              body: { text: trimmed || 'Choose an option:' },
-              action: { buttons: actionButtons },
-            },
+            interactive,
           },
           {
             headers: { Authorization: `Bearer ${accessToken}` },
