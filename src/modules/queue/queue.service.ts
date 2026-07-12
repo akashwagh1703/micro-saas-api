@@ -1,7 +1,9 @@
 import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
+import { ModuleRef } from '@nestjs/core';
 import { ConfigService } from '@nestjs/config';
 import PgBoss from 'pg-boss';
 import { JobDispatcher } from './job-dispatcher';
+import { SyncDispatcher } from './sync.dispatcher';
 import {
   ALL_QUEUES,
   CareerTaskJob,
@@ -29,7 +31,10 @@ export class QueueService implements JobDispatcher, OnModuleInit, OnModuleDestro
   private rejectReady!: (err: unknown) => void;
   private enabled = false;
 
-  constructor(private readonly config: ConfigService) {
+  constructor(
+    private readonly config: ConfigService,
+    private readonly moduleRef: ModuleRef,
+  ) {
     this.ready = new Promise<void>((resolve, reject) => {
       this.resolveReady = resolve;
       this.rejectReady = reject;
@@ -114,38 +119,81 @@ export class QueueService implements JobDispatcher, OnModuleInit, OnModuleDestro
     });
   }
 
+  private syncFallback(): SyncDispatcher {
+    return new SyncDispatcher(this.moduleRef);
+  }
+
+  /** Run inline when pg-boss is down so WhatsApp webhooks still get a reply. */
+  private async withQueueFallback<T>(
+    label: string,
+    enqueue: () => Promise<T>,
+    inline: () => Promise<void>,
+  ): Promise<void> {
+    try {
+      await enqueue();
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      this.logger.warn(`${label}: pg-boss enqueue failed (${message}) — running inline`);
+      await inline();
+    }
+  }
+
   async enqueueProcessIncoming(messageId: number): Promise<void> {
-    const boss = await this.assertBoss();
-    await boss.send(QUEUE_PROCESS_INCOMING, { messageId }, { retryLimit: 3 });
+    await this.withQueueFallback(
+      'process-incoming',
+      async () => {
+        const boss = await this.assertBoss();
+        await boss.send(QUEUE_PROCESS_INCOMING, { messageId }, { retryLimit: 3 });
+      },
+      () => this.syncFallback().enqueueProcessIncoming(messageId),
+    );
   }
 
   async enqueueExecuteWorkflow(
     executionId: number,
     options?: { startAfterSeconds?: number },
   ): Promise<void> {
-    const boss = await this.assertBoss();
-    const startAfter = options?.startAfterSeconds;
-    await boss.send(
-      QUEUE_EXECUTE_WORKFLOW,
-      { executionId },
-      {
-        retryLimit: 2,
-        ...(startAfter ? { startAfter } : {}),
+    await this.withQueueFallback(
+      'execute-workflow',
+      async () => {
+        const boss = await this.assertBoss();
+        const startAfter = options?.startAfterSeconds;
+        await boss.send(
+          QUEUE_EXECUTE_WORKFLOW,
+          { executionId },
+          {
+            retryLimit: 2,
+            ...(startAfter ? { startAfter } : {}),
+          },
+        );
       },
+      () => this.syncFallback().enqueueExecuteWorkflow(executionId, options),
     );
   }
 
   async enqueueSendMessage(payload: SendMessageJob): Promise<void> {
-    const boss = await this.assertBoss();
-    await boss.send(QUEUE_SEND_MESSAGE, payload, { retryLimit: 3 });
+    await this.withQueueFallback(
+      'send-message',
+      async () => {
+        const boss = await this.assertBoss();
+        await boss.send(QUEUE_SEND_MESSAGE, payload, { retryLimit: 3 });
+      },
+      () => this.syncFallback().enqueueSendMessage(payload),
+    );
   }
 
   async enqueueSendInteractiveMessage(payload: SendInteractiveMessageJob): Promise<void> {
-    const boss = await this.assertBoss();
-    await boss.send(QUEUE_SEND_INTERACTIVE_MESSAGE, payload, {
-      retryLimit: 3,
-      expireInSeconds: 300, // 5 minutes
-    });
+    await this.withQueueFallback(
+      'send-interactive-message',
+      async () => {
+        const boss = await this.assertBoss();
+        await boss.send(QUEUE_SEND_INTERACTIVE_MESSAGE, payload, {
+          retryLimit: 3,
+          expireInSeconds: 300,
+        });
+      },
+      () => this.syncFallback().enqueueSendInteractiveMessage(payload),
+    );
   }
 
   async enqueueCareerTask(payload: CareerTaskJob): Promise<void> {
