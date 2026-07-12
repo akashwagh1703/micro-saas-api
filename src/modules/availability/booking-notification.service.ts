@@ -174,6 +174,52 @@ export class BookingNotificationService {
     }
   }
 
+  /** Notifies customer when owner cancels or declines a booking request. */
+  async notifyCustomerCancelled(
+    userId: number,
+    booking: SerializedBooking,
+    options?: { wasPending?: boolean },
+  ): Promise<void> {
+    if (!booking.conversation_id) return;
+
+    const timeZone = (await this.settings.get(userId, 'timezone')) || 'Asia/Kolkata';
+    const businessName = await this.resolveBusinessName(userId);
+    const when = formatSlotLabel(booking.starts_at, timeZone);
+    const resource = booking.resource_name ?? 'your appointment';
+
+    const body = options?.wasPending
+      ? [
+          `We couldn't confirm your booking request at *${businessName}*.`,
+          '',
+          `Requested: *${resource}*`,
+          `Time: *${when}*`,
+          '',
+          'The slot may no longer be available. Please message us to choose another time.',
+        ].join('\n')
+      : [
+          `Your appointment at *${businessName}* has been cancelled.`,
+          '',
+          `Was: *${resource}* on *${when}*`,
+          '',
+          'Reply here if you would like to book again.',
+        ].join('\n');
+
+    try {
+      const result = await this.inbox.sendInteractiveButtons(
+        userId,
+        booking.conversation_id,
+        body,
+        [{ id: `booking_cancelled_${booking.id}`, title: 'OK' }],
+        { source: 'booking_cancelled' },
+      );
+      if (!result.success) {
+        this.logger.warn(`Customer cancel notify failed for booking ${booking.id}: ${result.error}`);
+      }
+    } catch (error: any) {
+      this.logger.warn(`Customer cancel notify error: ${error.message}`);
+    }
+  }
+
   private async resolveBusinessName(userId: number): Promise<string> {
     const businessName = (await this.settings.get(userId, 'business_name'))?.trim();
     if (businessName) return businessName;

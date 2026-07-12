@@ -40,13 +40,17 @@ export class ListResourcesNodeExecutor implements NodeExecutor {
       }
 
       const { data: resources } = await this.availability.listResources(execution.userId);
-      const active = resources.filter((r) => r.is_active);
+      const bookable = resources.filter(
+        (r) =>
+          r.is_active &&
+          (r.schedules ?? []).some((s) => s.is_active !== false),
+      );
 
-      if (active.length === 0) {
+      if (bookable.length === 0) {
         const emptyMessage = substituteContext(
           String(
             data.empty_message ??
-              'Sorry, no team members are available for booking right now. Please try again later.',
+              'Sorry, no one is available for booking on {{preferred_date}} right now.\n\nPlease try *Today* or *Tomorrow* again, or contact us directly.',
           ),
           context,
         );
@@ -70,7 +74,7 @@ export class ListResourcesNodeExecutor implements NodeExecutor {
           String(data.body ?? 'Select a team member to continue with your appointment:'),
           context,
         ),
-        items: active.map((resource, index) => ({
+        items: bookable.map((resource, index) => ({
           optionText: resource.name,
           description: resource.type,
           displayOrder: index,
@@ -81,7 +85,7 @@ export class ListResourcesNodeExecutor implements NodeExecutor {
             selected_resource_id: resource.id,
           },
         })),
-        useButtons: active.length <= 3,
+        useButtons: bookable.length <= 3,
       });
 
       const delivered = await this.interactiveSend.deliverTemplate({
@@ -108,7 +112,7 @@ export class ListResourcesNodeExecutor implements NodeExecutor {
         success: true,
         pause: true,
         output: {
-          resources_offered: active.length,
+          resources_offered: bookable.length,
           template_id: template.id,
         },
       };

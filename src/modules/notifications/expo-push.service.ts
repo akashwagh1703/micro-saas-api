@@ -7,7 +7,9 @@ export interface ExpoPushPayload {
   data?: Record<string, unknown>;
 }
 
-/** Sends high-priority push alerts via Expo Push API (Android booking channel). */
+const BOOKING_CHANNEL_ID = 'bookings';
+
+/** Sends high-priority push alerts via Expo Push API (lock screen + app closed). */
 @Injectable()
 export class ExpoPushService {
   private readonly logger = new Logger(ExpoPushService.name);
@@ -27,8 +29,22 @@ export class ExpoPushService {
       body: payload.body,
       sound: 'default',
       priority: 'high' as const,
-      channelId: 'bookings',
+      channelId: BOOKING_CHANNEL_ID,
+      badge: 1,
+      ttl: 300,
       data: payload.data ?? {},
+      android: {
+        channelId: BOOKING_CHANNEL_ID,
+        priority: 'high' as const,
+        sound: 'default',
+        vibrate: [0, 300, 200, 300],
+        visibility: 'public' as const,
+      },
+      ios: {
+        sound: 'default',
+        badge: 1,
+        _displayInForeground: true,
+      },
     }));
 
     try {
@@ -41,7 +57,16 @@ export class ExpoPushService {
         body: JSON.stringify(messages),
       });
       if (!response.ok) {
-        this.logger.warn(`Expo push HTTP ${response.status} for user ${userId}`);
+        const text = await response.text().catch(() => '');
+        this.logger.warn(`Expo push HTTP ${response.status} for user ${userId}: ${text}`);
+        return;
+      }
+      const result = (await response.json()) as {
+        data?: Array<{ status?: string; message?: string; details?: unknown }>;
+      };
+      const errors = (result.data ?? []).filter((item) => item.status === 'error');
+      if (errors.length) {
+        this.logger.warn(`Expo push delivery errors for user ${userId}: ${JSON.stringify(errors)}`);
       }
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error);

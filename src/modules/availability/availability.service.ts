@@ -281,6 +281,12 @@ export class AvailabilityService {
       void this.bookingNotifications.notifyCustomerConfirmed(userId, serialized);
     }
 
+    if (status === 'cancelled' && (previousStatus === 'pending' || previousStatus === 'confirmed')) {
+      void this.bookingNotifications.notifyCustomerCancelled(userId, serialized, {
+        wasPending: previousStatus === 'pending',
+      });
+    }
+
     return { booking: serialized };
   }
 
