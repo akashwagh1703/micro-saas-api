@@ -67,15 +67,20 @@ export class BookingNotificationService {
   async notifyOwner(
     userId: number,
     booking: OwnerBookingAlert,
-    options?: { contact_name?: string | null; is_pending?: boolean },
+    options?: { contact_name?: string | null; contact_phone?: string | null; is_pending?: boolean },
   ): Promise<void> {
     const timeZone = (await this.settings.get(userId, 'timezone')) || 'Asia/Kolkata';
     const when = formatBookingWhen(booking.starts_at, timeZone);
     const resource = booking.resource_name ?? 'Team member';
     const service = booking.service_label ? ` · ${booking.service_label}` : '';
-    const customer = options?.contact_name ? ` for ${options.contact_name}` : '';
+    const customerName = options?.contact_name?.trim() || null;
+    const customerPhone = options?.contact_phone?.trim() || null;
+    const customer =
+      customerName && customerPhone
+        ? `${customerName} (${customerPhone})`
+        : customerName || customerPhone || 'Customer';
     const pending = options?.is_pending === true;
-    const description = `${resource} · ${when}${service}${customer}`;
+    const description = `${customer}\n${resource} · ${when}${service}`;
 
     await this.activity.log(
       userId,
@@ -87,6 +92,8 @@ export class BookingNotificationService {
         starts_at: booking.starts_at,
         resource_name: booking.resource_name,
         service_label: booking.service_label,
+        contact_name: customerName,
+        contact_phone: customerPhone,
         pending,
       },
     );
@@ -101,12 +108,21 @@ export class BookingNotificationService {
         starts_at: booking.starts_at,
         resource_name: booking.resource_name,
         service_label: booking.service_label,
+        contact_name: customerName,
+        contact_phone: customerPhone,
         pending,
       },
       sendPush: true,
     });
 
-    await this.sendWhatsAppAlertIfConfigured(userId, resource, when, service, customer, pending);
+    await this.sendWhatsAppAlertIfConfigured(
+      userId,
+      resource,
+      when,
+      service,
+      customer,
+      pending,
+    );
   }
 
   /** Sends the customer an interactive confirmation after the owner approves a pending booking. */
@@ -249,8 +265,8 @@ export class BookingNotificationService {
     if (!to) return;
 
     const message = pending
-      ? `📋 New booking *request*\n\n${resource}\n${when}${service}${customer}\n\nOpen AutoWave → Bookings to confirm or cancel.`
-      : `📅 New booking\n\n${resource}\n${when}${service}${customer}\n\nOpen AutoWave → Bookings to view details.`;
+      ? `📋 New booking *request*\n\nCustomer: ${customer}\n${resource}\n${when}${service}\n\nOpen AutoWave → Bookings to confirm or cancel.`
+      : `📅 New booking\n\nCustomer: ${customer}\n${resource}\n${when}${service}\n\nOpen AutoWave → Bookings to view details.`;
 
     try {
       const result = await this.whatsappApi.sendTextMessage(

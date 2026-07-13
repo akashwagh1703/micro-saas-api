@@ -1,4 +1,4 @@
-import type { Booking, ResourceSchedule, ServiceResource } from '@prisma/client';
+import type { Booking, Contact, ResourceSchedule, ServiceResource } from '@prisma/client';
 import { Prisma } from '@prisma/client';
 import {
   ConflictException,
@@ -55,12 +55,22 @@ function serializeSchedule(schedule: ResourceSchedule) {
   };
 }
 
-function serializeBooking(booking: Booking & { resource?: ServiceResource }) {
+function serializeBooking(
+  booking: Booking & {
+    resource?: ServiceResource;
+    contact?: Contact | null;
+    conversation?: { contact?: Contact | null } | null;
+  },
+) {
+  const contact = booking.contact ?? booking.conversation?.contact ?? null;
   return {
     id: booking.id,
     resource_id: booking.resourceId,
     resource_name: booking.resource?.name ?? null,
-    contact_id: booking.contactId,
+    contact_id: booking.contactId ?? contact?.id ?? null,
+    contact_name: contact?.name ?? null,
+    contact_phone: contact?.phone ?? null,
+    contact_username: contact?.username ?? null,
     conversation_id: booking.conversationId,
     workflow_execution_id: booking.workflowExecutionId,
     starts_at: booking.startsAt.toISOString(),
@@ -209,7 +219,11 @@ export class AvailabilityService {
 
     const items = await this.prisma.booking.findMany({
       where,
-      include: { resource: true },
+      include: {
+        resource: true,
+        contact: true,
+        conversation: { include: { contact: true } },
+      },
       orderBy: { startsAt: 'asc' },
       take: 500,
     });
@@ -250,17 +264,27 @@ export class AvailabilityService {
         serviceLabel: dto.service_label ?? null,
         notes: dto.notes ?? null,
       },
-      include: { resource: true },
+      include: { resource: true, contact: true, conversation: { include: { contact: true } } },
     });
 
     const serialized = serializeBooking(booking);
-    let contactName: string | null = null;
-    if (dto.contact_id != null) {
-      const contact = await this.prisma.contact.findUnique({ where: { id: dto.contact_id } });
-      contactName = contact?.name ?? null;
-    }
+    const resolvedContact =
+      booking.contact ??
+      booking.conversation?.contact ??
+      (dto.conversation_id
+        ? (
+            await this.prisma.conversation.findFirst({
+              where: { id: dto.conversation_id, userId },
+              include: { contact: true },
+            })
+          )?.contact
+        : null) ??
+      null;
+    const contactName = resolvedContact?.name ?? null;
+    const contactPhone = resolvedContact?.phone ?? null;
     void this.bookingNotifications.notifyOwner(userId, serialized, {
       contact_name: contactName,
+      contact_phone: contactPhone,
       is_pending: (dto.status ?? 'confirmed') === 'pending',
     });
 
@@ -273,7 +297,7 @@ export class AvailabilityService {
     const updated = await this.prisma.booking.update({
       where: { id: booking.id },
       data: { status },
-      include: { resource: true },
+      include: { resource: true, contact: true, conversation: { include: { contact: true } } },
     });
     const serialized = serializeBooking(updated);
 

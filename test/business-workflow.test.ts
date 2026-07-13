@@ -28,6 +28,7 @@ describe('business workflow templates', () => {
     assert.equal(nodeTypes[1], 'pick_options', 'Service buttons are the first customer-facing step');
     assert.ok(nodeTypes.includes('pick_options'));
     assert.ok(nodeTypes.includes('list_resources'));
+    assert.ok(nodeIds.includes('pick-time-period'));
     assert.ok(nodeTypes.includes('list_slots'));
     assert.ok(nodeTypes.includes('book_slot'));
     const bookSlot = (template?.definition.nodes ?? []).find((n) => n.type === 'book_slot');

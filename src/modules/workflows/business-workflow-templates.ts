@@ -172,6 +172,28 @@ function listResourcesNode(
   };
 }
 
+function pickTimePeriodNode(
+  id: string,
+  y: number,
+  label: string,
+  body: string,
+  header = 'Pick time of day',
+) {
+  return {
+    id,
+    type: 'pick_options',
+    y,
+    data: {
+      label,
+      summary: 'Morning / afternoon / evening / night before slot list',
+      field: 'time_period',
+      mode: 'time_period_pick',
+      header,
+      body,
+    },
+  };
+}
+
 function listSlotsNode(
   id: string,
   y: number,
@@ -473,10 +495,23 @@ function buildLiveAppointmentFlow(vertical: SchedulingVertical): WorkflowTemplat
         meta.resourceBody,
         meta.resourceHeader,
       ),
-      listSlotsNode('list-slots', 520, 'Pick Slot', meta.slotsBody, meta.slotsHeader),
-      bookSlotNode('book-slot', 640, 'Request Booking', meta.pendingBook, meta.confirmedBook),
-      ...leadSaveOnly(760, {
-        collectedFields: ['service_type', 'preferred_date', 'resource_name', 'booking_time'],
+      pickTimePeriodNode(
+        'pick-time-period',
+        480,
+        'Pick Time of Day',
+        `You chose *{{resource_name}}* for *{{preferred_date}}*.\n\nWhat time of day works best? Tap *View options*:`,
+        '🕐 Choose time of day',
+      ),
+      listSlotsNode(
+        'list-slots',
+        560,
+        'Pick Slot',
+        'Available *{{time_period}}* times with *{{resource_name}}* on *{{preferred_date}}*.\n\nTap *View options* to pick a slot:',
+        meta.slotsHeader,
+      ),
+      bookSlotNode('book-slot', 680, 'Request Booking', meta.pendingBook, meta.confirmedBook),
+      ...leadSaveOnly(800, {
+        collectedFields: ['service_type', 'preferred_date', 'resource_name', 'time_period', 'booking_time'],
         notes: meta.leadNotes,
       }),
     ]),

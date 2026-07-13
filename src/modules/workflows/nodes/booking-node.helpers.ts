@@ -291,3 +291,174 @@ export function buildQuickDatePickItems(nextNodeId: string, field = 'preferred_d
     },
   ];
 }
+
+export type TimePeriod = 'morning' | 'afternoon' | 'evening' | 'night';
+
+export const TIME_PERIOD_LABELS: Record<TimePeriod, string> = {
+  morning: 'Morning (6 AM – 12 PM)',
+  afternoon: 'Afternoon (12 PM – 5 PM)',
+  evening: 'Evening (5 PM – 9 PM)',
+  night: 'Night (9 PM – 6 AM)',
+};
+
+export function normalizeTimePeriod(raw: unknown): TimePeriod | null {
+  const text = String(raw ?? '')
+    .trim()
+    .toLowerCase();
+  if (!text) return null;
+  if (text.includes('morning') || text === 'morning') return 'morning';
+  if (text.includes('afternoon') || text === 'afternoon') return 'afternoon';
+  if (text.includes('evening') || text === 'evening') return 'evening';
+  if (text.includes('night') || text === 'night') return 'night';
+  return null;
+}
+
+export function slotHourInTimeZone(iso: string, timeZone: string): number {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone,
+    hour: 'numeric',
+    hour12: false,
+  }).formatToParts(new Date(iso));
+  const hourPart = parts.find((p) => p.type === 'hour');
+  return Number(hourPart?.value ?? 0);
+}
+
+export function slotMatchesTimePeriod(hour: number, period: TimePeriod): boolean {
+  switch (period) {
+    case 'morning':
+      return hour >= 6 && hour < 12;
+    case 'afternoon':
+      return hour >= 12 && hour < 17;
+    case 'evening':
+      return hour >= 17 && hour < 21;
+    case 'night':
+      return hour >= 21 || hour < 6;
+    default:
+      return true;
+  }
+}
+
+export function filterSlotsByTimePeriod<T extends { starts_at: string }>(
+  slots: T[],
+  period: TimePeriod | null,
+  timeZone: string,
+): T[] {
+  if (!period) return slots;
+  return slots.filter((slot) =>
+    slotMatchesTimePeriod(slotHourInTimeZone(slot.starts_at, timeZone), period),
+  );
+}
+
+export function periodsWithAvailableSlots<T extends { starts_at: string }>(
+  slots: T[],
+  timeZone: string,
+  exclude?: TimePeriod | null,
+): TimePeriod[] {
+  const found = new Set<TimePeriod>();
+  for (const slot of slots) {
+    const hour = slotHourInTimeZone(slot.starts_at, timeZone);
+    for (const period of ['morning', 'afternoon', 'evening', 'night'] as TimePeriod[]) {
+      if (period === exclude) continue;
+      if (slotMatchesTimePeriod(hour, period)) found.add(period);
+    }
+  }
+  return ['morning', 'afternoon', 'evening', 'night'].filter((p) =>
+    found.has(p as TimePeriod),
+  ) as TimePeriod[];
+}
+
+/** Morning / afternoon / evening / night picker before listing individual slots. */
+export function buildTimePeriodPickItems(
+  nextNodeId: string,
+  field = 'time_period',
+): DynamicInteractiveItem[] {
+  const rows: { value: TimePeriod; text: string; desc: string }[] = [
+    { value: 'morning', text: 'Morning', desc: '6 AM – 12 PM' },
+    { value: 'afternoon', text: 'Afternoon', desc: '12 PM – 5 PM' },
+    { value: 'evening', text: 'Evening', desc: '5 PM – 9 PM' },
+    { value: 'night', text: 'Night', desc: '9 PM – 6 AM' },
+  ];
+  return rows.map((row, index) => ({
+    optionText: row.text,
+    description: row.desc,
+    displayOrder: index,
+    nextNodeId,
+    metadata: {
+      [field]: row.value,
+      time_period: row.value,
+      context_field: field,
+      context_value: row.value,
+    },
+  }));
+}
+
+export async function workflowHasNodeId(
+  prisma: PrismaService,
+  workflowId: number,
+  nodeId: string,
+): Promise<boolean> {
+  const workflow = await prisma.workflow.findUnique({ where: { id: workflowId } });
+  const nodes = ((workflow?.definition as { nodes?: { id?: string }[] })?.nodes ?? []) as {
+    id?: string;
+  }[];
+  return nodes.some((n) => n.id === nodeId);
+}
+
+/** Retry menu when no slots match — loops back to date, resource, or time period nodes. */
+export function buildBookingRetryItems(params: {
+  pickDateNodeId: string | null;
+  listResourcesNodeId: string | null;
+  pickTimePeriodNodeId: string | null;
+  listSlotsNodeId?: string | null;
+  alternatePeriods?: TimePeriod[];
+}): DynamicInteractiveItem[] {
+  const items: DynamicInteractiveItem[] = [];
+  let order = 0;
+  const slotsNode = params.listSlotsNodeId ?? params.pickTimePeriodNodeId;
+
+  for (const period of params.alternatePeriods ?? []) {
+    items.push({
+      optionText: period.charAt(0).toUpperCase() + period.slice(1),
+      description: TIME_PERIOD_LABELS[period].split('(')[1]?.replace(')', '') ?? '',
+      displayOrder: order++,
+      nextNodeId: slotsNode ?? params.listResourcesNodeId ?? params.pickDateNodeId ?? '',
+      metadata: {
+        time_period: period,
+        context_field: 'time_period',
+        context_value: period,
+      },
+    });
+  }
+
+  if (params.pickTimePeriodNodeId) {
+    items.push({
+      optionText: 'Other time',
+      description: 'Morning / afternoon / evening',
+      displayOrder: order++,
+      nextNodeId: params.pickTimePeriodNodeId,
+      metadata: { retry: 'time_period' },
+    });
+  }
+
+  if (params.listResourcesNodeId) {
+    items.push({
+      optionText: 'Other stylist',
+      description: 'Try someone else',
+      displayOrder: order++,
+      nextNodeId: params.listResourcesNodeId,
+      metadata: { retry: 'resource' },
+    });
+  }
+
+  if (params.pickDateNodeId) {
+    items.push({
+      optionText: 'Another day',
+      description: 'Today or tomorrow',
+      displayOrder: order++,
+      nextNodeId: params.pickDateNodeId,
+      metadata: { retry: 'date' },
+    });
+  }
+
+  return items.filter((item) => item.nextNodeId);
+}

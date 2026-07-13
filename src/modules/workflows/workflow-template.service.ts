@@ -428,6 +428,7 @@ export class WorkflowTemplateService {
       types.includes('collect_input') ||
       !types.includes('pick_options') ||
       !types.includes('list_resources') ||
+      !nodeIds.includes('pick-time-period') ||
       !types.includes('list_slots') ||
       !types.includes('book_slot') ||
       nodeIds.includes('ai-welcome') ||

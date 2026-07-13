@@ -11,6 +11,7 @@ import { WorkflowInteractiveSendService } from '../workflow-interactive-send.ser
 import { NodeExecutor, NodeExecutionResult } from './node-executor.interface';
 import {
   buildQuickDatePickItems,
+  buildTimePeriodPickItems,
   createDynamicInteractiveTemplate,
   enqueueWorkflowText,
   resolveContactPhone,
@@ -68,6 +69,8 @@ export class PickOptionsNodeExecutor implements NodeExecutor {
 
       if (mode === 'date_quick_pick') {
         items = buildQuickDatePickItems(nextNodeId, field);
+      } else if (mode === 'time_period_pick') {
+        items = buildTimePeriodPickItems(nextNodeId, field);
       } else {
         const options = await this.resolveOptions(execution.userId, data);
         if (!Array.isArray(options) || options.length === 0) {

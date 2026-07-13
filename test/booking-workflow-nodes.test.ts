@@ -2,10 +2,13 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   buildBookingMessageContext,
-  formatSlotLabel,
+  filterSlotsByTimePeriod,
   normalizePreferredDate,
+  normalizeTimePeriod,
+  slotMatchesTimePeriod,
   substituteContext,
   DEFAULT_BOOKING_CONFIRMED_MESSAGE,
+  formatSlotLabel,
 } from '../src/modules/workflows/nodes/booking-node.helpers';
 
 describe('booking workflow helpers', () => {
@@ -53,5 +56,25 @@ describe('booking workflow helpers', () => {
     assert.match(message, /Dr\. Mehta/);
     assert.match(message, /General visit/);
     assert.match(message, /Appointment confirmed/);
+  });
+
+  it('normalizes time period answers', () => {
+    assert.equal(normalizeTimePeriod('Morning'), 'morning');
+    assert.equal(normalizeTimePeriod('afternoon'), 'afternoon');
+    assert.equal(normalizeTimePeriod('Evening slot'), 'evening');
+    assert.equal(normalizeTimePeriod('night'), 'night');
+  });
+
+  it('filters slots by time of day in tenant timezone', () => {
+    const slots = [
+      { starts_at: '2026-07-14T03:30:00.000Z', ends_at: '2026-07-14T04:00:00.000Z' }, // morning IST
+      { starts_at: '2026-07-14T08:30:00.000Z', ends_at: '2026-07-14T09:00:00.000Z' }, // afternoon IST
+    ];
+    const morning = filterSlotsByTimePeriod(slots, 'morning', 'Asia/Kolkata');
+    assert.equal(morning.length, 1);
+    assert.equal(morning[0].starts_at, slots[0].starts_at);
+    assert.equal(slotMatchesTimePeriod(9, 'morning'), true);
+    assert.equal(slotMatchesTimePeriod(14, 'afternoon'), true);
+    assert.equal(slotMatchesTimePeriod(22, 'night'), true);
   });
 });

@@ -7,8 +7,8 @@ import { UserStateService } from '../user-state.service';
 import { WorkflowInteractiveSendService } from '../workflow-interactive-send.service';
 import { NodeExecutor, NodeExecutionResult } from './node-executor.interface';
 import {
+  buildBookingRetryItems,
   createDynamicInteractiveTemplate,
-  enqueueWorkflowText,
   resolveContactPhone,
   resolveNextNodeIdFromWorkflow,
   substituteContext,
@@ -47,14 +47,54 @@ export class ListResourcesNodeExecutor implements NodeExecutor {
       );
 
       if (bookable.length === 0) {
-        const emptyMessage = substituteContext(
+        const body = substituteContext(
           String(
             data.empty_message ??
-              'Sorry, no one is available for booking on {{preferred_date}} right now.\n\nPlease try *Today* or *Tomorrow* again, or contact us directly.',
+              'Sorry, no one is available for booking on *{{preferred_date}}* right now.\n\nTry another day below:',
           ),
           context,
         );
-        await enqueueWorkflowText(this.jobs, execution, emptyMessage);
+
+        const retryItems = buildBookingRetryItems({
+          pickDateNodeId: 'pick-date',
+          listResourcesNodeId: null,
+          pickTimePeriodNodeId: null,
+        });
+
+        if (retryItems.length > 0) {
+          const template = await createDynamicInteractiveTemplate(this.prisma, execution.userId, {
+            name: `wf-${execution.id}-${node.id}-empty-retry`,
+            header: 'No one available',
+            body,
+            items: retryItems,
+            useButtons: true,
+          });
+
+          const delivered = await this.interactiveSend.deliverTemplate({
+            execution,
+            contactPhone,
+            templateId: template.id,
+            nodeId: node.id,
+          });
+
+          if (delivered.success) {
+            await this.userStateService.saveUserState(
+              execution.userId,
+              contactPhone,
+              execution.workflowId,
+              node.id,
+              String(template.id),
+              'WAITING_FOR_RESPONSE',
+            );
+            return { success: true, pause: true, output: { resources_offered: 0, retry: true } };
+          }
+        }
+
+        await this.jobs.enqueueSendMessage({
+          userId: execution.userId,
+          conversationId: execution.conversationId!,
+          content: body,
+        });
         return { success: true, stop: true, output: { resources_offered: 0 } };
       }
 
