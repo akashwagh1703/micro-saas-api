@@ -404,6 +404,30 @@ export async function workflowHasNodeId(
   return nodes.some((n) => n.id === nodeId);
 }
 
+/** After resource pick, route to pick-time-period when present (even if edges were stale). */
+export async function resolveNextNodeAfterResources(
+  prisma: PrismaService,
+  workflowId: number,
+  currentNodeId: string,
+): Promise<string | null> {
+  if (await workflowHasNodeId(prisma, workflowId, 'pick-time-period')) {
+    return 'pick-time-period';
+  }
+  return resolveNextNodeIdFromWorkflow(prisma, workflowId, currentNodeId);
+}
+
+/** After time-of-day pick, route to list-slots when present (even if edges were stale). */
+export async function resolveNextNodeAfterTimePeriod(
+  prisma: PrismaService,
+  workflowId: number,
+  currentNodeId: string,
+): Promise<string | null> {
+  if (await workflowHasNodeId(prisma, workflowId, 'list-slots')) {
+    return 'list-slots';
+  }
+  return resolveNextNodeIdFromWorkflow(prisma, workflowId, currentNodeId);
+}
+
 /** Retry menu when no slots match — loops back to date, resource, or time period nodes. */
 export function buildBookingRetryItems(params: {
   pickDateNodeId: string | null;

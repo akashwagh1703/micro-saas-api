@@ -10,6 +10,7 @@ import {
   buildBookingRetryItems,
   createDynamicInteractiveTemplate,
   resolveContactPhone,
+  resolveNextNodeAfterResources,
   resolveNextNodeIdFromWorkflow,
   substituteContext,
 } from './booking-node.helpers';
@@ -98,7 +99,7 @@ export class ListResourcesNodeExecutor implements NodeExecutor {
         return { success: true, stop: true, output: { resources_offered: 0 } };
       }
 
-      const nextNodeId = await resolveNextNodeIdFromWorkflow(
+      const nextNodeId = await resolveNextNodeAfterResources(
         this.prisma,
         execution.workflowId,
         node.id,

@@ -189,6 +189,9 @@ export class InteractiveMessageHandlerService {
         if (meta.preferred_date != null) {
           context.preferred_date = meta.preferred_date;
         }
+        if (meta.time_period != null) {
+          context.time_period = meta.time_period;
+        }
       }
 
       await this.prisma.workflowExecution.update({

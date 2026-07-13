@@ -15,6 +15,7 @@ import {
   createDynamicInteractiveTemplate,
   enqueueWorkflowText,
   resolveContactPhone,
+  resolveNextNodeAfterTimePeriod,
   resolveNextNodeIdFromWorkflow,
   substituteContext,
 } from './booking-node.helpers';
@@ -50,27 +51,26 @@ export class PickOptionsNodeExecutor implements NodeExecutor {
         return { success: false, error: 'No contact phone number in context or execution' };
       }
 
-      const nextNodeId = await resolveNextNodeIdFromWorkflow(
-        this.prisma,
-        execution.workflowId,
-        node.id,
-      );
+      const mode = String(data.mode ?? 'static');
+      const field = String(data.field ?? '').trim();
+      if (!field && mode !== 'date_quick_pick') {
+        return { success: false, error: 'pick_options node requires a context field' };
+      }
+
+      const nextNodeId =
+        mode === 'time_period_pick'
+          ? await resolveNextNodeAfterTimePeriod(this.prisma, execution.workflowId, node.id)
+          : await resolveNextNodeIdFromWorkflow(this.prisma, execution.workflowId, node.id);
       if (!nextNodeId) {
         return { success: false, error: 'pick_options node has no outgoing edge' };
       }
 
-      const field = String(data.field ?? '').trim();
-      if (!field) {
-        return { success: false, error: 'pick_options node requires a context field' };
-      }
-
-      const mode = String(data.mode ?? 'static');
       let items;
 
       if (mode === 'date_quick_pick') {
-        items = buildQuickDatePickItems(nextNodeId, field);
+        items = buildQuickDatePickItems(nextNodeId, field || 'preferred_date');
       } else if (mode === 'time_period_pick') {
-        items = buildTimePeriodPickItems(nextNodeId, field);
+        items = buildTimePeriodPickItems(nextNodeId, field || 'time_period');
       } else {
         const options = await this.resolveOptions(execution.userId, data);
         if (!Array.isArray(options) || options.length === 0) {
@@ -102,7 +102,7 @@ export class PickOptionsNodeExecutor implements NodeExecutor {
         ),
         footer: data.footer ? substituteContext(String(data.footer), context) : undefined,
         items,
-        useButtons: items.length <= 3,
+        useButtons: mode !== 'time_period_pick' && items.length <= 3,
       });
 
       const delivered = await this.interactiveSend.deliverTemplate({
@@ -118,9 +118,11 @@ export class PickOptionsNodeExecutor implements NodeExecutor {
           ...items.map((item, i) => `${i + 1}. ${item.optionText}`),
         ].join('\n');
         await enqueueWorkflowText(this.jobs, execution, fallbackBody);
+        this.logger.warn(`pick_options deliver failed (${mode}): ${delivered.error}`);
         return {
-          success: false,
-          error: delivered.error ?? 'Failed to send WhatsApp action buttons',
+          success: true,
+          stop: true,
+          output: { deliver_fallback: true, pick_field: field || mode },
         };
       }
 

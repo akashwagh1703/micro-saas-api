@@ -8,6 +8,7 @@ import { WorkflowInteractiveSendService } from '../workflow-interactive-send.ser
 import { NodeExecutor, NodeExecutionResult } from './node-executor.interface';
 import {
   buildBookingRetryItems,
+  buildTimePeriodPickItems,
   createDynamicInteractiveTemplate,
   filterSlotsByTimePeriod,
   formatSlotLabel,
@@ -63,12 +64,18 @@ export class ListSlotsNodeExecutor implements NodeExecutor {
         return { success: true, stop: true, output: { slots_offered: 0, invalid_date: true } };
       }
 
+      const contactPhone = await resolveContactPhone(this.prisma, execution, context);
+      if (!contactPhone) {
+        return { success: false, error: 'No contact phone number in context or execution' };
+      }
+
       const timePeriod = normalizeTimePeriod(context.time_period);
       if (!timePeriod) {
-        return {
-          success: false,
-          error: 'No time of day selected — workflow should include pick-time-period before list_slots',
-        };
+        return this.promptForTimePeriod(execution, node, contactPhone, data, {
+          ...context,
+          preferred_date: date,
+          resource_name: context.resource_name,
+        });
       }
 
       const slotsResponse = await this.availability.getSlots(execution.userId, date, resourceId);
@@ -84,11 +91,6 @@ export class ListSlotsNodeExecutor implements NodeExecutor {
       };
 
       const periodSlots = filterSlotsByTimePeriod(allSlots, timePeriod, timeZone);
-
-      const contactPhone = await resolveContactPhone(this.prisma, execution, context);
-      if (!contactPhone) {
-        return { success: false, error: 'No contact phone number in context or execution' };
-      }
 
       if (periodSlots.length === 0) {
         return this.handleNoSlots(
@@ -270,6 +272,65 @@ export class ListSlotsNodeExecutor implements NodeExecutor {
         retry_offered: retryItems.length,
         time_period: timePeriod,
       },
+    };
+  }
+
+  private async promptForTimePeriod(
+    execution: WorkflowExecution,
+    node: Record<string, any>,
+    contactPhone: string,
+    data: Record<string, any>,
+    context: Record<string, any>,
+  ): Promise<NodeExecutionResult> {
+    const body = substituteContext(
+      String(
+        data.time_period_message ??
+          'You chose *{{resource_name}}* for *{{preferred_date}}*.\n\nWhat time of day works best? Tap *View options*:',
+      ),
+      context,
+    );
+
+    const items = buildTimePeriodPickItems(node.id, 'time_period');
+    const template = await createDynamicInteractiveTemplate(this.prisma, execution.userId, {
+      name: `wf-${execution.id}-${node.id}-time-period`,
+      header: substituteContext(
+        String(data.time_period_header ?? '🕐 Choose time of day'),
+        context,
+      ),
+      body,
+      items,
+      useButtons: false,
+    });
+
+    const delivered = await this.interactiveSend.deliverTemplate({
+      execution,
+      contactPhone,
+      templateId: template.id,
+      nodeId: node.id,
+    });
+
+    if (!delivered.success) {
+      this.logger.warn(`Time period picker failed: ${delivered.error}`);
+      await this.enqueueText(
+        execution,
+        `${body}\n\nReply with: Morning, Afternoon, Evening, or Night`,
+      );
+      return { success: true, stop: true, output: { time_period_prompt_fallback: true } };
+    }
+
+    await this.userStateService.saveUserState(
+      execution.userId,
+      contactPhone,
+      execution.workflowId,
+      node.id,
+      String(template.id),
+      'WAITING_FOR_RESPONSE',
+    );
+
+    return {
+      success: true,
+      pause: true,
+      output: { time_period_prompt: true, template_id: template.id },
     };
   }
 
