@@ -61,11 +61,11 @@ export class BillingService {
   }
 
   monthlyPriceInr(): number {
-    return Number(this.config.get<string>('PLATFORM_PRICE_MONTHLY_INR', '499'));
+    return Number(this.config.get<string>('PLATFORM_PRICE_MONTHLY_INR', '99'));
   }
 
   yearlyPriceInr(): number {
-    return Number(this.config.get<string>('PLATFORM_PRICE_YEARLY_INR', '4999'));
+    return Number(this.config.get<string>('PLATFORM_PRICE_YEARLY_INR', '999'));
   }
 
   private getRazorpay(): Razorpay | null {

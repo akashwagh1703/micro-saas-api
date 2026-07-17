@@ -48,8 +48,8 @@ function parseInr(envKey: string, fallback: number): number {
 }
 
 export function buildWebsitePublicConfig() {
-  const monthlyPrice = parseInr('PLATFORM_PRICE_MONTHLY_INR', 499);
-  const yearlyPrice = parseInr('PLATFORM_PRICE_YEARLY_INR', 4999);
+  const monthlyPrice = parseInr('PLATFORM_PRICE_MONTHLY_INR', 99);
+  const yearlyPrice = parseInr('PLATFORM_PRICE_YEARLY_INR', 999);
   const trialDays = parseInr('BILLING_TRIAL_DAYS', 14);
   const yearlySavings = Math.max(0, monthlyPrice * 12 - yearlyPrice);
 
