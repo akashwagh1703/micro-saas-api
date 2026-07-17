@@ -9,6 +9,7 @@ import { NodeExecutor, NodeExecutionResult } from './node-executor.interface';
 import {
   buildBookingRetryItems,
   createDynamicInteractiveTemplate,
+  resolveBookingFlowNodeIds,
   resolveContactPhone,
   resolveNextNodeAfterResources,
   resolveNextNodeIdFromWorkflow,
@@ -56,8 +57,9 @@ export class ListResourcesNodeExecutor implements NodeExecutor {
           context,
         );
 
+        const flowIds = await resolveBookingFlowNodeIds(this.prisma, execution.workflowId);
         const retryItems = buildBookingRetryItems({
-          pickDateNodeId: 'pick-date',
+          pickDateNodeId: flowIds.pickDateNodeId,
           listResourcesNodeId: null,
           pickTimePeriodNodeId: null,
         });
@@ -96,7 +98,7 @@ export class ListResourcesNodeExecutor implements NodeExecutor {
           conversationId: execution.conversationId!,
           content: body,
         });
-        return { success: true, stop: true, output: { resources_offered: 0 } };
+        return { success: true, pause: true, output: { resources_offered: 0 } };
       }
 
       const nextNodeId = await resolveNextNodeAfterResources(

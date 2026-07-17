@@ -1,6 +1,7 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { WorkflowExecution } from '@prisma/client';
 import { SettingsService } from '../../settings/settings.service';
+import { AvailabilityService } from '../../availability/availability.service';
 import {
   defaultServicesForVertical,
 } from '../../../platform/appointment-services';
@@ -14,6 +15,8 @@ import {
   buildTimePeriodPickItems,
   createDynamicInteractiveTemplate,
   enqueueWorkflowText,
+  filterBookableTimePeriods,
+  normalizePreferredDate,
   resolveContactPhone,
   resolveNextNodeAfterTimePeriod,
   resolveNextNodeIdFromWorkflow,
@@ -34,6 +37,7 @@ export class PickOptionsNodeExecutor implements NodeExecutor {
   constructor(
     private readonly prisma: PrismaService,
     private readonly settings: SettingsService,
+    private readonly availability: AvailabilityService,
     private readonly userStateService: UserStateService,
     private readonly interactiveSend: WorkflowInteractiveSendService,
     @Inject(JOB_DISPATCHER) private readonly jobs: JobDispatcher,
@@ -67,10 +71,38 @@ export class PickOptionsNodeExecutor implements NodeExecutor {
 
       let items;
 
+      const timeZone =
+        (await this.settings.get(execution.userId, 'timezone'))?.trim() || 'Asia/Kolkata';
+
       if (mode === 'date_quick_pick') {
-        items = buildQuickDatePickItems(nextNodeId, field || 'preferred_date');
+        items = buildQuickDatePickItems(nextNodeId, field || 'preferred_date', timeZone);
       } else if (mode === 'time_period_pick') {
-        items = buildTimePeriodPickItems(nextNodeId, field || 'time_period');
+        const preferredDate = normalizePreferredDate(
+          context.preferred_date,
+          new Date(),
+          timeZone,
+        );
+        const resourceId = Number(
+          context.resource_id ?? context.selected_resource_id ?? data.resource_id,
+        );
+        let periods: ReturnType<typeof filterBookableTimePeriods> | undefined;
+        if (preferredDate && resourceId && !Number.isNaN(resourceId)) {
+          const slotsResponse = await this.availability
+            .getSlots(execution.userId, preferredDate, resourceId)
+            .catch(() => null);
+          const allSlots = slotsResponse?.resources?.[0]?.slots ?? [];
+          const tz = slotsResponse?.timezone ?? timeZone;
+          periods = filterBookableTimePeriods({
+            timeZone: tz,
+            preferredDate,
+            slots: allSlots,
+          });
+        }
+        items = buildTimePeriodPickItems(
+          nextNodeId,
+          field || 'time_period',
+          periods?.length ? periods : undefined,
+        );
       } else {
         const options = await this.resolveOptions(execution.userId, data);
         if (!Array.isArray(options) || options.length === 0) {
@@ -121,7 +153,7 @@ export class PickOptionsNodeExecutor implements NodeExecutor {
         this.logger.warn(`pick_options deliver failed (${mode}): ${delivered.error}`);
         return {
           success: true,
-          stop: true,
+          pause: true,
           output: { deliver_fallback: true, pick_field: field || mode },
         };
       }

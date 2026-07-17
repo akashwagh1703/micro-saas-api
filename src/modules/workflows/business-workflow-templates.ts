@@ -459,6 +459,28 @@ const LIVE_APPOINTMENT_BY_VERTICAL: Record<SchedulingVertical, LiveAppointmentMe
     confirmedBook: DEFAULT_CONFIRMED_BOOK,
     leadNotes: 'Travel consultation booking request from WhatsApp',
   },
+  sports_turf: {
+    slug: 'sports-turf-booking',
+    name: 'Sports Turf Slot Booking',
+    description: 'Button booking: sport type, date, turf, time of day, slot — pending until owner confirms.',
+    role: 'sports turf / ground',
+    emoji: '⚽',
+    serviceHeader: '{{business_name}} ⚽',
+    serviceBody:
+      'Hi {{contact_name}}! Welcome to *{{business_name}}*.\n\nWhat would you like to book?',
+    dateBody:
+      'Booking: *{{service_type}}* ✓\n\nPick a day at *{{business_name}}*:',
+    resourceHeader: 'Choose turf / court',
+    resourceBody:
+      'Select a turf for *{{preferred_date}}*.\n\nTap *View options* to see availability:',
+    slotsHeader: 'Pick slot time',
+    slotsBody:
+      'Open times on *{{resource_name}}* for *{{preferred_date}}*.\n\nTap *View options* for all slots:',
+    pendingBook:
+      'Thanks! Your *{{service_type}}* on *{{resource_name}}* at *{{booking_time}}* is submitted.\n\nWe will confirm your slot shortly.',
+    confirmedBook: DEFAULT_CONFIRMED_BOOK,
+    leadNotes: 'Sports turf booking request from WhatsApp',
+  },
 };
 
 function buildLiveAppointmentFlow(vertical: SchedulingVertical): WorkflowTemplate {

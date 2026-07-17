@@ -2,6 +2,7 @@ import { Injectable, Logger, Inject } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { UserStateService } from './user-state.service';
 import { JOB_DISPATCHER, JobDispatcher } from '../queue/job-dispatcher';
+import { applyBookingRetryContext } from './nodes/booking-node.helpers';
 
 /**
  * Interactive Message Handler Service
@@ -166,6 +167,7 @@ export class InteractiveMessageHandlerService {
 
       if (option?.metadata && typeof option.metadata === 'object' && !Array.isArray(option.metadata)) {
         const meta = option.metadata as Record<string, unknown>;
+        applyBookingRetryContext(context, meta);
         if (meta.context_field != null && meta.context_value != null) {
           context[String(meta.context_field)] = meta.context_value;
         }

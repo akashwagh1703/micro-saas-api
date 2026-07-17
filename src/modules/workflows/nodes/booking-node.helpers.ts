@@ -1,6 +1,8 @@
 import { WorkflowExecution, Prisma } from '@prisma/client';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { JobDispatcher } from '../../queue/job-dispatcher';
+import { filterFutureSlotsForToday, type TimeSlot } from '../../availability/slot-engine';
+import { localDateStrInTimeZone } from '../../availability/timezone.util';
 
 export interface DynamicInteractiveItem {
   optionText: string;
@@ -77,10 +79,11 @@ export function substituteContext(template: string, context: Record<string, any>
   return message;
 }
 
-/** Normalize free-text dates (today, tomorrow, YYYY-MM-DD) to YYYY-MM-DD in local calendar. */
+/** Normalize free-text dates (today, tomorrow, YYYY-MM-DD) to YYYY-MM-DD in tenant or local calendar. */
 export function normalizePreferredDate(
   raw: unknown,
   referenceDate: Date = new Date(),
+  timeZone?: string,
 ): string | null {
   if (raw == null) return null;
   const text = String(raw).trim().toLowerCase();
@@ -88,9 +91,19 @@ export function normalizePreferredDate(
 
   if (/^\d{4}-\d{2}-\d{2}$/.test(text)) return text;
 
-  const today = startOfLocalDay(referenceDate);
-  if (text === 'today') return formatYmd(today);
-  if (text === 'tomorrow') return formatYmd(addDays(today, 1));
+  if (text === 'today') {
+    return timeZone
+      ? localDateStrInTimeZone(referenceDate, timeZone)
+      : formatYmd(startOfLocalDay(referenceDate));
+  }
+  if (text === 'tomorrow') {
+    const base = timeZone
+      ? localDateStrInTimeZone(referenceDate, timeZone)
+      : formatYmd(startOfLocalDay(referenceDate));
+    const [y, m, d] = base.split('-').map(Number);
+    const dt = new Date(y, m - 1, d + 1);
+    return formatYmd(dt);
+  }
 
   const parsed = Date.parse(text);
   if (!Number.isNaN(parsed)) {
@@ -262,9 +275,20 @@ export function buildBookingMessageContext(params: {
 }
 
 /** Today / Tomorrow quick-pick buttons with normalized YYYY-MM-DD values. */
-export function buildQuickDatePickItems(nextNodeId: string, field = 'preferred_date'): DynamicInteractiveItem[] {
-  const today = startOfLocalDay(new Date());
-  const tomorrow = addDays(today, 1);
+export function buildQuickDatePickItems(
+  nextNodeId: string,
+  field = 'preferred_date',
+  timeZone?: string,
+): DynamicInteractiveItem[] {
+  const now = new Date();
+  const todayYmd = timeZone
+    ? localDateStrInTimeZone(now, timeZone)
+    : formatYmd(startOfLocalDay(now));
+  const [y, m, d] = todayYmd.split('-').map(Number);
+  const tomorrowDate = new Date(y, m - 1, d + 1);
+  const tomorrowYmd = formatYmd(tomorrowDate);
+  const today = new Date(y, m - 1, d);
+  const tomorrow = tomorrowDate;
 
   return [
     {
@@ -273,9 +297,9 @@ export function buildQuickDatePickItems(nextNodeId: string, field = 'preferred_d
       displayOrder: 0,
       nextNodeId,
       metadata: {
-        preferred_date: formatYmd(today),
+        preferred_date: todayYmd,
         context_field: field,
-        context_value: formatYmd(today),
+        context_value: todayYmd,
       },
     },
     {
@@ -284,9 +308,9 @@ export function buildQuickDatePickItems(nextNodeId: string, field = 'preferred_d
       displayOrder: 1,
       nextNodeId,
       metadata: {
-        preferred_date: formatYmd(tomorrow),
+        preferred_date: tomorrowYmd,
         context_field: field,
-        context_value: formatYmd(tomorrow),
+        context_value: tomorrowYmd,
       },
     },
   ];
@@ -367,17 +391,82 @@ export function periodsWithAvailableSlots<T extends { starts_at: string }>(
   ) as TimePeriod[];
 }
 
+export function currentHourInTimeZone(timeZone: string, now: Date = new Date()): number {
+  return slotHourInTimeZone(now.toISOString(), timeZone);
+}
+
+/** Hide time-of-day buckets that have already ended when booking for today (tenant clock). */
+export function isTimePeriodStillSelectableToday(period: TimePeriod, hourNow: number): boolean {
+  switch (period) {
+    case 'morning':
+      return hourNow < 12;
+    case 'afternoon':
+      return hourNow < 17;
+    case 'evening':
+      return hourNow < 21;
+    case 'night':
+      return hourNow >= 21 || hourNow < 6;
+    default:
+      return true;
+  }
+}
+
+export function filterBookableTimePeriods(params: {
+  timeZone: string;
+  preferredDate: string;
+  slots?: { starts_at: string }[];
+  exclude?: TimePeriod | null;
+  now?: Date;
+}): TimePeriod[] {
+  const now = params.now ?? new Date();
+  const todayStr = localDateStrInTimeZone(now, params.timeZone);
+  const isToday = params.preferredDate === todayStr;
+  const hourNow = currentHourInTimeZone(params.timeZone, now);
+
+  let candidates: TimePeriod[] =
+    params.slots?.length && params.slots.length > 0
+      ? periodsWithAvailableSlots(params.slots, params.timeZone, params.exclude)
+      : (['morning', 'afternoon', 'evening', 'night'] as TimePeriod[]);
+
+  candidates = candidates.filter((p) => p !== params.exclude);
+
+  if (!isToday) {
+    return candidates;
+  }
+
+  return candidates.filter((period) => {
+    if (!isTimePeriodStillSelectableToday(period, hourNow)) {
+      return false;
+    }
+    if (!params.slots?.length) {
+      return true;
+    }
+    const inPeriod = filterSlotsByTimePeriod(params.slots, period, params.timeZone);
+    const future = filterFutureSlotsForToday(
+      inPeriod as TimeSlot[],
+      params.preferredDate,
+      params.timeZone,
+      now,
+    );
+    return future.length > 0;
+  });
+}
+
 /** Morning / afternoon / evening / night picker before listing individual slots. */
 export function buildTimePeriodPickItems(
   nextNodeId: string,
   field = 'time_period',
+  periods?: TimePeriod[],
 ): DynamicInteractiveItem[] {
-  const rows: { value: TimePeriod; text: string; desc: string }[] = [
-    { value: 'morning', text: 'Morning', desc: '6 AM – 12 PM' },
-    { value: 'afternoon', text: 'Afternoon', desc: '12 PM – 5 PM' },
-    { value: 'evening', text: 'Evening', desc: '5 PM – 9 PM' },
-    { value: 'night', text: 'Night', desc: '9 PM – 6 AM' },
-  ];
+  const list =
+    periods?.length && periods.length > 0
+      ? periods
+      : (['morning', 'afternoon', 'evening', 'night'] as TimePeriod[]);
+  const rows: { value: TimePeriod; text: string; desc: string }[] = list.map((value) => ({
+    value,
+    text: value.charAt(0).toUpperCase() + value.slice(1),
+    desc: TIME_PERIOD_LABELS[value].split('(')[1]?.replace(')', '').trim() ?? '',
+  }));
   return rows.map((row, index) => ({
     optionText: row.text,
     description: row.desc,
@@ -485,4 +574,94 @@ export function buildBookingRetryItems(params: {
   }
 
   return items.filter((item) => item.nextNodeId);
+}
+
+export interface BookingFlowNodeIds {
+  pickDateNodeId: string;
+  listResourcesNodeId: string;
+  pickTimePeriodNodeId: string;
+  listSlotsNodeId: string;
+}
+
+/** Resolve booking node ids from workflow definition (fallback to salon template ids). */
+export async function resolveBookingFlowNodeIds(
+  prisma: PrismaService,
+  workflowId: number,
+): Promise<BookingFlowNodeIds> {
+  const workflow = await prisma.workflow.findUnique({ where: { id: workflowId } });
+  const nodes = ((workflow?.definition as { nodes?: { id?: string; type?: string; data?: Record<string, unknown> }[] })
+    ?.nodes ?? []) as { id?: string; type?: string; data?: Record<string, unknown> }[];
+
+  const pickDate =
+    nodes.find((n) => n.type === 'pick_options' && n.data?.mode === 'date_quick_pick')?.id ??
+    'pick-date';
+  const pickTimePeriod =
+    nodes.find((n) => n.type === 'pick_options' && n.data?.mode === 'time_period_pick')?.id ??
+    'pick-time-period';
+  const listResources = nodes.find((n) => n.type === 'list_resources')?.id ?? 'list-resources';
+  const listSlots = nodes.find((n) => n.type === 'list_slots')?.id ?? 'list-slots';
+
+  return {
+    pickDateNodeId: pickDate,
+    listResourcesNodeId: listResources,
+    pickTimePeriodNodeId: pickTimePeriod,
+    listSlotsNodeId: listSlots,
+  };
+}
+
+const SLOT_CONTEXT_KEYS = [
+  'slot_starts_at',
+  'slot_ends_at',
+  'selected_slot_starts_at',
+] as const;
+
+/** Clear stale booking fields when customer picks a retry menu option. */
+export function applyBookingRetryContext(
+  context: Record<string, unknown>,
+  metadata: Record<string, unknown> | null | undefined,
+): void {
+  if (!metadata || typeof metadata !== 'object') return;
+  const retry = metadata.retry;
+  if (retry === 'date') {
+    delete context.time_period;
+    for (const key of SLOT_CONTEXT_KEYS) delete context[key];
+  } else if (retry === 'resource') {
+    delete context.time_period;
+    delete context.resource_id;
+    delete context.selected_resource_id;
+    delete context.resource_name;
+    for (const key of SLOT_CONTEXT_KEYS) delete context[key];
+  } else if (retry === 'time_period') {
+    for (const key of SLOT_CONTEXT_KEYS) delete context[key];
+  }
+}
+
+export async function scheduleWorkflowResume(
+  prisma: PrismaService,
+  jobs: JobDispatcher,
+  executionId: number,
+  nextNodeId: string,
+  contextPatch: Record<string, unknown> = {},
+  clearKeys: string[] = [],
+): Promise<void> {
+  const execution = await prisma.workflowExecution.findUnique({ where: { id: executionId } });
+  if (!execution) return;
+
+  const context: Record<string, unknown> = {
+    ...((execution.context as Record<string, unknown>) ?? {}),
+    ...contextPatch,
+    __resume_at_node_id: nextNodeId,
+    __resuming: true,
+    __interactive_response_received: true,
+  };
+  for (const key of clearKeys) {
+    delete context[key];
+  }
+  delete context.__paused_at_node_id;
+
+  await prisma.workflowExecution.update({
+    where: { id: executionId },
+    data: { status: 'running', context: context as Prisma.InputJsonValue },
+  });
+  await jobs.enqueueExecuteWorkflow(executionId);
 }

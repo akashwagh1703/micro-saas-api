@@ -13,6 +13,7 @@ export const VERTICAL_AVAILABILITY_DEFAULTS: Record<string, VerticalAvailability
   real_estate: { defaultSlotMinutes: 45, resourceType: 'agent', resourceLabel: 'Agent' },
   ca_accountant: { defaultSlotMinutes: 30, resourceType: 'consultant', resourceLabel: 'Consultant' },
   travel: { defaultSlotMinutes: 30, resourceType: 'agent', resourceLabel: 'Agent' },
+  sports_turf: { defaultSlotMinutes: 60, resourceType: 'turf', resourceLabel: 'Turf' },
 };
 
 export const DEFAULT_AVAILABILITY: VerticalAvailabilityDefaults = {

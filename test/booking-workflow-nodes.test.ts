@@ -2,7 +2,9 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   buildBookingMessageContext,
+  filterBookableTimePeriods,
   filterSlotsByTimePeriod,
+  isTimePeriodStillSelectableToday,
   normalizePreferredDate,
   normalizeTimePeriod,
   slotMatchesTimePeriod,
@@ -76,5 +78,23 @@ describe('booking workflow helpers', () => {
     assert.equal(slotMatchesTimePeriod(9, 'morning'), true);
     assert.equal(slotMatchesTimePeriod(14, 'afternoon'), true);
     assert.equal(slotMatchesTimePeriod(22, 'night'), true);
+  });
+
+  it('hides morning when booking today after 2 PM tenant time', () => {
+    assert.equal(isTimePeriodStillSelectableToday('morning', 14), false);
+    assert.equal(isTimePeriodStillSelectableToday('afternoon', 14), true);
+    const slots = [
+      { starts_at: '2026-07-14T03:30:00.000Z', ends_at: '2026-07-14T04:00:00.000Z' },
+      { starts_at: '2026-07-14T09:00:00.000Z', ends_at: '2026-07-14T09:30:00.000Z' },
+    ];
+    const now = new Date('2026-07-14T08:30:00.000Z');
+    const periods = filterBookableTimePeriods({
+      timeZone: 'Asia/Kolkata',
+      preferredDate: '2026-07-14',
+      slots,
+      now,
+    });
+    assert.equal(periods.includes('morning'), false);
+    assert.equal(periods.includes('afternoon'), true);
   });
 });

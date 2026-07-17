@@ -15,6 +15,7 @@ export const SCHEDULING_VERTICALS = [
   'real_estate',
   'ca_accountant',
   'travel',
+  'sports_turf',
 ] as const;
 
 export type SchedulingVertical = (typeof SCHEDULING_VERTICALS)[number];
@@ -57,6 +58,12 @@ export const DEFAULT_APPOINTMENT_SERVICES: Record<SchedulingVertical, Appointmen
     { text: 'Trip planning', description: 'Custom itinerary', value: 'Trip planning' },
     { text: 'Visa help', description: 'Visa guidance', value: 'Visa help' },
     { text: 'Package quote', description: 'Tour packages', value: 'Package quote' },
+  ],
+  sports_turf: [
+    { text: 'Turf booking', description: '1-hour slot', value: 'Turf booking' },
+    { text: 'Cricket net', description: 'Practice net', value: 'Cricket net' },
+    { text: 'Football turf', description: '5-a-side', value: 'Football turf' },
+    { text: 'Event slot', description: 'Private event', value: 'Event slot' },
   ],
 };
 

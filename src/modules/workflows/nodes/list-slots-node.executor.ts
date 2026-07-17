@@ -8,13 +8,16 @@ import { WorkflowInteractiveSendService } from '../workflow-interactive-send.ser
 import { NodeExecutor, NodeExecutionResult } from './node-executor.interface';
 import {
   buildBookingRetryItems,
+  buildQuickDatePickItems,
   buildTimePeriodPickItems,
   createDynamicInteractiveTemplate,
+  filterBookableTimePeriods,
   filterSlotsByTimePeriod,
   formatSlotLabel,
   normalizePreferredDate,
   normalizeTimePeriod,
   periodsWithAvailableSlots,
+  resolveBookingFlowNodeIds,
   resolveContactPhone,
   resolveNextNodeIdFromWorkflow,
   substituteContext,
@@ -49,40 +52,42 @@ export class ListSlotsNodeExecutor implements NodeExecutor {
         return { success: false, error: 'No resource selected for slot listing' };
       }
 
-      const dateField = String(data.date_field ?? 'preferred_date');
-      const rawDate = context[dateField] ?? context.preferred_date ?? data.date;
-      const date = normalizePreferredDate(rawDate);
-      if (!date) {
-        const invalidMessage = substituteContext(
-          String(
-            data.invalid_date_message ??
-              'Please go back and tap *Today* or *Tomorrow* to pick your visit date.',
-          ),
-          { ...context, preferred_date: String(rawDate ?? '') },
-        );
-        await this.enqueueText(execution, invalidMessage);
-        return { success: true, stop: true, output: { slots_offered: 0, invalid_date: true } };
-      }
-
       const contactPhone = await resolveContactPhone(this.prisma, execution, context);
       if (!contactPhone) {
         return { success: false, error: 'No contact phone number in context or execution' };
       }
 
-      const timePeriod = normalizeTimePeriod(context.time_period);
-      if (!timePeriod) {
-        return this.promptForTimePeriod(execution, node, contactPhone, data, {
-          ...context,
-          preferred_date: date,
-          resource_name: context.resource_name,
-        });
+      const dateField = String(data.date_field ?? 'preferred_date');
+      const rawDate = context[dateField] ?? context.preferred_date ?? data.date;
+      let date = normalizePreferredDate(rawDate, new Date(), 'Asia/Kolkata');
+      if (!date) {
+        return this.promptForDateRetry(execution, node, contactPhone, data, context);
       }
 
       const slotsResponse = await this.availability.getSlots(execution.userId, date, resourceId);
       const resourceRow = slotsResponse.resources[0];
       const allSlots = resourceRow?.slots ?? [];
       const timeZone = slotsResponse.timezone ?? 'Asia/Kolkata';
+      date = normalizePreferredDate(rawDate, new Date(), timeZone) ?? date;
       const resourceName = context.resource_name ?? resourceRow?.resource_name ?? 'your stylist';
+
+      const timePeriod = normalizeTimePeriod(context.time_period);
+      if (!timePeriod) {
+        return this.promptForTimePeriod(
+          execution,
+          node,
+          contactPhone,
+          data,
+          {
+            ...context,
+            preferred_date: date,
+            resource_name: resourceName,
+          },
+          allSlots,
+          timeZone,
+        );
+      }
+
       const slotContext = {
         ...context,
         preferred_date: date,
@@ -199,10 +204,14 @@ export class ListSlotsNodeExecutor implements NodeExecutor {
     timePeriod: TimePeriod,
     timeZone: string,
   ): Promise<NodeExecutionResult> {
-    const pickDateNodeId = 'pick-date';
-    const listResourcesNodeId = 'list-resources';
-    const pickTimePeriodNodeId = 'pick-time-period';
-    const alternatePeriods = periodsWithAvailableSlots(allSlots, timeZone, timePeriod);
+    const flowIds = await resolveBookingFlowNodeIds(this.prisma, execution.workflowId);
+    const preferredDate = String(context.preferred_date ?? '');
+    const alternatePeriods = filterBookableTimePeriods({
+      timeZone,
+      preferredDate,
+      slots: allSlots,
+      exclude: timePeriod,
+    });
 
     const periodLabel = TIME_PERIOD_LABELS[timePeriod].split('(')[0].trim().toLowerCase();
     const body =
@@ -223,23 +232,57 @@ export class ListSlotsNodeExecutor implements NodeExecutor {
           );
 
     const retryItems = buildBookingRetryItems({
-      pickDateNodeId,
-      listResourcesNodeId,
-      pickTimePeriodNodeId,
+      pickDateNodeId: flowIds.pickDateNodeId,
+      listResourcesNodeId: flowIds.listResourcesNodeId,
+      pickTimePeriodNodeId: flowIds.pickTimePeriodNodeId,
       listSlotsNodeId: node.id,
       alternatePeriods,
     });
 
     if (retryItems.length === 0) {
-      await this.enqueueText(execution, body);
-      return { success: true, stop: true, output: { slots_offered: 0, slot_date: context.preferred_date } };
+      const fallback = buildBookingRetryItems({
+        pickDateNodeId: flowIds.pickDateNodeId,
+        listResourcesNodeId: null,
+        pickTimePeriodNodeId: flowIds.pickTimePeriodNodeId,
+        listSlotsNodeId: node.id,
+      });
+      if (fallback.length > 0) {
+        return this.sendRetryInteractive(
+          execution,
+          node,
+          contactPhone,
+          body,
+          fallback,
+          timePeriod,
+        );
+      }
+      await this.enqueueText(execution, `${body}\n\nReply *book* to start again.`);
+      return { success: true, pause: true, output: { slots_offered: 0, slot_date: preferredDate } };
     }
 
+    return this.sendRetryInteractive(
+      execution,
+      node,
+      contactPhone,
+      body,
+      retryItems.slice(0, 10),
+      timePeriod,
+    );
+  }
+
+  private async sendRetryInteractive(
+    execution: WorkflowExecution,
+    node: Record<string, any>,
+    contactPhone: string,
+    body: string,
+    retryItems: ReturnType<typeof buildBookingRetryItems>,
+    timePeriod?: TimePeriod,
+  ): Promise<NodeExecutionResult> {
     const template = await createDynamicInteractiveTemplate(this.prisma, execution.userId, {
       name: `wf-${execution.id}-${node.id}-retry`,
       header: 'Try another option',
       body,
-      items: retryItems.slice(0, 10),
+      items: retryItems,
       useButtons: retryItems.length <= 3,
     });
 
@@ -251,8 +294,11 @@ export class ListSlotsNodeExecutor implements NodeExecutor {
     });
 
     if (!delivered.success) {
-      await this.enqueueText(execution, body);
-      return { success: true, stop: true, output: { slots_offered: 0 } };
+      await this.enqueueText(
+        execution,
+        `${body}\n\nPlease wait a moment and tap *book* if buttons do not appear.`,
+      );
+      return { success: true, pause: true, output: { slots_offered: 0, deliver_retry_failed: true } };
     }
 
     await this.userStateService.saveUserState(
@@ -275,12 +321,62 @@ export class ListSlotsNodeExecutor implements NodeExecutor {
     };
   }
 
+  private async promptForDateRetry(
+    execution: WorkflowExecution,
+    node: Record<string, any>,
+    contactPhone: string,
+    data: Record<string, any>,
+    context: Record<string, any>,
+  ): Promise<NodeExecutionResult> {
+    const flowIds = await resolveBookingFlowNodeIds(this.prisma, execution.workflowId);
+    const body = substituteContext(
+      String(
+        data.invalid_date_message ??
+          'Please pick *Today* or *Tomorrow* to continue your booking:',
+      ),
+      { ...context, preferred_date: String(context.preferred_date ?? '') },
+    );
+    const items = buildQuickDatePickItems(flowIds.listResourcesNodeId, 'preferred_date');
+    const template = await createDynamicInteractiveTemplate(this.prisma, execution.userId, {
+      name: `wf-${execution.id}-${node.id}-date-retry`,
+      header: 'Pick a date',
+      body,
+      items,
+      useButtons: true,
+    });
+
+    const delivered = await this.interactiveSend.deliverTemplate({
+      execution,
+      contactPhone,
+      templateId: template.id,
+      nodeId: node.id,
+    });
+
+    if (!delivered.success) {
+      await this.enqueueText(execution, body);
+      return { success: true, pause: true, output: { invalid_date: true } };
+    }
+
+    await this.userStateService.saveUserState(
+      execution.userId,
+      contactPhone,
+      execution.workflowId,
+      node.id,
+      String(template.id),
+      'WAITING_FOR_RESPONSE',
+    );
+
+    return { success: true, pause: true, output: { invalid_date_retry: true } };
+  }
+
   private async promptForTimePeriod(
     execution: WorkflowExecution,
     node: Record<string, any>,
     contactPhone: string,
     data: Record<string, any>,
     context: Record<string, any>,
+    allSlots: { starts_at: string; ends_at: string }[],
+    timeZone: string,
   ): Promise<NodeExecutionResult> {
     const body = substituteContext(
       String(
@@ -290,7 +386,18 @@ export class ListSlotsNodeExecutor implements NodeExecutor {
       context,
     );
 
-    const items = buildTimePeriodPickItems(node.id, 'time_period');
+    const preferredDate = String(context.preferred_date ?? '');
+    const periods = filterBookableTimePeriods({
+      timeZone,
+      preferredDate,
+      slots: allSlots,
+    });
+    const flowIds = await resolveBookingFlowNodeIds(this.prisma, execution.workflowId);
+    const nextNodeId = flowIds.listSlotsNodeId;
+    const items =
+      periods.length > 0
+        ? buildTimePeriodPickItems(nextNodeId, 'time_period', periods)
+        : buildTimePeriodPickItems(nextNodeId, 'time_period');
     const template = await createDynamicInteractiveTemplate(this.prisma, execution.userId, {
       name: `wf-${execution.id}-${node.id}-time-period`,
       header: substituteContext(
@@ -313,9 +420,9 @@ export class ListSlotsNodeExecutor implements NodeExecutor {
       this.logger.warn(`Time period picker failed: ${delivered.error}`);
       await this.enqueueText(
         execution,
-        `${body}\n\nReply with: Morning, Afternoon, Evening, or Night`,
+        `${body}\n\nPlease tap *book* to try again if options did not load.`,
       );
-      return { success: true, stop: true, output: { time_period_prompt_fallback: true } };
+      return { success: true, pause: true, output: { time_period_prompt_fallback: true } };
     }
 
     await this.userStateService.saveUserState(

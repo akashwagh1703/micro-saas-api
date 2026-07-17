@@ -4,8 +4,15 @@ import { AvailabilityService } from '../../availability/availability.service';
 import { InboxService } from '../../inbox/inbox.service';
 import { SettingsService } from '../../settings/settings.service';
 import { JOB_DISPATCHER, JobDispatcher } from '../../queue/job-dispatcher';
+import { PrismaService } from '../../../prisma/prisma.service';
 import { NodeExecutor, NodeExecutionResult } from './node-executor.interface';
-import { enqueueWorkflowText, formatSlotLabel, substituteContext } from './booking-node.helpers';
+import {
+  enqueueWorkflowText,
+  formatSlotLabel,
+  resolveBookingFlowNodeIds,
+  scheduleWorkflowResume,
+  substituteContext,
+} from './booking-node.helpers';
 
 /** Creates a pending booking request and sends the customer a WhatsApp acknowledgment. */
 @Injectable()
@@ -16,6 +23,7 @@ export class BookSlotNodeExecutor implements NodeExecutor {
     private readonly availability: AvailabilityService,
     private readonly inbox: InboxService,
     private readonly settings: SettingsService,
+    private readonly prisma: PrismaService,
     @Inject(JOB_DISPATCHER) private readonly jobs: JobDispatcher,
   ) {}
 
@@ -115,10 +123,19 @@ export class BookSlotNodeExecutor implements NodeExecutor {
         if (error instanceof ConflictException || error?.status === 409) {
           const conflictMessage = substituteContext(conflictTemplate, context);
           await enqueueWorkflowText(this.jobs, execution, conflictMessage);
+          const flowIds = await resolveBookingFlowNodeIds(this.prisma, execution.workflowId);
+          await scheduleWorkflowResume(
+            this.prisma,
+            this.jobs,
+            execution.id,
+            flowIds.listSlotsNodeId,
+            {},
+            ['slot_starts_at', 'slot_ends_at', 'selected_slot_starts_at'],
+          );
           return {
             success: true,
-            stop: true,
-            output: { booking_conflict: true },
+            pause: true,
+            output: { booking_conflict: true, resumed_at: flowIds.listSlotsNodeId },
           };
         }
         throw error;

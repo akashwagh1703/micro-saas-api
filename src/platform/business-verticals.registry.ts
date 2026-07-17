@@ -166,6 +166,18 @@ export const BUSINESS_VERTICALS: BusinessVerticalDefinition[] = [
     visible_in_signup: true,
   },
   {
+    key: 'sports_turf',
+    label: 'Sports Turf / Ground',
+    hint: 'Book cricket, football, or multi-sport turf slots on WhatsApp.',
+    example: 'Players pick turf, date, and time slot for hourly booking.',
+    kind: 'workflow',
+    recommended_use_cases: ['appointment_booking'],
+    supports_use_case_picker: true,
+    allowed_use_cases: ['appointment_booking'],
+    max_use_cases: 1,
+    visible_in_signup: true,
+  },
+  {
     key: 'travel',
     label: 'Travel Agency',
     hint: 'Trip packages, bookings, itineraries, and quotes.',
