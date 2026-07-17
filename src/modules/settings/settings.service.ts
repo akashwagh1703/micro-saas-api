@@ -81,6 +81,7 @@ export class SettingsService {
       'use_case',
       'business_description',
       'business_name',
+      'welcome_image_url',
     ]);
     const use_cases = parseUseCases(settings);
     const business_category = settings.business_category ?? null;
@@ -97,6 +98,8 @@ export class SettingsService {
       use_cases,
       business_description: settings.business_description ?? null,
       business_name: settings.business_name ?? null,
+      welcome_image_url: settings.welcome_image_url ?? null,
+      has_welcome_image: !!settings.welcome_image_url?.trim(),
       business_label: business_category ? businessLabel(business_category) : null,
       use_case_labels: use_cases.map((uc) => useCaseLabel(uc)),
       configured:

@@ -26,9 +26,13 @@ Customize under **Settings → Appointment services** (or salon services key in 
 
 ## 4. Workflow
 
-1. **Settings → Workflows** → sync / publish **Live appointment booking** (same flow as salon: service → date → resource → time of day → slot → book).
-2. Map trigger keywords (e.g. `book`, `turf`, `slot`) on the published workflow.
-3. Customers use interactive lists: **Today/Tomorrow**, pick turf, **Morning/Afternoon/Evening/Night**, then a slot.
+When you finish business setup with **Sports Turf** + **Appointment Booking**, the platform clones the guided workflow **`sports-turf-booking`** — the same steps as salon:
+
+**Service → Today/Tomorrow → Turf → Morning/Afternoon/Evening/Night → Slot → Pending booking**
+
+1. Or use **Workflows** → publish the **Sports Turf · Appointment Booking** workflow (created automatically on setup).
+2. Or call **`POST /api/workflows/sync-appointment-booking`** after changing services (same as salon).
+3. Trigger keywords include: `book`, `slot`, `turf`, `ground`, `cricket`, `football`.
 
 ## 5. Owner approval
 

@@ -9,6 +9,9 @@ export interface DeliverInteractiveTemplateParams {
   contactPhone: string;
   templateId: number;
   nodeId: string;
+  headerImageLink?: string | null;
+  /** When true, list/button body was already sent as an image caption — use a short follow-up body. */
+  skipWelcomeBodyInInteractive?: boolean;
 }
 
 /**
@@ -28,7 +31,8 @@ export class WorkflowInteractiveSendService {
     success: boolean;
     error?: string;
   }> {
-    const { execution, contactPhone, templateId, nodeId } = params;
+    const { execution, contactPhone, templateId, nodeId, headerImageLink, skipWelcomeBodyInInteractive } =
+      params;
     const conversationId = execution.conversationId;
 
     if (!conversationId) {
@@ -64,16 +68,30 @@ export class WorkflowInteractiveSendService {
       return { success: false, error: 'Invalid contact phone' };
     }
 
+    const imageLink = headerImageLink?.trim() || null;
+    const shortFollowUpBody = 'Tap *View options* below to continue:';
+
     if (template.messageType.name === 'QUICK_REPLY') {
+      const bodyOnly = skipWelcomeBodyInInteractive
+        ? shortFollowUpBody
+        : imageLink
+          ? template.bodyText?.trim() || 'Tap an option below:'
+          : this.composeBody(template.headerText, template.bodyText, template.footerText);
+
       const result = await this.inbox.sendInteractiveButtons(
         execution.userId,
         conversationId,
-        body,
+        bodyOnly,
         template.options.slice(0, 3).map((opt) => ({
           id: String(opt.id),
           title: opt.optionText,
         })),
-        meta,
+        {
+          ...meta,
+          headerText: imageLink ? null : template.headerText,
+          footerText: imageLink && !skipWelcomeBodyInInteractive ? template.footerText : null,
+          headerImageLink: imageLink,
+        },
       );
 
       if (!result.success) {
@@ -92,12 +110,15 @@ export class WorkflowInteractiveSendService {
     if (template.messageType.name === 'LIST_MESSAGE') {
       const listButton = 'View options';
       const chunks = this.chunkOptions(template.options, 10);
+      const listBody = skipWelcomeBodyInInteractive
+        ? shortFollowUpBody
+        : body;
       for (let i = 0; i < chunks.length; i++) {
         const chunk = chunks[i];
         const chunkBody =
           chunks.length > 1
-            ? `${body}\n\n(${i + 1}/${chunks.length} — tap *${listButton}* to choose)`
-            : body;
+            ? `${listBody}\n\n(${i + 1}/${chunks.length} — tap *${listButton}* to choose)`
+            : listBody;
         const result = await this.inbox.sendInteractiveList(
           execution.userId,
           conversationId,

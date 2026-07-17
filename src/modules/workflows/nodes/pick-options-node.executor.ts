@@ -6,6 +6,7 @@ import {
   defaultServicesForVertical,
 } from '../../../platform/appointment-services';
 import { JOB_DISPATCHER, JobDispatcher } from '../../queue/job-dispatcher';
+import { InboxService } from '../../inbox/inbox.service';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { UserStateService } from '../user-state.service';
 import { WorkflowInteractiveSendService } from '../workflow-interactive-send.service';
@@ -22,6 +23,7 @@ import {
   resolveNextNodeIdFromWorkflow,
   substituteContext,
 } from './booking-node.helpers';
+import { resolveWelcomeImageUrl } from './welcome-image.helpers';
 
 interface PickOptionRow {
   text: string;
@@ -40,6 +42,7 @@ export class PickOptionsNodeExecutor implements NodeExecutor {
     private readonly availability: AvailabilityService,
     private readonly userStateService: UserStateService,
     private readonly interactiveSend: WorkflowInteractiveSendService,
+    private readonly inbox: InboxService,
     @Inject(JOB_DISPATCHER) private readonly jobs: JobDispatcher,
   ) {}
 
@@ -137,11 +140,44 @@ export class PickOptionsNodeExecutor implements NodeExecutor {
         useButtons: mode !== 'time_period_pick' && items.length <= 3,
       });
 
+      const welcomeImageUrl = await resolveWelcomeImageUrl(this.settings, execution.userId, data);
+      const useButtons = mode !== 'time_period_pick' && items.length <= 3;
+      let skipWelcomeBodyInInteractive = false;
+
+      if (welcomeImageUrl && execution.conversationId) {
+        if (!useButtons) {
+          const captionParts = [
+            data.header ? substituteContext(String(data.header), context) : '',
+            substituteContext(String(data.body ?? ''), context),
+            data.footer ? substituteContext(String(data.footer), context) : '',
+          ].filter((p) => p.trim());
+          const caption = captionParts.join('\n\n').trim();
+          const imageResult = await this.inbox.sendOutgoingImageByLink(
+            execution.userId,
+            execution.conversationId,
+            welcomeImageUrl,
+            caption || undefined,
+            {
+              source: 'workflow_welcome_image',
+              workflowId: execution.workflowId,
+              nodeId: node.id,
+            },
+          );
+          if (!imageResult.success) {
+            this.logger.warn(`Welcome image send failed: ${imageResult.error}`);
+          } else {
+            skipWelcomeBodyInInteractive = true;
+          }
+        }
+      }
+
       const delivered = await this.interactiveSend.deliverTemplate({
         execution,
         contactPhone,
         templateId: template.id,
         nodeId: node.id,
+        headerImageLink: welcomeImageUrl && useButtons ? welcomeImageUrl : null,
+        skipWelcomeBodyInInteractive,
       });
 
       if (!delivered.success) {

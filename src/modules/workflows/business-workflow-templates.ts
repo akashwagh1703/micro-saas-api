@@ -544,6 +544,10 @@ function buildLiveAppointmentFlow(vertical: SchedulingVertical): WorkflowTemplat
 
 const salonAppointment = buildLiveAppointmentFlow('salon');
 
+// --- Sports turf (same node graph as salon: service → date → turf → time → slot → book) ---
+
+const sportsTurfBooking = buildLiveAppointmentFlow('sports_turf');
+
 // --- Real Estate ---
 
 const realEstateLeadGen: WorkflowTemplate = {
@@ -922,6 +926,7 @@ const supportTeamAssistant: WorkflowTemplate = {
 
 export const GUIDED_WORKFLOW_TEMPLATES: WorkflowTemplate[] = [
   salonAppointment,
+  sportsTurfBooking,
   realEstateLeadGen,
   realEstateAppointment,
   realEstateFaq,

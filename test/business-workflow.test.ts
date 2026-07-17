@@ -15,6 +15,28 @@ describe('business workflow templates', () => {
     assert.equal(resolveTemplateSlug('salon', 'appointment_booking'), 'salon-appointment');
   });
 
+  it('resolves sports turf appointment to sports-turf-booking slug', () => {
+    assert.equal(
+      resolveTemplateSlug('sports_turf', 'appointment_booking'),
+      'sports-turf-booking',
+    );
+  });
+
+  it('exposes sports-turf-booking with same live booking nodes as salon', () => {
+    const template = findGuidedTemplate('sports-turf-booking');
+    assert.ok(template);
+    const nodeIds = (template?.definition.nodes ?? []).map((n) => n.id);
+    const required = [
+      'pick-service',
+      'pick-date',
+      'list-resources',
+      'pick-time-period',
+      'list-slots',
+      'book-slot',
+    ];
+    assert.ok(required.every((id) => nodeIds.includes(id)));
+  });
+
   it('exposes salon-appointment guided template with live booking nodes', () => {
     const template = findGuidedTemplate('salon-appointment');
     assert.ok(template);

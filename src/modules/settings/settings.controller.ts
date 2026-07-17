@@ -1,11 +1,17 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
+  Post,
   Put,
   UnprocessableEntityException,
+  UploadedFile,
   UseGuards,
+  UseInterceptors,
 } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
+import { memoryStorage } from 'multer';
 import { User } from '@prisma/client';
 import { TokenAuthGuard } from '../../common/guards/token-auth.guard';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
@@ -14,6 +20,7 @@ import { CryptoService } from '../../common/crypto/crypto.service';
 import { serializeUser } from '../../common/serializers';
 import { isSchedulingVertical } from '../../platform/appointment-services';
 import { SettingsService } from './settings.service';
+import { TenantBrandingService } from './tenant-branding.service';
 import {
   ChangePasswordDto,
   UpdateBusinessDetailsDto,
@@ -29,6 +36,7 @@ export class SettingsController {
     private readonly prisma: PrismaService,
     private readonly crypto: CryptoService,
     private readonly settings: SettingsService,
+    private readonly branding: TenantBrandingService,
   ) {}
 
   @Get('profile')
@@ -148,5 +156,32 @@ export class SettingsController {
   ) {
     const services = await this.settings.setAppointmentServices(userId, dto.services);
     return { services, message: 'Salon services saved' };
+  }
+
+  @Post('welcome-image')
+  @UseInterceptors(
+    FileInterceptor('file', {
+      storage: memoryStorage(),
+      limits: { fileSize: 5 * 1024 * 1024 },
+    }),
+  )
+  async uploadWelcomeImage(
+    @CurrentUser('id') userId: number,
+    @UploadedFile() file?: { buffer: Buffer; mimetype: string; size: number },
+  ) {
+    if (!file?.buffer?.length) {
+      throw new UnprocessableEntityException({
+        message: 'The given data was invalid.',
+        errors: { file: ['Choose an image file to upload.'] },
+      });
+    }
+    const result = await this.branding.saveWelcomeImage(userId, file.buffer, file.mimetype);
+    return { ...result, message: 'Welcome image saved' };
+  }
+
+  @Delete('welcome-image')
+  async deleteWelcomeImage(@CurrentUser('id') userId: number) {
+    await this.branding.clearWelcomeImage(userId);
+    return { message: 'Welcome image removed', welcome_image_url: null };
   }
 }

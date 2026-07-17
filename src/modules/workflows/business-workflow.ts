@@ -8,6 +8,7 @@ import type { WorkflowDefinition } from './workflow-templates';
 
 export const BUSINESS_LABELS: Record<string, string> = {
   salon: 'Salon / Beauty',
+  sports_turf: 'Sports Turf / Ground',
   farmer: 'Farmer / Agriculture',
   real_estate: 'Real Estate',
   coaching: 'Coaching Institute',
@@ -33,6 +34,8 @@ export const USE_CASE_LABELS: Record<string, string> = {
 /** Short phrase describing the business, injected into AI prompts. */
 const BUSINESS_CONTEXT: Record<string, string> = {
   salon: 'a salon/beauty business managing barber/stylist appointments and services',
+  sports_turf:
+    'a sports turf or ground business booking hourly slots for cricket, football, and events',
   farmer: 'an agriculture/farming business helping farmers with produce, crops, and supplies',
   real_estate: 'a real estate agency helping clients buy, sell, or rent property',
   coaching: 'a coaching institute helping students with courses, admissions, and schedules',
@@ -64,6 +67,9 @@ const USE_CASE_FALLBACK: Record<string, string> = {
 const COMBO_OVERRIDES: Record<string, string> = {
   // Salon
   'salon:appointment_booking': 'salon-appointment',
+
+  // Sports turf (same live booking flow as salon)
+  'sports_turf:appointment_booking': 'sports-turf-booking',
 
   // Real Estate
   'real_estate:lead_generation': 'real-estate-lead-gen',
@@ -187,6 +193,10 @@ export const USE_CASE_TRIGGER_KEYWORDS: Record<string, string[]> = {
     'barber',
     'stylist',
     'haircut',
+    'turf',
+    'ground',
+    'cricket',
+    'football',
   ],
   faq_bot: ['faq', 'hours', 'location', 'info', 'timing', 'address', 'where'],
   customer_support: ['help', 'support', 'issue', 'problem', 'complaint', 'assist'],

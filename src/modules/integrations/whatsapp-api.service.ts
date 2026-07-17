@@ -59,12 +59,17 @@ export class WhatsAppApiService {
     to: string,
     bodyText: string,
     buttons: WhatsAppReplyButton[],
-    options?: { headerText?: string | null; footerText?: string | null },
+    options?: {
+      headerText?: string | null;
+      footerText?: string | null;
+      headerImageLink?: string | null;
+    },
   ): Promise<WhatsAppApiResult> {
     const phone = (to ?? '').replace(/\D/g, '');
     const trimmed = bodyText.trim().slice(0, 1024);
     const headerText = options?.headerText?.trim().slice(0, 60);
     const footerText = options?.footerText?.trim().slice(0, 60);
+    const headerImageLink = options?.headerImageLink?.trim();
     const actionButtons = buttons.slice(0, 3).map((b) => ({
       type: 'reply' as const,
       reply: {
@@ -82,7 +87,9 @@ export class WhatsAppApiService {
       body: { text: trimmed || 'Choose an option:' },
       action: { buttons: actionButtons },
     };
-    if (headerText) {
+    if (headerImageLink) {
+      interactive.header = { type: 'image', image: { link: headerImageLink } };
+    } else if (headerText) {
       interactive.header = { type: 'text', text: headerText };
     }
     if (footerText) {
@@ -273,6 +280,54 @@ export class WhatsAppApiService {
       return { success: false, message: data?.error?.message ?? 'Send failed' };
     } catch (e: any) {
       this.logger.error(`WhatsApp send failed: ${e.message}`);
+      return { success: false, message: e.message };
+    }
+  }
+
+  async sendImageMessage(
+    accessToken: string,
+    phoneNumberId: string,
+    to: string,
+    imageLink: string,
+    caption?: string,
+  ): Promise<WhatsAppApiResult> {
+    const phone = (to ?? '').replace(/\D/g, '');
+    const link = imageLink.trim();
+    if (!link) {
+      return { success: false, message: 'Missing image link' };
+    }
+
+    const image: Record<string, string> = { link };
+    if (caption?.trim()) {
+      image.caption = caption.trim().slice(0, 1024);
+    }
+
+    try {
+      const { status, data } = await withMetaApiRetry(async () => {
+        const response = await axios.post(
+          `${this.base}/${phoneNumberId}/messages`,
+          {
+            messaging_product: 'whatsapp',
+            to: phone,
+            type: 'image',
+            image,
+          },
+          {
+            headers: { Authorization: `Bearer ${accessToken}` },
+            timeout: 20000,
+            validateStatus: () => true,
+          },
+        );
+        return { status: response.status, data: response.data };
+      });
+
+      if (status >= 200 && status < 300) {
+        return { success: true, data };
+      }
+
+      return { success: false, message: data?.error?.message ?? 'Image send failed' };
+    } catch (e: any) {
+      this.logger.error(`WhatsApp image send failed: ${e.message}`);
       return { success: false, message: e.message };
     }
   }

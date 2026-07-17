@@ -1,31 +1,22 @@
 # RCA: Welcome message with business image on WhatsApp
 
-## Current behavior
+## Status (implemented)
 
-- **Trigger / welcome flows** use the `send_message` node (`SendMessageNodeExecutor`), which only enqueues **plain text** via `enqueueSendMessage`.
-- **WhatsApp media** is supported at the inbox layer (`InboxService` upload + send with `mediaId`) for agent uploads, not wired into workflow welcome nodes.
-- **Business branding** today: `business_name`, `business_description`, appointment service labels — **no** `welcome_image_url` setting in settings API.
+**Phase 1** is shipped:
 
-## Why images do not appear on welcome
+1. **Settings → Booking & business → Welcome image** — upload JPEG/PNG/WebP (max 5 MB). Stored on disk; public URL `${APP_URL}/api/public/branding/{userId}/{token}/welcome` (HTTPS required for WhatsApp).
+2. **Workflow builder → Pick service step** — toggle welcome image; optional per-step HTTPS override URL.
+3. **Runtime** — `pick_options` (appointment services) sends image + welcome text on WhatsApp:
+   - ≤3 services: interactive buttons with **image header**
+   - >3 services: image message with caption, then service list
+4. **`send_message` nodes** — optional `media_url` / tenant `welcome_image_url` sends image with caption.
 
-| Layer | Gap |
-|--------|-----|
-| Portal / settings | No field to store welcome hero image URL or media handle |
-| Workflow template | Welcome template is text-only `send_message` |
-| Send path | `send_message` executor does not call `sendImage` / template header image |
-| WhatsApp Cloud API | Image messages need public HTTPS URL or uploaded `media_id` |
+## Ops
 
-## Recommended feature (phased)
+- Set **`APP_URL`** to your public API base (e.g. `https://api.autowave.playltp.in`).
+- On Render, use a **persistent disk** or object storage if you redeploy often — local `storage/branding` is wiped on ephemeral deploys unless mounted.
 
-### Phase 1 — Settings + URL image
-
-1. Add setting keys: `welcome_image_url` (HTTPS), optional `welcome_message` (already in templates as node data).
-2. Extend `SendMessageNodeExecutor`:
-   - If `data.media_url` or setting `welcome_image_url` is set → `inbox.sendMediaMessage` (or new helper) with caption = substituted text.
-   - Else → current text-only path.
-3. Portal: **Settings → Branding** upload to your CDN/S3; save URL in settings.
-
-### Phase 2 — Per–business-type defaults
+## Previous gaps (resolved)
 
 - Store default welcome images under `content/welcome/{business_category}.jpg` on CDN.
 - `trigger` node or first `send_message` pulls image by `business_category` when tenant has no custom URL.
