@@ -52,9 +52,16 @@ export class AllExceptionsFilter implements ExceptionFilter {
         exception.stack,
       );
       if (exception.code === 'P2022') {
+        const column =
+          typeof exception.meta?.column === 'string'
+            ? exception.meta.column
+            : typeof exception.meta?.modelName === 'string'
+              ? exception.meta.modelName
+              : null;
+        const detail = column ? ` Missing: ${column}.` : '';
         body = {
           message:
-            'Database schema is out of date. Run `npx prisma migrate deploy` on the API server (Render shell or redeploy).',
+            `Database schema is out of date.${detail} Run \`npx prisma migrate deploy\` and \`npm run repair:website-leads\` on the API server (Render shell or redeploy).`,
         };
       } else {
         body = { message: 'Database error. Please try again or contact support.' };

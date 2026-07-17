@@ -1,6 +1,5 @@
--- Idempotent repair for marketing demo form (website_leads).
--- Run on production Postgres when demo form returns "Database schema is out of date".
--- Render: Shell → cd into API root → npx prisma db execute --file prisma/repair-website-leads.sql --schema prisma/schema.prisma
+-- Idempotent repair: demo form (website_leads) when table exists but columns drifted.
+-- Safe if 20260619120000 / 20260701120000 already applied.
 
 CREATE TABLE IF NOT EXISTS "website_leads" (
     "id" SERIAL NOT NULL,

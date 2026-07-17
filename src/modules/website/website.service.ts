@@ -1,5 +1,6 @@
 import { Injectable, BadRequestException, Logger, NotFoundException, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CaptureDemoDto, CaptureDemoResponseDto } from './dto/capture-demo.dto';
 import { UpdateWebsiteLeadDto } from './dto/update-website-lead.dto';
@@ -32,6 +33,23 @@ export class WebsiteService implements OnModuleInit {
 
   private async bootstrapWebsiteLeads(): Promise<void> {
     await ensureWebsiteLeadsSchema(this.prisma, this.logger);
+  }
+
+  private async createWebsiteLeadWithSchemaRetry(
+    data: Prisma.WebsiteLeadCreateInput,
+  ): Promise<Prisma.WebsiteLeadGetPayload<{ select: undefined }>> {
+    try {
+      return await this.prisma.websiteLead.create({ data });
+    } catch (error) {
+      if (
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === 'P2022'
+      ) {
+        await ensureWebsiteLeadsSchema(this.prisma, this.logger, true);
+        return await this.prisma.websiteLead.create({ data });
+      }
+      throw error;
+    }
   }
 
   private getTransporter(): nodemailer.Transporter | null {
@@ -193,7 +211,10 @@ Company: ${lead.companyName || 'Not specified'}</p>
    */
   async getDemoCaptureHealth(): Promise<{ ok: boolean; message: string }> {
     try {
-      await this.prisma.$queryRaw`SELECT id FROM "website_leads" LIMIT 1`;
+      await ensureWebsiteLeadsSchema(this.prisma, this.logger, true);
+      await this.prisma.$queryRaw`
+        SELECT id, score, qualification, notes, metadata, confirmation_token
+        FROM "website_leads" LIMIT 1`;
       return { ok: true, message: 'Demo capture is ready.' };
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
@@ -242,26 +263,24 @@ Company: ${lead.companyName || 'Not specified'}</p>
       const score = this.calculateLeadScore(dto);
       const qualification = score >= 70 ? 'hot' : score >= 40 ? 'warm' : 'cold';
 
-      const lead = await this.prisma.websiteLead.create({
-        data: {
-          name: dto.name.trim(),
-          email: dto.email.trim().toLowerCase(),
-          phone: phoneE164,
-          businessType: dto.businessType.trim(),
-          companyName: dto.companyName,
-          monthlyMessages: dto.monthlyMessages
-            ? parseInt(dto.monthlyMessages, 10)
-            : null,
-          challenge: dto.challenge,
-          source: dto.source || 'website',
-          status: 'new',
-          confirmationToken,
-          score,
-          qualification,
-          metadata: {
-            userAgent: userAgent?.trim() || 'unknown',
-            timestamp: new Date().toISOString(),
-          },
+      const lead = await this.createWebsiteLeadWithSchemaRetry({
+        name: dto.name.trim(),
+        email: dto.email.trim().toLowerCase(),
+        phone: phoneE164,
+        businessType: dto.businessType.trim(),
+        companyName: dto.companyName,
+        monthlyMessages: dto.monthlyMessages
+          ? parseInt(dto.monthlyMessages, 10)
+          : null,
+        challenge: dto.challenge,
+        source: dto.source || 'website',
+        status: 'new',
+        confirmationToken,
+        score,
+        qualification,
+        metadata: {
+          userAgent: userAgent?.trim() || 'unknown',
+          timestamp: new Date().toISOString(),
         },
       });
 

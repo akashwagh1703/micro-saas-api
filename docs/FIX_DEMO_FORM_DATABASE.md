@@ -17,13 +17,35 @@ npm run repair:website-leads
 
 4. **Manual Deploy** → **Clear build cache & deploy** (or push latest code so `render-start.sh` runs migrate + repair on boot).
 
-5. Verify:
+5. Verify (health runs full column check after deploy):
 
 ```bash
 curl -s https://api.autowave.playltp.in/api/website/health/demo-capture
 ```
 
 Expect: `{"ok":true,"message":"Demo capture is ready."}`
+
+Then test capture (new email):
+
+```bash
+curl -s -X POST https://api.autowave.playltp.in/api/website/leads/capture-demo \
+  -H "Content-Type: application/json" \
+  -d '{"name":"Test","email":"you+test@yourdomain.com","phone":"9876543210","businessType":"salon"}'
+```
+
+## Migrations in repo (website leads)
+
+| Migration | Purpose |
+|-----------|---------|
+| `20260619120000_website_leads` | Creates `website_leads` table |
+| `20260701120000_website_lead_scoring` | Adds `score`, `qualification`, `notes` |
+| `20260717180000_website_leads_idempotent_repair` | Idempotent repair if columns drifted |
+
+After `migrate deploy`, the latest migration above should run on production if not yet applied.
+
+## Admin portal
+
+Super admins see **Platform → Website Leads** at `/website-leads` in the portal. Leads appear only after demo capture succeeds. Your login email must be in **`SUPER_ADMIN_EMAILS`** on the API.
 
 ## DigitalOcean / VPS
 

@@ -54,7 +54,9 @@ export async function ensureWebsiteLeadsSchema(
     for (const sql of INDEX_SQL) {
       await prisma.$executeRawUnsafe(sql);
     }
-    await prisma.$queryRaw`SELECT id FROM "website_leads" LIMIT 1`;
+    await prisma.$queryRaw`
+      SELECT id, score, qualification, notes, metadata, confirmation_token
+      FROM "website_leads" LIMIT 1`;
     logger.log('Website leads table ready for demo capture');
     return true;
   } catch (error) {

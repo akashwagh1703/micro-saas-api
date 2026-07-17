@@ -1,5 +1,6 @@
 import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { Prisma, PrismaClient } from '@prisma/client';
+import { ensureWebsiteLeadsSchema } from '../modules/website/website-lead.schema-bootstrap';
 
 @Injectable()
 export class PrismaService extends PrismaClient implements OnModuleInit, OnModuleDestroy {
@@ -20,6 +21,7 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
           'Run `npx prisma migrate deploy` against DATABASE_URL before using guided business setup.',
       );
     }
+    await ensureWebsiteLeadsSchema(this, this.logger);
   }
 
   async onModuleDestroy(): Promise<void> {
