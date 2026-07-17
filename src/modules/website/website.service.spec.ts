@@ -1,6 +1,5 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { ConfigService } from '@nestjs/config';
-import { BadRequestException } from '@nestjs/common';
 import { WebsiteService } from './website.service';
 import { PrismaService } from '../../prisma/prisma.service';
 
@@ -15,9 +14,12 @@ describe('WebsiteService', () => {
         {
           provide: PrismaService,
           useValue: {
+            $executeRawUnsafe: jest.fn().mockResolvedValue(0),
+            $queryRaw: jest.fn().mockResolvedValue([]),
             websiteLead: {
               findUnique: jest.fn(),
               create: jest.fn(),
+              upsert: jest.fn(),
               update: jest.fn(),
             },
           },
@@ -71,18 +73,17 @@ describe('WebsiteService', () => {
         metadata: {},
       };
 
-      jest.spyOn(prismaService.websiteLead, 'findUnique').mockResolvedValue(null);
-      jest.spyOn(prismaService.websiteLead, 'create').mockResolvedValue(mockLead);
+      jest.spyOn(prismaService.websiteLead, 'upsert').mockResolvedValue(mockLead);
 
       const result = await service.captureDemoRequest(dto);
 
       expect(result.success).toBe(true);
       expect(result.leadId).toBe(1);
-      expect(result.message).toContain('Demo request received');
-      expect(prismaService.websiteLead.create).toHaveBeenCalled();
+      expect(result.message).toContain('Thank you');
+      expect(prismaService.websiteLead.upsert).toHaveBeenCalled();
     });
 
-    it('should throw error for duplicate email', async () => {
+    it('should upsert when the same email submits again', async () => {
       const dto = {
         name: 'John Doe',
         email: 'john@example.com',
@@ -90,29 +91,34 @@ describe('WebsiteService', () => {
         businessType: 'healthcare',
       };
 
-      jest.spyOn(prismaService.websiteLead, 'findUnique').mockResolvedValue({
+      const mockLead = {
         id: 1,
-        name: 'Jane Doe',
+        name: 'John Doe',
         email: 'john@example.com',
         phone: '+919876543210',
-        businessType: 'retail',
+        businessType: 'healthcare',
         companyName: null,
         monthlyMessages: null,
         challenge: null,
         source: 'website',
         status: 'new',
-        score: 0,
+        score: 30,
         qualification: 'cold',
         notes: null,
         demoDate: null,
         demoConfirmed: false,
-        confirmationToken: 'old-token',
+        confirmationToken: 'new-token',
         metadata: {},
         createdAt: new Date(),
         updatedAt: new Date(),
-      });
+      };
 
-      await expect(service.captureDemoRequest(dto)).rejects.toThrow(BadRequestException);
+      jest.spyOn(prismaService.websiteLead, 'upsert').mockResolvedValue(mockLead);
+
+      const result = await service.captureDemoRequest(dto);
+
+      expect(result.success).toBe(true);
+      expect(prismaService.websiteLead.upsert).toHaveBeenCalled();
     });
   });
 

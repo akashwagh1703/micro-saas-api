@@ -35,18 +35,18 @@ export class WebsiteService implements OnModuleInit {
     await ensureWebsiteLeadsSchema(this.prisma, this.logger);
   }
 
-  private async createWebsiteLeadWithSchemaRetry(
-    data: Prisma.WebsiteLeadCreateInput,
+  private async upsertWebsiteLeadWithSchemaRetry(
+    args: Prisma.WebsiteLeadUpsertArgs,
   ): Promise<Prisma.WebsiteLeadGetPayload<{ select: undefined }>> {
     try {
-      return await this.prisma.websiteLead.create({ data });
+      return await this.prisma.websiteLead.upsert(args);
     } catch (error) {
       if (
         error instanceof Prisma.PrismaClientKnownRequestError &&
         error.code === 'P2022'
       ) {
         await ensureWebsiteLeadsSchema(this.prisma, this.logger, true);
-        return await this.prisma.websiteLead.create({ data });
+        return await this.prisma.websiteLead.upsert(args);
       }
       throw error;
     }
@@ -244,16 +244,6 @@ Company: ${lead.companyName || 'Not specified'}</p>
       }
       const phoneE164 = toE164Indian(dto.phone);
 
-      const existingLead = await this.prisma.websiteLead.findUnique({
-        where: { email: dto.email.trim().toLowerCase() },
-      });
-
-      if (existingLead) {
-        throw new BadRequestException(
-          'This email has already been used for a demo request. Please check your email for the confirmation link.',
-        );
-      }
-
       const confirmationToken = randomBytes(32).toString('hex');
       const websiteUrl =
         this.config.get<string>('WEBSITE_URL')?.replace(/\/$/, '') ??
@@ -262,10 +252,9 @@ Company: ${lead.companyName || 'Not specified'}</p>
 
       const score = this.calculateLeadScore(dto);
       const qualification = score >= 70 ? 'hot' : score >= 40 ? 'warm' : 'cold';
-
-      const lead = await this.createWebsiteLeadWithSchemaRetry({
+      const email = dto.email.trim().toLowerCase();
+      const leadPayload = {
         name: dto.name.trim(),
-        email: dto.email.trim().toLowerCase(),
         phone: phoneE164,
         businessType: dto.businessType.trim(),
         companyName: dto.companyName,
@@ -282,6 +271,17 @@ Company: ${lead.companyName || 'Not specified'}</p>
           userAgent: userAgent?.trim() || 'unknown',
           timestamp: new Date().toISOString(),
         },
+      };
+
+      const lead = await this.upsertWebsiteLeadWithSchemaRetry({
+        where: { email },
+        create: {
+          email,
+          ...leadPayload,
+        },
+        update: {
+          ...leadPayload,
+        },
       });
 
       this.logger.log(`Demo request created: ${lead.id} - ${lead.email} (score: ${score})`);
@@ -292,7 +292,8 @@ Company: ${lead.companyName || 'Not specified'}</p>
       return {
         success: true,
         leadId: lead.id,
-        message: 'Demo request received! Check your email for confirmation.',
+        message:
+          'Thank you! Our team will reach out within one business day.',
         demoLink,
       };
     } catch (error) {
