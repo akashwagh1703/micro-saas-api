@@ -18,6 +18,16 @@ export class WebsiteController {
   constructor(private readonly websiteService: WebsiteService) {}
 
   /**
+   * GET /api/website/health/demo-capture
+   * Public check that demo lead storage is ready (for ops / website debugging).
+   */
+  @Get('health/demo-capture')
+  @HttpCode(HttpStatus.OK)
+  async demoCaptureHealth(): Promise<{ ok: boolean; message: string }> {
+    return this.websiteService.getDemoCaptureHealth();
+  }
+
+  /**
    * POST /api/website/leads/capture-demo
    * Capture demo request from marketing website
    */

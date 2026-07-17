@@ -1,4 +1,4 @@
-import { IsEmail, IsNotEmpty, IsOptional, IsPhoneNumber, IsString, MinLength, MaxLength } from 'class-validator';
+import { IsEmail, IsNotEmpty, IsOptional, IsString, MinLength, MaxLength, Matches } from 'class-validator';
 
 /**
  * DTO for capturing demo request from marketing website
@@ -16,7 +16,10 @@ export class CaptureDemoDto {
   email: string;
 
   @IsNotEmpty({ message: 'Phone number is required' })
-  @IsPhoneNumber('IN', { message: 'Please provide a valid Indian phone number' })
+  @IsString()
+  @Matches(/^(\+91|91|0)?[6-9]\d{9}$/, {
+    message: 'Please provide a valid 10-digit Indian mobile number',
+  })
   phone: string;
 
   @IsNotEmpty({ message: 'Business type is required' })

@@ -5,10 +5,11 @@ import { CaptureDemoDto, CaptureDemoResponseDto } from './dto/capture-demo.dto';
 import { UpdateWebsiteLeadDto } from './dto/update-website-lead.dto';
 import { scoreForBusinessType } from './website.config';
 import { buildCsv } from '../../common/export/csv.util';
-import { isValidIndianMobile } from '../../common/phone.util';
+import { isValidIndianMobile, toE164Indian } from '../../common/phone.util';
 import { paginatedMeta, resolvePage } from '../../common/pagination';
 import { randomBytes } from 'crypto';
 import * as nodemailer from 'nodemailer';
+import { ensureWebsiteLeadsSchema } from './website-lead.schema-bootstrap';
 
 @Injectable()
 export class WebsiteService implements OnModuleInit {
@@ -26,6 +27,11 @@ export class WebsiteService implements OnModuleInit {
         'SMTP_HOST is not configured — demo confirmation and sales notification emails will be skipped',
       );
     }
+    void this.bootstrapWebsiteLeads();
+  }
+
+  private async bootstrapWebsiteLeads(): Promise<void> {
+    await ensureWebsiteLeadsSchema(this.prisma, this.logger);
   }
 
   private getTransporter(): nodemailer.Transporter | null {
@@ -185,13 +191,40 @@ Company: ${lead.companyName || 'Not specified'}</p>
    * @param dto Demo request data
    * @returns Response with lead ID and confirmation token
    */
+  async getDemoCaptureHealth(): Promise<{ ok: boolean; message: string }> {
+    try {
+      await this.prisma.$queryRaw`SELECT id FROM "website_leads" LIMIT 1`;
+      return { ok: true, message: 'Demo capture is ready.' };
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      this.logger.error(`Demo capture health check failed: ${msg}`);
+      return {
+        ok: false,
+        message:
+          'Demo form storage is not ready on the server. Restart the API after deploy or run prisma migrate deploy.',
+      };
+    }
+  }
+
+  /**
+   * Capture demo request from marketing website
+   * @param dto Demo request data
+   * @returns Response with lead ID and confirmation token
+   */
   async captureDemoRequest(
     dto: CaptureDemoDto,
     userAgent?: string,
   ): Promise<CaptureDemoResponseDto> {
     try {
+      await ensureWebsiteLeadsSchema(this.prisma, this.logger);
+
+      if (!isValidIndianMobile(dto.phone)) {
+        throw new BadRequestException('Please provide a valid 10-digit Indian mobile number.');
+      }
+      const phoneE164 = toE164Indian(dto.phone);
+
       const existingLead = await this.prisma.websiteLead.findUnique({
-        where: { email: dto.email },
+        where: { email: dto.email.trim().toLowerCase() },
       });
 
       if (existingLead) {
@@ -211,10 +244,10 @@ Company: ${lead.companyName || 'Not specified'}</p>
 
       const lead = await this.prisma.websiteLead.create({
         data: {
-          name: dto.name,
-          email: dto.email,
-          phone: dto.phone,
-          businessType: dto.businessType,
+          name: dto.name.trim(),
+          email: dto.email.trim().toLowerCase(),
+          phone: phoneE164,
+          businessType: dto.businessType.trim(),
           companyName: dto.companyName,
           monthlyMessages: dto.monthlyMessages
             ? parseInt(dto.monthlyMessages, 10)
