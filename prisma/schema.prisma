@@ -647,7 +647,7 @@ model WebsiteLead {
   name             String
   email            String
   phone            String
-  businessType     String    @db.VarChar(50)
+  businessType     String    @map("business_type") @db.VarChar(50)
   companyName      String?   @map("company_name")
   monthlyMessages  Int?      @map("monthly_messages")
   challenge        String?   @db.Text
