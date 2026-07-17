@@ -79,7 +79,7 @@ describe('WebsiteController', () => {
       const ids = config.industries.map((i: { id: string }) => i.id);
       assert.deepEqual(
         ids.sort(),
-        ['agency', 'coaching', 'healthcare', 'other', 'real-estate', 'retail'].sort(),
+        ['agency', 'coaching', 'healthcare', 'other', 'real-estate', 'retail', 'salon'].sort(),
       );
     });
   });

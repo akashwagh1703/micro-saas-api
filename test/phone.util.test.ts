@@ -4,6 +4,7 @@ import {
   extractDigits,
   isValidIndianMobile,
   normalizeIndianMobile,
+  parseStrictIndianMobile,
   toE164Indian,
 } from '../src/common/phone.util';
 
@@ -24,5 +25,12 @@ describe('phone.util', () => {
 
   it('extractDigits removes non-digits', () => {
     assert.equal(extractDigits('+91 98765-43210'), '919876543210');
+  });
+
+  it('parseStrictIndianMobile accepts exactly 10 digits or +91 prefix', () => {
+    assert.equal(parseStrictIndianMobile('8887676767'), '8887676767');
+    assert.equal(parseStrictIndianMobile('+918887676767'), '8887676767');
+    assert.equal(parseStrictIndianMobile('98887676767'), null);
+    assert.equal(parseStrictIndianMobile('1234567890'), null);
   });
 });

@@ -1,6 +1,7 @@
 /** Shared public website configuration and lead-scoring maps. */
 
 export const WEBSITE_INDUSTRIES = [
+  { id: 'salon', label: 'Salon / Spa', color: '#DB2777' },
   { id: 'healthcare', label: 'Healthcare Clinic', color: '#06B6D4' },
   { id: 'retail', label: 'Retail Shop', color: '#EC4899' },
   { id: 'coaching', label: 'Coaching Center', color: '#9333EA' },
@@ -11,6 +12,7 @@ export const WEBSITE_INDUSTRIES = [
 
 /** Lead score points by industry id (aligned with WEBSITE_INDUSTRIES). */
 export const BUSINESS_TYPE_SCORES: Record<string, number> = {
+  salon: 25,
   healthcare: 30,
   'real-estate': 30,
   agency: 30,

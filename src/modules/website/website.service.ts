@@ -6,7 +6,7 @@ import { CaptureDemoDto, CaptureDemoResponseDto } from './dto/capture-demo.dto';
 import { UpdateWebsiteLeadDto } from './dto/update-website-lead.dto';
 import { scoreForBusinessType } from './website.config';
 import { buildCsv } from '../../common/export/csv.util';
-import { isValidIndianMobile, toE164Indian } from '../../common/phone.util';
+import { isValidIndianMobile, parseStrictIndianMobile, toE164Indian } from '../../common/phone.util';
 import { paginatedMeta, resolvePage } from '../../common/pagination';
 import { randomBytes } from 'crypto';
 import * as nodemailer from 'nodemailer';
@@ -64,6 +64,9 @@ export class WebsiteService implements OnModuleInit {
         host: smtpHost,
         port: Number.isNaN(port) ? 587 : port,
         secure: this.config.get<string>('SMTP_SECURE') === 'true',
+        connectionTimeout: 10_000,
+        greetingTimeout: 10_000,
+        socketTimeout: 15_000,
         auth: this.config.get<string>('SMTP_USER')
           ? {
               user: this.config.get<string>('SMTP_USER'),
@@ -242,13 +245,15 @@ Company: ${lead.companyName || 'Not specified'}</p>
       if (!isValidIndianMobile(dto.phone)) {
         throw new BadRequestException('Please provide a valid 10-digit Indian mobile number.');
       }
-      const phoneE164 = toE164Indian(dto.phone);
+      const mobileTen = parseStrictIndianMobile(dto.phone);
+      if (!mobileTen) {
+        throw new BadRequestException(
+          'Phone must be exactly 10 digits (Indian mobile, starting with 6–9).',
+        );
+      }
+      const phoneE164 = toE164Indian(mobileTen);
 
       const confirmationToken = randomBytes(32).toString('hex');
-      const websiteUrl =
-        this.config.get<string>('WEBSITE_URL')?.replace(/\/$/, '') ??
-        'https://autowave.playltp.in';
-      const demoLink = `${websiteUrl}/demo/confirm/?token=${confirmationToken}`;
 
       const score = this.calculateLeadScore(dto);
       const qualification = score >= 70 ? 'hot' : score >= 40 ? 'warm' : 'cold';
@@ -286,15 +291,13 @@ Company: ${lead.companyName || 'Not specified'}</p>
 
       this.logger.log(`Demo request created: ${lead.id} - ${lead.email} (score: ${score})`);
 
-      await this.sendConfirmationEmail(lead, demoLink);
-      await this.sendLeadNotificationEmail(lead);
+      // Website demo capture: store lead only (no confirmation/sales email for now).
 
       return {
         success: true,
         leadId: lead.id,
         message:
           'Thank you! Our team will reach out within one business day.',
-        demoLink,
       };
     } catch (error) {
       this.logger.error(`Error capturing demo request: ${error.message}`, error);
