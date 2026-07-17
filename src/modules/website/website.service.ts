@@ -216,7 +216,7 @@ Company: ${lead.companyName || 'Not specified'}</p>
     userAgent?: string,
   ): Promise<CaptureDemoResponseDto> {
     try {
-      await ensureWebsiteLeadsSchema(this.prisma, this.logger);
+      await ensureWebsiteLeadsSchema(this.prisma, this.logger, true);
 
       if (!isValidIndianMobile(dto.phone)) {
         throw new BadRequestException('Please provide a valid 10-digit Indian mobile number.');

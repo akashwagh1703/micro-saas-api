@@ -19,6 +19,7 @@
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
     "prisma:deploy": "prisma migrate deploy",
+    "repair:website-leads": "prisma db execute --file prisma/repair-website-leads.sql --schema prisma/schema.prisma",
     "db:seed": "ts-node prisma/seed.ts",
     "resume:eval": "ts-node scripts/resume-golden/run-eval.ts --pipeline=heuristic",
     "resume:eval:merged": "ts-node scripts/resume-golden/run-eval.ts --pipeline=merged",

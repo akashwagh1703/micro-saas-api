@@ -6,7 +6,7 @@ services:
     runtime: node
     plan: free
     buildCommand: npm ci && npm run build
-    preDeployCommand: export DIRECT_URL="${DIRECT_URL:-$DATABASE_URL}" && npx prisma migrate deploy
+    preDeployCommand: export DIRECT_URL="${DIRECT_URL:-$DATABASE_URL}" && npx prisma migrate deploy && npx prisma db execute --file prisma/repair-website-leads.sql --schema prisma/schema.prisma || true
     startCommand: npm run start:render
     healthCheckPath: /up
     envVars:
