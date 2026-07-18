@@ -1,17 +1,60 @@
-import { Body, Controller, Get, Post, UseGuards } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  Post,
+  UploadedFile,
+  UseGuards,
+  UseInterceptors,
+} from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
+import { memoryStorage } from 'multer';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { TokenAuthGuard } from '../../common/guards/token-auth.guard';
 import { BillingService } from './billing.service';
-import { SubscribeDto, VerifySubscriptionDto } from './dto/billing.dto';
+import { ManualPaymentService } from './manual-payment.service';
+import { SubmitManualPaymentDto, SubscribeDto, VerifySubscriptionDto } from './dto/billing.dto';
 
 @Controller('billing')
 @UseGuards(TokenAuthGuard)
 export class BillingController {
-  constructor(private readonly billing: BillingService) {}
+  constructor(
+    private readonly billing: BillingService,
+    private readonly manualPayment: ManualPaymentService,
+  ) {}
 
   @Get('status')
   async status(@CurrentUser('id') userId: number) {
     return this.billing.getStatus(userId);
+  }
+
+  @Get('payment-config')
+  paymentConfig() {
+    return this.manualPayment.getPaymentConfig();
+  }
+
+  @Get('manual-payment/latest')
+  async latestManualPayment(@CurrentUser('id') userId: number) {
+    const submission = await this.manualPayment.getLatestSubmission(userId);
+    return { submission };
+  }
+
+  @Post('manual-payment')
+  @UseInterceptors(
+    FileInterceptor('file', {
+      storage: memoryStorage(),
+      limits: { fileSize: 5 * 1024 * 1024 },
+    }),
+  )
+  async submitManualPayment(
+    @CurrentUser('id') userId: number,
+    @Body() dto: SubmitManualPaymentDto,
+    @UploadedFile() file?: { buffer: Buffer; mimetype: string; size: number },
+  ) {
+    return this.manualPayment.submitManualPayment(userId, dto.plan, dto.upi_transaction_id, {
+      buffer: file?.buffer ?? Buffer.alloc(0),
+      mimetype: file?.mimetype ?? 'image/jpeg',
+    });
   }
 
   @Post('subscribe')

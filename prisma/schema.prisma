@@ -25,7 +25,7 @@ model User {
 
   // Platform billing (14-day trial, then Razorpay monthly/yearly)
   trialEndsAt            DateTime  @map("trial_ends_at")
-  subscriptionStatus     String    @default("trial") @map("subscription_status") @db.VarChar(20)
+  subscriptionStatus     String    @default("trial") @map("subscription_status") @db.VarChar(32)
   subscriptionPlan       String?   @map("subscription_plan") @db.VarChar(20)
   razorpayCustomerId     String?   @map("razorpay_customer_id") @db.VarChar(64)
   razorpaySubscriptionId String?   @map("razorpay_subscription_id") @db.VarChar(64)
@@ -53,6 +53,8 @@ model User {
   careerNotifications CareerNotification[]
   careerAuditLogs     CareerAuditLog[]
   billingTransactions BillingTransaction[]
+  paymentSubmissions  PaymentSubmission[]
+  platformAuditLogs   PlatformAuditLog[] @relation("PlatformAuditTarget")
   integrationCredentials IntegrationCredential[]
   userWorkflowStates  UserWorkflowState[]
   interactiveTemplates InteractiveMessageTemplate[]
@@ -608,6 +610,47 @@ model BillingTransaction {
   @@index([product, createdAt])
   @@index([razorpayPaymentId])
   @@map("billing_transactions")
+}
+
+model PaymentSubmission {
+  id                 Int       @id @default(autoincrement())
+  userId             Int       @map("user_id")
+  product            String    @default("platform") @db.VarChar(32)
+  plan               String    @db.VarChar(20)
+  amountInr          Int       @map("amount_inr")
+  paymentMethod      String    @default("upi_manual") @map("payment_method") @db.VarChar(32)
+  upiTransactionId   String    @map("upi_transaction_id") @db.VarChar(64)
+  screenshotToken    String    @map("screenshot_token") @db.VarChar(64)
+  status             String    @default("pending") @db.VarChar(32)
+  rejectionReason    String?   @map("rejection_reason") @db.VarChar(500)
+  reviewedByAdminId  Int?      @map("reviewed_by_admin_id")
+  reviewedAt         DateTime? @map("reviewed_at")
+  metadata           Json?
+  createdAt          DateTime  @default(now()) @map("created_at")
+  updatedAt          DateTime  @updatedAt @map("updated_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, status])
+  @@index([status, createdAt])
+  @@index([upiTransactionId])
+  @@map("payment_submissions")
+}
+
+model PlatformAuditLog {
+  id                  Int      @id @default(autoincrement())
+  action              String   @db.VarChar(64)
+  actorAdminId        Int?     @map("actor_admin_id")
+  targetUserId        Int?     @map("target_user_id")
+  paymentSubmissionId Int?     @map("payment_submission_id")
+  details             Json?
+  createdAt           DateTime @default(now()) @map("created_at")
+
+  targetUser User? @relation("PlatformAuditTarget", fields: [targetUserId], references: [id], onDelete: SetNull)
+
+  @@index([action, createdAt])
+  @@index([targetUserId, createdAt])
+  @@map("platform_audit_logs")
 }
 
 model IntegrationCredential {

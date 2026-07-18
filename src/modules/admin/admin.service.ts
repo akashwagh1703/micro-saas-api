@@ -59,6 +59,9 @@ export class AdminService {
       activeYearly,
       whatsappConnected,
       recentTransactions,
+      pendingPaymentSubmissions,
+      pendingVerificationUsers,
+      manualPaymentsMtd,
     ] = await Promise.all([
       this.prisma.user.count(),
       this.prisma.user.count({ where: { createdAt: { gte: weekAgo } } }),
@@ -99,6 +102,18 @@ export class AdminService {
           user: { select: { id: true, name: true, email: true } },
         },
       }),
+      this.prisma.paymentSubmission.count({
+        where: { product: 'platform', status: 'pending' },
+      }),
+      this.prisma.user.count({ where: { subscriptionStatus: 'pending_verification' } }),
+      this.prisma.billingTransaction.count({
+        where: {
+          product: 'platform',
+          status: 'captured',
+          eventType: 'manual.approved',
+          createdAt: { gte: monthStart },
+        },
+      }),
     ]);
 
     const mrr =
@@ -111,6 +126,9 @@ export class AdminService {
       active_subscriptions: activeSubscriptions,
       on_trial: onTrial,
       expired_or_cancelled: expiredOrCancelled,
+      pending_payment_submissions: pendingPaymentSubmissions,
+      pending_verification_users: pendingVerificationUsers,
+      manual_payments_mtd: manualPaymentsMtd,
       whatsapp_connected: whatsappConnected,
       revenue_all_time_inr: this.formatInr(revenueAllTime._sum.amountInr ?? 0),
       revenue_mtd_inr: this.formatInr(revenueMtd._sum.amountInr ?? 0),
@@ -429,7 +447,7 @@ export class AdminService {
         leads,
         career_profiles: careerProfiles,
       },
-      billing: this.billing.resolveStatus(user),
+      billing: await this.billing.getStatus(userId),
       transactions: transactions.map((t) => ({
         id: t.id,
         event_type: t.eventType,

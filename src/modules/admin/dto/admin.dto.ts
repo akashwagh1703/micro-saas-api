@@ -2,7 +2,7 @@ import { IsIn, IsInt, IsOptional, IsString, Max, Min } from 'class-validator';
 
 export class UpdateUserAccessDto {
   @IsOptional()
-  @IsIn(['trial', 'active', 'cancelled', 'expired'])
+  @IsIn(['trial', 'active', 'cancelled', 'expired', 'pending_verification'])
   subscription_status?: string;
 
   @IsOptional()

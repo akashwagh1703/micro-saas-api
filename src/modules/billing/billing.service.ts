@@ -12,8 +12,17 @@ import Razorpay from 'razorpay';
 import { PrismaService } from '../../prisma/prisma.service';
 import { SuperAdminService } from '../../common/super-admin.service';
 
+import { PlatformUpiConfigService } from './platform-upi-config.service';
+import { ManualPaymentExpiryService } from './manual-payment-expiry.service';
+
 export type BillingPlan = 'monthly' | 'yearly';
-export type BillingStatusKind = 'trial' | 'active' | 'past_due' | 'expired' | 'cancelled';
+export type BillingStatusKind =
+  | 'trial'
+  | 'active'
+  | 'past_due'
+  | 'expired'
+  | 'cancelled'
+  | 'pending_verification';
 
 export interface BillingStatus {
   billing_enabled: boolean;
@@ -26,8 +35,19 @@ export interface BillingStatus {
   cancel_at_period_end: boolean;
   days_left: number | null;
   prices: { monthly_inr: number; yearly_inr: number };
+  payment_mode: 'razorpay' | 'upi_manual' | 'both';
+  upi_configured: boolean;
   razorpay_configured: boolean;
   razorpay_webhook_url: string;
+  pending_submission: {
+    id: number;
+    plan: string;
+    amount_inr: number;
+    upi_transaction_id: string;
+    status: string;
+    created_at: string;
+    rejection_reason: string | null;
+  } | null;
 }
 
 export interface BillingTransactionView {
@@ -50,6 +70,8 @@ export class BillingService {
     private readonly prisma: PrismaService,
     private readonly config: ConfigService,
     private readonly superAdmin: SuperAdminService,
+    private readonly upiConfig: PlatformUpiConfigService,
+    private readonly paymentExpiry: ManualPaymentExpiryService,
   ) {}
 
   isEnabled(): boolean {
@@ -108,12 +130,40 @@ export class BillingService {
     return user;
   }
 
-  resolveStatus(user: User): BillingStatus {
+  resolveStatus(user: User, pendingSubmission?: {
+    id: number;
+    plan: string;
+    amountInr: number;
+    upiTransactionId: string;
+    status: string;
+    createdAt: Date;
+    rejectionReason: string | null;
+  } | null): BillingStatus {
     const now = new Date();
     const prices = { monthly_inr: this.monthlyPriceInr(), yearly_inr: this.yearlyPriceInr() };
     const razorpay_configured = this.isRazorpayConfigured();
     const razorpay_webhook_url = this.getRazorpayWebhookUrl();
-    const base = { prices, razorpay_configured, razorpay_webhook_url };
+    const payment_mode = this.upiConfig.paymentMode();
+    const upi_configured = this.upiConfig.getPublicConfig(prices.monthly_inr, prices.yearly_inr).upi_configured;
+    const pending_submission = pendingSubmission
+      ? {
+          id: pendingSubmission.id,
+          plan: pendingSubmission.plan,
+          amount_inr: pendingSubmission.amountInr,
+          upi_transaction_id: pendingSubmission.upiTransactionId,
+          status: pendingSubmission.status,
+          created_at: pendingSubmission.createdAt.toISOString(),
+          rejection_reason: pendingSubmission.rejectionReason,
+        }
+      : null;
+    const base = {
+      prices,
+      payment_mode,
+      upi_configured,
+      razorpay_configured,
+      razorpay_webhook_url,
+      pending_submission,
+    };
 
     if (this.superAdmin.isSuperAdmin(user.email)) {
       return {
@@ -148,6 +198,20 @@ export class BillingService {
     const plan = (user.subscriptionPlan as BillingPlan) ?? null;
     const cancelAtPeriodEnd = user.subscriptionCancelAtPeriodEnd === true;
     const withinPaidPeriod = !!periodEnd && periodEnd > now;
+
+    if (user.subscriptionStatus === 'pending_verification') {
+      return {
+        billing_enabled: true,
+        status: 'pending_verification',
+        plan: (user.subscriptionPlan as BillingPlan) ?? null,
+        has_access: false,
+        trial_ends_at: trialEnds.toISOString(),
+        current_period_end: periodEnd ? periodEnd.toISOString() : null,
+        cancel_at_period_end: false,
+        days_left: 0,
+        ...base,
+      };
+    }
 
     if (user.subscriptionStatus === 'active' && withinPaidPeriod) {
       return {
@@ -222,8 +286,21 @@ export class BillingService {
   }
 
   async getStatus(userId: number): Promise<BillingStatus> {
+    await this.paymentExpiry.expireStaleForUser(userId);
     const user = await this.getUser(userId);
-    return this.resolveStatus(user);
+    const pending = await this.prisma.paymentSubmission.findFirst({
+      where: { userId, product: 'platform', status: 'pending' },
+      orderBy: { createdAt: 'desc' },
+    });
+    const latestRejected =
+      user.subscriptionStatus !== 'pending_verification'
+        ? await this.prisma.paymentSubmission.findFirst({
+            where: { userId, product: 'platform', status: 'rejected' },
+            orderBy: { createdAt: 'desc' },
+          })
+        : null;
+    const submissionForView = pending ?? latestRejected;
+    return this.resolveStatus(user, submissionForView);
   }
 
   async hasPlatformAccess(userId: number): Promise<boolean> {
@@ -235,6 +312,14 @@ export class BillingService {
 
   async assertPlatformAccess(userId: number): Promise<void> {
     if (await this.hasPlatformAccess(userId)) return;
+    const status = await this.getStatus(userId);
+    if (status.status === 'pending_verification') {
+      throw new ForbiddenException({
+        message:
+          'Your UPI payment is under review. Access will unlock once our team verifies it (usually within 24 hours).',
+        code: 'payment_pending_verification',
+      });
+    }
     throw new ForbiddenException({
       message: 'Your free trial has ended. Subscribe to continue using AutoWave.',
       code: 'subscription_required',
@@ -309,6 +394,10 @@ export class BillingService {
     return null;
   }
 
+  estimatePeriodEndForPlan(plan: BillingPlan): Date {
+    return this.estimatePeriodEnd(plan);
+  }
+
   private estimatePeriodEnd(plan: BillingPlan): Date {
     const periodEnd = new Date();
     if (plan === 'yearly') {
@@ -322,6 +411,12 @@ export class BillingService {
   async createSubscription(userId: number, plan: BillingPlan) {
     if (!this.isEnabled()) {
       throw new UnprocessableEntityException('Billing is not enabled.');
+    }
+
+    if (this.upiConfig.paymentMode() === 'upi_manual') {
+      throw new UnprocessableEntityException(
+        'Online checkout is disabled. Pay via UPI QR and submit your transaction ID in Plan & billing.',
+      );
     }
 
     const razorpay = this.getRazorpay();
@@ -628,6 +723,31 @@ export class BillingService {
     }
 
     return true;
+  }
+
+  async recordManualTransaction(data: {
+    userId: number;
+    eventType: string;
+    plan: BillingPlan;
+    amountInr: number;
+    upiTransactionId: string;
+    paymentSubmissionId: number;
+    reviewedByAdminId: number;
+    status?: string;
+  }) {
+    return this.recordTransaction({
+      userId: data.userId,
+      eventType: data.eventType,
+      plan: data.plan,
+      amountInr: data.amountInr,
+      status: data.status ?? 'captured',
+      metadata: {
+        upi_transaction_id: data.upiTransactionId,
+        payment_submission_id: data.paymentSubmissionId,
+        reviewed_by_admin_id: data.reviewedByAdminId,
+        payment_method: 'upi_manual',
+      },
+    });
   }
 
   private async recordTransaction(data: {
