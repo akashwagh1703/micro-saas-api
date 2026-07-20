@@ -105,7 +105,7 @@ export class CareerPortalService {
       interview_sessions: readInterviewHistory(profile.onboardingData),
       guidance_history: readGuidanceHistory(profile.onboardingData).slice(0, 5),
       portal_expires_at: new Date(payload.exp).toISOString(),
-      billing: await this.seekerBilling.resolveStatus(profile),
+      billing: await this.seekerBilling.getStatusForProfile(profile.id, profile.userId, profile),
     };
   }
 }

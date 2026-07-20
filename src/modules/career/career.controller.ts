@@ -10,10 +10,16 @@ import {
   Patch,
   Post,
   Query,
+  Res,
   StreamableFile,
   UnprocessableEntityException,
+  UploadedFile,
   UseGuards,
+  UseInterceptors,
 } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
+import { memoryStorage } from 'multer';
+import type { Response } from 'express';
 import { CareerProfile } from '@prisma/client';
 import { TokenAuthGuard } from '../../common/guards/token-auth.guard';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
@@ -50,6 +56,9 @@ import { CareerZeroMatchService } from './services/career-zero-match.service';
 import { CareerProfileRematchService } from './services/career-profile-rematch.service';
 import { profileMatchFieldsChanged } from './career-profile-match.util';
 import { UpdateCareerSettingsDto } from './dto/career-settings.dto';
+import { RejectPaymentSubmissionDto } from '../billing/dto/billing.dto';
+import { CareerSeekerManualPaymentService } from './services/career-seeker-manual-payment.service';
+import { CareerUpiConfigService } from './services/career-upi-config.service';
 import { CAREER_APPLICATION_STATUSES } from './career.constants';
 import { IsArray, IsBoolean, IsIn, IsOptional, IsString } from 'class-validator';
 
@@ -178,6 +187,8 @@ export class CareerController {
     private readonly guidance: CareerGuidanceService,
     private readonly portalShare: CareerPortalShareService,
     private readonly careerSettings: CareerTenantSettingsService,
+    private readonly seekerManualPayment: CareerSeekerManualPaymentService,
+    private readonly upiConfig: CareerUpiConfigService,
     private readonly matchAnalytics: CareerMatchAnalyticsService,
     private readonly zeroMatch: CareerZeroMatchService,
     private readonly profileRematch: CareerProfileRematchService,
@@ -195,6 +206,85 @@ export class CareerController {
   ) {
     await this.careerSettings.saveOperatorSettings(userId, dto);
     return this.careerSettings.getOperatorSettingsResponse(userId);
+  }
+
+  @Get('billing/payment-config')
+  async billingPaymentConfig(@CurrentUser('id') userId: number) {
+    return this.seekerManualPayment.getPaymentConfig(userId);
+  }
+
+  @Post('billing/upi-qr')
+  @UseInterceptors(
+    FileInterceptor('file', {
+      storage: memoryStorage(),
+      limits: { fileSize: 5 * 1024 * 1024 },
+    }),
+  )
+  async uploadBillingUpiQr(
+    @CurrentUser('id') userId: number,
+    @UploadedFile() file?: { buffer: Buffer; mimetype: string },
+  ) {
+    if (!file?.buffer?.length) {
+      return { message: 'No file uploaded', upi_qr_url: null };
+    }
+    const upi_qr_url = await this.upiConfig.saveQrImage(userId, file.buffer, file.mimetype);
+    return { message: 'UPI QR saved', upi_qr_url };
+  }
+
+  @Get('billing/upi-qr')
+  async billingUpiQr(@CurrentUser('id') userId: number, @Res() res: Response) {
+    const file = await this.upiConfig.readQrImage(userId);
+    if (!file) {
+      throw new NotFoundException('QR code not found');
+    }
+    res.setHeader('Content-Type', file.mimeType);
+    res.setHeader('Cache-Control', 'private, max-age=3600');
+    res.send(file.buffer);
+  }
+
+  @Get('payment-submissions')
+  listPaymentSubmissions(
+    @CurrentUser('id') userId: number,
+    @Query('status') status = 'pending',
+    @Query('page') page = '1',
+  ) {
+    return this.seekerManualPayment.listSubmissions(userId, {
+      status: status || undefined,
+      page: parseInt(page, 10) || 1,
+    });
+  }
+
+  @Get('payment-submissions/:id')
+  getPaymentSubmission(@CurrentUser('id') userId: number, @Param('id', ParseIntPipe) id: number) {
+    return this.seekerManualPayment.getSubmission(userId, id);
+  }
+
+  @Get('payment-submissions/:id/screenshot')
+  async paymentScreenshot(
+    @CurrentUser('id') userId: number,
+    @Param('id', ParseIntPipe) id: number,
+    @Res() res: Response,
+  ) {
+    const file = await this.seekerManualPayment.readSubmissionScreenshot(userId, id);
+    res.setHeader('Content-Type', file.mimeType);
+    res.send(file.buffer);
+  }
+
+  @Post('payment-submissions/:id/approve')
+  approvePaymentSubmission(
+    @CurrentUser('id') userId: number,
+    @Param('id', ParseIntPipe) id: number,
+  ) {
+    return this.seekerManualPayment.approveSubmission(userId, id);
+  }
+
+  @Post('payment-submissions/:id/reject')
+  rejectPaymentSubmission(
+    @CurrentUser('id') userId: number,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: RejectPaymentSubmissionDto,
+  ) {
+    return this.seekerManualPayment.rejectSubmission(userId, id, dto.reason);
   }
 
   @Get('storage/status')

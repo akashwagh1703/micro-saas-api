@@ -10,9 +10,17 @@ import * as crypto from 'crypto';
 import Razorpay from 'razorpay';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { CareerTenantSettingsService } from './career-tenant-settings.service';
+import { CareerUpiConfigService } from './career-upi-config.service';
+import { ManualPaymentExpiryService } from '../../billing/manual-payment-expiry.service';
 
 export type SeekerBillingPlan = 'monthly' | 'yearly';
-export type SeekerBillingStatusKind = 'trial' | 'active' | 'past_due' | 'expired' | 'cancelled';
+export type SeekerBillingStatusKind =
+  | 'trial'
+  | 'active'
+  | 'past_due'
+  | 'expired'
+  | 'cancelled'
+  | 'pending_verification';
 
 export interface SeekerBillingStatus {
   billing_enabled: boolean;
@@ -24,7 +32,18 @@ export interface SeekerBillingStatus {
   cancel_at_period_end: boolean;
   days_left: number | null;
   prices: { monthly_inr: number; yearly_inr: number };
+  payment_mode: 'razorpay' | 'upi_manual' | 'both';
+  upi_configured: boolean;
   razorpay_configured: boolean;
+  pending_submission: {
+    id: number;
+    plan: string;
+    amount_inr: number;
+    upi_transaction_id: string;
+    status: string;
+    created_at: string;
+    rejection_reason: string | null;
+  } | null;
 }
 
 @Injectable()
@@ -34,6 +53,8 @@ export class CareerSeekerBillingService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly tenantSettings: CareerTenantSettingsService,
+    private readonly upiConfig: CareerUpiConfigService,
+    private readonly paymentExpiry: ManualPaymentExpiryService,
   ) {}
 
   async trialEndsAtForNewProfile(tenantUserId: number): Promise<Date> {
@@ -133,13 +154,43 @@ export class CareerSeekerBillingService {
     return null;
   }
 
-  async resolveStatus(profile: CareerProfile): Promise<SeekerBillingStatus> {
+  async resolveStatus(
+    profile: CareerProfile,
+    pendingSubmission?: {
+      id: number;
+      plan: string;
+      amountInr: number;
+      upiTransactionId: string;
+      status: string;
+      createdAt: Date;
+      rejectionReason: string | null;
+    } | null,
+  ): Promise<SeekerBillingStatus> {
     const cfg = await this.tenantSettings.getSeekerBillingConfig(profile.userId);
     const prices = {
       monthly_inr: cfg.priceMonthlyInr,
       yearly_inr: cfg.priceYearlyInr,
     };
     const razorpay_configured = await this.isRazorpayConfiguredForTenant(profile.userId);
+    const upiPublic = await this.upiConfig.getPublicConfig(profile.userId);
+    const pending_submission = pendingSubmission
+      ? {
+          id: pendingSubmission.id,
+          plan: pendingSubmission.plan,
+          amount_inr: pendingSubmission.amountInr,
+          upi_transaction_id: pendingSubmission.upiTransactionId,
+          status: pendingSubmission.status,
+          created_at: pendingSubmission.createdAt.toISOString(),
+          rejection_reason: pendingSubmission.rejectionReason,
+        }
+      : null;
+    const base = {
+      prices,
+      payment_mode: cfg.paymentMode,
+      upi_configured: upiPublic.upi_configured,
+      razorpay_configured,
+      pending_submission,
+    };
 
     if (!cfg.enabled) {
       return {
@@ -151,8 +202,7 @@ export class CareerSeekerBillingService {
         current_period_end: null,
         cancel_at_period_end: false,
         days_left: null,
-        prices,
-        razorpay_configured,
+        ...base,
       };
     }
 
@@ -162,6 +212,20 @@ export class CareerSeekerBillingService {
     const plan = (profile.subscriptionPlan as SeekerBillingPlan) ?? null;
     const cancelAtPeriodEnd = profile.subscriptionCancelAtPeriodEnd === true;
     const withinPaidPeriod = !!periodEnd && periodEnd > now;
+
+    if (profile.subscriptionStatus === 'pending_verification') {
+      return {
+        billing_enabled: true,
+        status: 'pending_verification',
+        plan: (profile.subscriptionPlan as SeekerBillingPlan) ?? null,
+        has_access: false,
+        trial_ends_at: trialEnds.toISOString(),
+        current_period_end: periodEnd ? periodEnd.toISOString() : null,
+        cancel_at_period_end: false,
+        days_left: 0,
+        ...base,
+      };
+    }
 
     if (profile.subscriptionStatus === 'active' && withinPaidPeriod) {
       return {
@@ -173,8 +237,7 @@ export class CareerSeekerBillingService {
         current_period_end: periodEnd!.toISOString(),
         cancel_at_period_end: cancelAtPeriodEnd,
         days_left: this.daysUntil(periodEnd!),
-        prices,
-        razorpay_configured,
+        ...base,
       };
     }
 
@@ -188,8 +251,7 @@ export class CareerSeekerBillingService {
         current_period_end: periodEnd ? periodEnd.toISOString() : null,
         cancel_at_period_end: cancelAtPeriodEnd,
         days_left: withinPaidPeriod ? this.daysUntil(periodEnd!) : 0,
-        prices,
-        razorpay_configured,
+        ...base,
       };
     }
 
@@ -203,8 +265,7 @@ export class CareerSeekerBillingService {
         current_period_end: periodEnd ? periodEnd.toISOString() : null,
         cancel_at_period_end: cancelAtPeriodEnd,
         days_left: withinPaidPeriod ? this.daysUntil(periodEnd!) : 0,
-        prices,
-        razorpay_configured,
+        ...base,
       };
     }
 
@@ -218,8 +279,7 @@ export class CareerSeekerBillingService {
         current_period_end: null,
         cancel_at_period_end: false,
         days_left: this.daysUntil(trialEnds),
-        prices,
-        razorpay_configured,
+        ...base,
       };
     }
 
@@ -232,8 +292,7 @@ export class CareerSeekerBillingService {
       current_period_end: periodEnd ? periodEnd.toISOString() : null,
       cancel_at_period_end: false,
       days_left: 0,
-      prices,
-      razorpay_configured,
+      ...base,
     };
   }
 
@@ -241,14 +300,84 @@ export class CareerSeekerBillingService {
     return (await this.resolveStatus(profile)).has_access;
   }
 
-  async getStatusForProfile(profileId: number, tenantUserId: number): Promise<SeekerBillingStatus> {
-    const profile = await this.prisma.careerProfile.findFirst({
-      where: { id: profileId, userId: tenantUserId },
-    });
+  async getStatusForProfile(
+    profileId: number,
+    tenantUserId: number,
+    profileOverride?: CareerProfile,
+  ): Promise<SeekerBillingStatus> {
+    await this.paymentExpiry.expireStaleForCareerProfile(profileId);
+
+    const profile =
+      profileOverride ??
+      (await this.prisma.careerProfile.findFirst({
+        where: { id: profileId, userId: tenantUserId },
+      }));
     if (!profile) {
       throw new ForbiddenException('Profile not found');
     }
-    return this.resolveStatus(profile);
+
+    const latestSubmission = await this.prisma.paymentSubmission.findFirst({
+      where: { profileId, userId: tenantUserId, product: 'career_seeker' },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    return this.resolveStatus(profile, latestSubmission);
+  }
+
+  estimatePeriodEndForPlan(plan: SeekerBillingPlan): Date {
+    const periodEnd = new Date();
+    if (plan === 'yearly') {
+      periodEnd.setFullYear(periodEnd.getFullYear() + 1);
+    } else {
+      periodEnd.setMonth(periodEnd.getMonth() + 1);
+    }
+    return periodEnd;
+  }
+
+  async recordManualSeekerTransaction(
+    tenantUserId: number,
+    data: {
+      eventType: string;
+      profileId: number;
+      plan: SeekerBillingPlan | string;
+      amountInr: number;
+      upiTransactionId: string;
+      paymentSubmissionId: number;
+      status?: string;
+    },
+  ): Promise<void> {
+    try {
+      const existing = await this.prisma.billingTransaction.findFirst({
+        where: {
+          userId: tenantUserId,
+          product: 'career_seeker',
+          metadata: { path: ['payment_submission_id'], equals: data.paymentSubmissionId },
+        },
+      });
+      if (existing) {
+        return;
+      }
+
+      await this.prisma.billingTransaction.create({
+        data: {
+          userId: tenantUserId,
+          product: 'career_seeker',
+          eventType: data.eventType,
+          plan: data.plan,
+          amountInr: data.amountInr,
+          status: data.status ?? 'captured',
+          metadata: {
+            profile_id: data.profileId,
+            upi_transaction_id: data.upiTransactionId,
+            payment_submission_id: data.paymentSubmissionId,
+          },
+        },
+      });
+    } catch (err) {
+      this.logger.warn(
+        `Could not record seeker manual transaction: ${(err as Error)?.message ?? 'unknown'}`,
+      );
+    }
   }
 
   private async planId(tenantUserId: number, plan: SeekerBillingPlan): Promise<string> {
@@ -266,6 +395,11 @@ export class CareerSeekerBillingService {
     const billingCfg = await this.tenantSettings.getSeekerBillingConfig(tenantUserId);
     if (!billingCfg.enabled) {
       throw new UnprocessableEntityException('CareerAI seeker billing is not enabled for this account.');
+    }
+    if (billingCfg.paymentMode === 'upi_manual') {
+      throw new UnprocessableEntityException(
+        'Online checkout is not available. Pay via UPI on your CareerAI portal link.',
+      );
     }
 
     const razorpay = await this.getRazorpayForTenant(tenantUserId);
@@ -621,6 +755,16 @@ export class CareerSeekerBillingService {
     }
 
     const lines = ['*Your CareerAI plan*', ''];
+
+    if (status.status === 'pending_verification') {
+      lines.push(
+        '⏳ *Payment under review*',
+        'Your UPI payment is being verified. CareerAI access is paused until approval.',
+        '',
+        'You will get a confirmation once verified (usually within 24 hours).',
+      );
+      return lines.join('\n');
+    }
 
     if (status.status === 'trial') {
       lines.push(

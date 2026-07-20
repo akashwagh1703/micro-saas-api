@@ -32,3 +32,16 @@ export class SeekerVerifySubscriptionDto {
   @IsNotEmpty()
   razorpay_signature!: string;
 }
+
+export class SubmitSeekerManualPaymentDto {
+  @IsString()
+  @IsNotEmpty()
+  token!: string;
+
+  @IsIn(['monthly', 'yearly'])
+  plan!: 'monthly' | 'yearly';
+
+  @IsString()
+  @IsNotEmpty()
+  upi_transaction_id!: string;
+}

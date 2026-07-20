@@ -1,5 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import * as fs from 'fs';
+import * as path from 'path';
 import { SettingsService } from '../../settings/settings.service';
 import { UpdateCareerSettingsDto } from '../dto/career-settings.dto';
 
@@ -23,6 +25,9 @@ export const CAREER_TENANT_KEYS = {
   RAZORPAY_KEY_ID: 'career_razorpay_key_id',
   RAZORPAY_KEY_SECRET: 'career_razorpay_key_secret',
   RAZORPAY_WEBHOOK_SECRET: 'career_razorpay_webhook_secret',
+  SEEKER_PAYMENT_MODE: 'career_seeker_payment_mode',
+  SEEKER_UPI_VPA: 'career_seeker_upi_vpa',
+  SEEKER_UPI_PAYEE_NAME: 'career_seeker_upi_payee_name',
 } as const;
 
 export interface CareerJobSourcesConfig {
@@ -42,6 +47,9 @@ export interface CareerSeekerBillingConfig {
   trialDays: number;
   priceMonthlyInr: number;
   priceYearlyInr: number;
+  paymentMode: 'razorpay' | 'upi_manual' | 'both';
+  upiVpa: string;
+  upiPayeeName: string;
   razorpayKeyId: string;
   razorpayKeySecret: string;
   razorpayWebhookSecret: string;
@@ -73,6 +81,11 @@ export interface CareerOperatorSettingsResponse {
     razorpay_plan_seeker_yearly: string;
     razorpay_webhook_url: string;
     razorpay_configured: boolean;
+    payment_mode: 'razorpay' | 'upi_manual' | 'both';
+    upi_vpa: string;
+    upi_payee_name: string;
+    upi_qr_url: string | null;
+    upi_configured: boolean;
   };
 }
 
@@ -95,6 +108,9 @@ const SETTINGS_FIELD_MAP = {
   razorpay_key_id: CAREER_TENANT_KEYS.RAZORPAY_KEY_ID,
   razorpay_key_secret: CAREER_TENANT_KEYS.RAZORPAY_KEY_SECRET,
   razorpay_webhook_secret: CAREER_TENANT_KEYS.RAZORPAY_WEBHOOK_SECRET,
+  seeker_payment_mode: CAREER_TENANT_KEYS.SEEKER_PAYMENT_MODE,
+  seeker_upi_vpa: CAREER_TENANT_KEYS.SEEKER_UPI_VPA,
+  seeker_upi_payee_name: CAREER_TENANT_KEYS.SEEKER_UPI_PAYEE_NAME,
 } as const;
 
 type SettingsField = keyof typeof SETTINGS_FIELD_MAP;
@@ -155,17 +171,26 @@ export class CareerTenantSettingsService {
       CAREER_TENANT_KEYS.RAZORPAY_WEBHOOK_SECRET,
       CAREER_TENANT_KEYS.RAZORPAY_PLAN_SEEKER_MONTHLY,
       CAREER_TENANT_KEYS.RAZORPAY_PLAN_SEEKER_YEARLY,
+      CAREER_TENANT_KEYS.SEEKER_PAYMENT_MODE,
+      CAREER_TENANT_KEYS.SEEKER_UPI_VPA,
+      CAREER_TENANT_KEYS.SEEKER_UPI_PAYEE_NAME,
     ]);
 
     const trialDays = parseInt(raw[CAREER_TENANT_KEYS.SEEKER_TRIAL_DAYS] ?? '14', 10);
     const monthly = parseInt(raw[CAREER_TENANT_KEYS.SEEKER_PRICE_MONTHLY_INR] ?? '199', 10);
     const yearly = parseInt(raw[CAREER_TENANT_KEYS.SEEKER_PRICE_YEARLY_INR] ?? '1999', 10);
+    const modeRaw = (raw[CAREER_TENANT_KEYS.SEEKER_PAYMENT_MODE] ?? 'razorpay').trim().toLowerCase();
+    const paymentMode =
+      modeRaw === 'upi_manual' || modeRaw === 'both' ? (modeRaw as CareerSeekerBillingConfig['paymentMode']) : 'razorpay';
 
     return {
       enabled: raw[CAREER_TENANT_KEYS.SEEKER_BILLING_ENABLED] === 'true',
       trialDays: Number.isNaN(trialDays) ? 14 : Math.min(Math.max(trialDays, 1), 90),
       priceMonthlyInr: Number.isNaN(monthly) ? 199 : Math.max(monthly, 1),
       priceYearlyInr: Number.isNaN(yearly) ? 1999 : Math.max(yearly, 1),
+      paymentMode,
+      upiVpa: (raw[CAREER_TENANT_KEYS.SEEKER_UPI_VPA] ?? '').trim(),
+      upiPayeeName: (raw[CAREER_TENANT_KEYS.SEEKER_UPI_PAYEE_NAME] ?? '').trim(),
       razorpayKeyId: (raw[CAREER_TENANT_KEYS.RAZORPAY_KEY_ID] ?? '').trim(),
       razorpayKeySecret: (raw[CAREER_TENANT_KEYS.RAZORPAY_KEY_SECRET] ?? '').trim(),
       razorpayWebhookSecret: (raw[CAREER_TENANT_KEYS.RAZORPAY_WEBHOOK_SECRET] ?? '').trim(),
@@ -188,6 +213,12 @@ export class CareerTenantSettingsService {
     const raw = await this.settings.getMany(userId, ALL_KEYS);
     const billing = await this.getSeekerBillingConfig(userId);
     const maxPagesRaw = parseInt(raw[CAREER_TENANT_KEYS.JSEARCH_MAX_PAGES] ?? '1', 10);
+    const qrRoot =
+      this.config.get<string>('CAREER_UPI_STORAGE_PATH') ??
+      path.join(process.cwd(), 'storage', 'career-upi');
+    const hasQr = fs.existsSync(path.join(qrRoot, String(userId), 'qr'));
+    const appUrl = (this.config.get<string>('APP_URL') ?? 'http://localhost:3000').replace(/\/$/, '');
+    const upiQrUrl = hasQr ? `${appUrl}/api/career/billing/upi-qr` : null;
 
     return {
       job_sources: {
@@ -213,6 +244,11 @@ export class CareerTenantSettingsService {
         razorpay_plan_seeker_yearly: billing.razorpayPlanYearly,
         razorpay_webhook_url: this.getRazorpayWebhookUrl(),
         razorpay_configured: this.isSeekerRazorpayConfigured(billing),
+        payment_mode: billing.paymentMode,
+        upi_vpa: billing.upiVpa,
+        upi_payee_name: billing.upiPayeeName,
+        upi_qr_url: upiQrUrl,
+        upi_configured: !!(billing.upiVpa && upiQrUrl),
       },
     };
   }
@@ -229,6 +265,13 @@ export class CareerTenantSettingsService {
       }
       if (field === 'seeker_billing_enabled') {
         await this.settings.set(userId, key, value === true ? 'true' : 'false');
+        continue;
+      }
+      if (field === 'seeker_payment_mode') {
+        const mode = String(value).trim().toLowerCase();
+        if (mode === 'razorpay' || mode === 'upi_manual' || mode === 'both') {
+          await this.settings.set(userId, key, mode);
+        }
         continue;
       }
       if (value === '') {

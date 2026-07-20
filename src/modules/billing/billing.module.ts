@@ -28,6 +28,7 @@ import { CareerModule } from '../career/career.module';
   exports: [
     BillingService,
     ManualPaymentService,
+    PaymentProofStorageService,
     PlatformUpiConfigService,
     PlatformAuditService,
     ManualPaymentExpiryService,

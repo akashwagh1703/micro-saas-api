@@ -1,8 +1,9 @@
-import { Module } from '@nestjs/common';
+import { Module, forwardRef } from '@nestjs/common';
 import { IntegrationsModule } from '../integrations/integrations.module';
 import { InboxModule } from '../inbox/inbox.module';
 import { WhatsappModule } from '../whatsapp/whatsapp.module';
 import { SettingsModule } from '../settings/settings.module';
+import { BillingModule } from '../billing/billing.module';
 import { CareerPublicController } from './career-public.controller';
 import { CareerController } from './career.controller';
 import { CareerBotService } from './services/career-bot.service';
@@ -32,6 +33,8 @@ import { CareerAlertChannelService } from './services/career-alert-channel.servi
 import { CareerPortalShareService } from './services/career-portal-share.service';
 import { CareerPortalService } from './services/career-portal.service';
 import { CareerSeekerBillingService } from './services/career-seeker-billing.service';
+import { CareerSeekerManualPaymentService } from './services/career-seeker-manual-payment.service';
+import { CareerUpiConfigService } from './services/career-upi-config.service';
 import { CareerTenantSettingsService } from './services/career-tenant-settings.service';
 import { CareerDigestScheduler } from './career-digest.scheduler';
 import { CareerPgBossScheduler } from './career-pgboss.scheduler';
@@ -51,7 +54,7 @@ import { CareerPdfService } from './services/career-pdf.service';
 import { CareerResumeBuilderService } from './services/career-resume-builder.service';
 
 @Module({
-  imports: [IntegrationsModule, InboxModule, WhatsappModule, SettingsModule],
+  imports: [IntegrationsModule, InboxModule, WhatsappModule, SettingsModule, forwardRef(() => BillingModule)],
   controllers: [CareerController, CareerPublicController],
   providers: [
     CareerBotService,
@@ -81,6 +84,8 @@ import { CareerResumeBuilderService } from './services/career-resume-builder.ser
     CareerPortalShareService,
     CareerPortalService,
     CareerSeekerBillingService,
+    CareerSeekerManualPaymentService,
+    CareerUpiConfigService,
     CareerTenantSettingsService,
     CareerDigestScheduler,
     CareerPgBossScheduler,
@@ -105,6 +110,7 @@ import { CareerResumeBuilderService } from './services/career-resume-builder.ser
     CareerJobAlertService,
     CareerBotService,
     CareerSeekerBillingService,
+    CareerEmailService,
   ],
 })
 export class CareerModule {}

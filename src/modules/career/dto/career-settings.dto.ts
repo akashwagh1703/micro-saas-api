@@ -106,4 +106,19 @@ export class UpdateCareerSettingsDto {
   @MaxLength(64)
   @Matches(RAZORPAY_PLAN_ID, { message: 'Invalid Razorpay plan ID (e.g. plan_...)' })
   razorpay_plan_seeker_yearly?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(20)
+  seeker_payment_mode?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(128)
+  seeker_upi_vpa?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(128)
+  seeker_upi_payee_name?: string;
 }

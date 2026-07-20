@@ -5,9 +5,15 @@ import {
   NotFoundException,
   Post,
   Query,
+  Res,
   StreamableFile,
   UnprocessableEntityException,
+  UploadedFile,
+  UseInterceptors,
 } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
+import { memoryStorage } from 'multer';
+import type { Response } from 'express';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CareerStorageService } from './services/career-storage.service';
 import { CareerDocumentShareService } from './services/career-document-share.service';
@@ -24,6 +30,8 @@ import {
 
 import { CareerPortalService } from './services/career-portal.service';
 import { CareerSeekerBillingService } from './services/career-seeker-billing.service';
+import { CareerSeekerManualPaymentService } from './services/career-seeker-manual-payment.service';
+import { CareerUpiConfigService } from './services/career-upi-config.service';
 import { CareerPortalShareService } from './services/career-portal-share.service';
 import { CareerMatchFeedbackService } from './services/career-match-feedback.service';
 import { CareerMatchingService } from './services/career-matching.service';
@@ -32,7 +40,9 @@ import {
   SeekerCancelSubscriptionDto,
   SeekerSubscribeDto,
   SeekerVerifySubscriptionDto,
+  SubmitSeekerManualPaymentDto,
 } from './dto/career-seeker-billing.dto';
+import { RejectPaymentSubmissionDto } from '../billing/dto/billing.dto';
 
 /** Public document downloads and candidate portal (signed token — no login). */
 @Controller('career/public')
@@ -45,6 +55,8 @@ export class CareerPublicController {
     private readonly pdf: CareerPdfService,
     private readonly portalService: CareerPortalService,
     private readonly seekerBilling: CareerSeekerBillingService,
+    private readonly seekerManualPayment: CareerSeekerManualPaymentService,
+    private readonly upiConfig: CareerUpiConfigService,
     private readonly portalShare: CareerPortalShareService,
     private readonly matchFeedback: CareerMatchFeedbackService,
     private readonly matching: CareerMatchingService,
@@ -103,13 +115,49 @@ export class CareerPublicController {
   @Get('billing/status')
   async billingStatus(@Query('token') token?: string) {
     const payload = this.requirePortalToken(token);
-    const profile = await this.prisma.careerProfile.findFirst({
-      where: { id: payload.profileId, userId: payload.userId },
-    });
-    if (!profile) {
-      throw new NotFoundException('Profile not found');
+    return this.seekerBilling.getStatusForProfile(payload.profileId, payload.userId);
+  }
+
+  @Get('billing/payment-config')
+  async billingPaymentConfig(@Query('token') token?: string) {
+    const payload = this.requirePortalToken(token);
+    return this.seekerManualPayment.getPaymentConfig(payload.userId, token?.trim());
+  }
+
+  @Get('billing/upi-qr')
+  async billingUpiQr(@Query('token') token: string, @Res({ passthrough: false }) res: Response) {
+    const payload = this.requirePortalToken(token);
+    const file = await this.upiConfig.readQrImage(payload.userId);
+    if (!file) {
+      throw new NotFoundException('QR code not found');
     }
-    return this.seekerBilling.resolveStatus(profile);
+    res.setHeader('Content-Type', file.mimeType);
+    res.setHeader('Cache-Control', 'private, max-age=3600');
+    res.send(file.buffer);
+  }
+
+  @Post('billing/manual-payment')
+  @UseInterceptors(
+    FileInterceptor('file', {
+      storage: memoryStorage(),
+      limits: { fileSize: 5 * 1024 * 1024 },
+    }),
+  )
+  async billingManualPayment(
+    @Body() dto: SubmitSeekerManualPaymentDto,
+    @UploadedFile() file?: { buffer: Buffer; mimetype: string; size: number },
+  ) {
+    const payload = this.requirePortalToken(dto.token);
+    return this.seekerManualPayment.submitManualPayment(
+      payload.profileId,
+      payload.userId,
+      dto.plan,
+      dto.upi_transaction_id,
+      {
+        buffer: file?.buffer ?? Buffer.alloc(0),
+        mimetype: file?.mimetype ?? 'image/jpeg',
+      },
+    );
   }
 
   @Post('billing/subscribe')
