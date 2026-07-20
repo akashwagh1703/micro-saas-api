@@ -157,10 +157,14 @@ export class MailService implements OnModuleInit {
     if (!this.smtpHost()) return null;
     if (!this.transporter) {
       const port = parseInt(this.config.get<string>('SMTP_PORT') ?? '587', 10);
+      const host = this.smtpHost()!;
+      const isBrevoRelay = host.toLowerCase().includes('brevo.com');
       this.transporter = nodemailer.createTransport({
-        host: this.smtpHost(),
+        host,
         port: Number.isNaN(port) ? 587 : port,
         secure: this.config.get<string>('SMTP_SECURE') === 'true',
+        // Brevo documents STARTTLS on 587 (same intent as Postfix smtp_tls_security_level=may)
+        requireTLS: isBrevoRelay && this.config.get<string>('SMTP_SECURE') !== 'true',
         connectionTimeout: 10_000,
         greetingTimeout: 10_000,
         socketTimeout: 15_000,
