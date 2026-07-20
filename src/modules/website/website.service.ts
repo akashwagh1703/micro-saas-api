@@ -9,23 +9,23 @@ import { buildCsv } from '../../common/export/csv.util';
 import { isValidIndianMobile, parseStrictIndianMobile, toE164Indian } from '../../common/phone.util';
 import { paginatedMeta, resolvePage } from '../../common/pagination';
 import { randomBytes } from 'crypto';
-import * as nodemailer from 'nodemailer';
+import { MailService } from '../mail/mail.service';
 import { ensureWebsiteLeadsSchema } from './website-lead.schema-bootstrap';
 
 @Injectable()
 export class WebsiteService implements OnModuleInit {
   private readonly logger = new Logger(WebsiteService.name);
-  private transporter: nodemailer.Transporter | null = null;
 
   constructor(
     private prisma: PrismaService,
     private config: ConfigService,
+    private mail: MailService,
   ) {}
 
   onModuleInit(): void {
-    if (!this.config.get<string>('SMTP_HOST')?.trim()) {
+    if (!this.mail.isEnabled()) {
       this.logger.warn(
-        'SMTP_HOST is not configured — demo confirmation and sales notification emails will be skipped',
+        'Mail is not configured (MAIL_DRIVER / Brevo / SMTP) — demo confirmation and sales notification emails will be skipped',
       );
     }
     void this.bootstrapWebsiteLeads();
@@ -52,58 +52,16 @@ export class WebsiteService implements OnModuleInit {
     }
   }
 
-  private getTransporter(): nodemailer.Transporter | null {
-    if (!this.transporter) {
-      const smtpHost = this.config.get<string>('SMTP_HOST');
-      if (!smtpHost?.trim()) {
-        return null;
-      }
-      
-      const port = parseInt(this.config.get<string>('SMTP_PORT') ?? '587', 10);
-      this.transporter = nodemailer.createTransport({
-        host: smtpHost,
-        port: Number.isNaN(port) ? 587 : port,
-        secure: this.config.get<string>('SMTP_SECURE') === 'true',
-        connectionTimeout: 10_000,
-        greetingTimeout: 10_000,
-        socketTimeout: 15_000,
-        auth: this.config.get<string>('SMTP_USER')
-          ? {
-              user: this.config.get<string>('SMTP_USER'),
-              pass: this.config.get<string>('SMTP_PASS'),
-            }
-          : undefined,
-      });
-    }
-    return this.transporter;
-  }
-
   private async sendEmail(to: string, subject: string, text: string, html?: string): Promise<boolean> {
-    const transport = this.getTransporter();
-    if (!transport) {
-      this.logger.warn('SMTP not configured, skipping email notification');
-      return false;
-    }
-
-    const from =
-      this.config.get<string>('SMTP_FROM')?.trim() ??
-      this.config.get<string>('SMTP_USER')?.trim() ??
-      'noreply@autowave.in';
-
-    try {
-      await transport.sendMail({
-        from,
-        to,
-        subject,
-        text,
-        html: html ?? text.replace(/\n/g, '<br>'),
-      });
-      this.logger.log(`Email sent successfully to ${to}`);
+    const result = await this.mail.send({ to, subject, text, html });
+    if (result.success) {
+      if (result.driver !== 'log') {
+        this.logger.log(`Email sent successfully to ${to} via ${result.driver}`);
+      }
       return true;
-    } catch (error) {
-      this.logger.error(`Failed to send email to ${to}:`, error);
-      return false;
     }
+    this.logger.error(`Failed to send email to ${to}: ${result.error ?? 'unknown'}`);
+    return false;
   }
 
   private async sendLeadNotificationEmail(lead: any): Promise<void> {

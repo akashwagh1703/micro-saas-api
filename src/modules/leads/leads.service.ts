@@ -5,6 +5,8 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { ActivityLogger } from '../../common/activity-logger.service';
 import { CryptoService } from '../../common/crypto/crypto.service';
 import { SettingsService } from '../settings/settings.service';
+import { OwnerNotificationsService } from '../notifications/owner-notifications.service';
+import { OwnerNotificationType } from '../notifications/owner-notification.types';
 import {
   buildSaveLeadApiConfig,
   buildSaveLeadCurl,
@@ -42,6 +44,7 @@ export class LeadsService {
     private readonly config: ConfigService,
     private readonly settings: SettingsService,
     private readonly crypto: CryptoService,
+    private readonly ownerNotifications: OwnerNotificationsService,
   ) {}
 
   /** Same persistence path as the workflow save_lead node. */
@@ -271,6 +274,29 @@ export class LeadsService {
         execution_id: data.executionId ?? null,
       },
     );
+
+    const who =
+      [data.name, data.phone || data.username].filter(Boolean).join(' · ') ||
+      `${data.channel} enquiry`;
+    const snippet = data.sourceMessage?.trim()
+      ? data.sourceMessage.trim().slice(0, 120)
+      : null;
+    const title =
+      data.channel === 'instagram' ? 'New Instagram enquiry' : 'New WhatsApp enquiry';
+
+    void this.ownerNotifications.notify(userId, {
+      type: OwnerNotificationType.LEAD_CREATED,
+      title,
+      body: snippet ? `${who}\n${snippet}` : who,
+      metadata: {
+        lead_id: lead.id,
+        channel: data.channel,
+        route: '/leads',
+        conversation_id: data.conversationId ?? null,
+        contact_id: data.contactId ?? null,
+      },
+      sendPush: true,
+    });
 
     return lead;
   }

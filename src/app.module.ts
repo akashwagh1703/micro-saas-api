@@ -30,6 +30,7 @@ import { InteractiveMessagesModule } from './modules/interactive-messages/intera
 import { IntegrationsModule } from './modules/integrations/integrations.module';
 import { AvailabilityModule } from './modules/availability/availability.module';
 import { NotificationsModule } from './modules/notifications/notifications.module';
+import { MailModule } from './modules/mail/mail.module';
 import { AppController } from './app.controller';
 
 @Module({
@@ -38,6 +39,7 @@ import { AppController } from './app.controller';
     SuperAdminModule,
     PrismaModule,
     CryptoModule,
+    MailModule,
     ActivityLoggerModule,
     RateLimitModule,
     WebhookIdempotencyModule,

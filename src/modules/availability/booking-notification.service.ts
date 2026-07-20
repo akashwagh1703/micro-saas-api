@@ -6,6 +6,7 @@ import { SettingsService } from '../settings/settings.service';
 import { WhatsAppApiService } from '../integrations/whatsapp-api.service';
 import { InboxService } from '../inbox/inbox.service';
 import { OwnerNotificationsService } from '../notifications/owner-notifications.service';
+import { OwnerNotificationType } from '../notifications/owner-notification.types';
 import { extractDigits } from '../../common/phone.util';
 import { localDateStrInTimeZone } from './timezone.util';
 import {
@@ -49,6 +50,16 @@ function formatBookingWhen(iso: string, timeZone = 'Asia/Kolkata'): string {
   }
 }
 
+function formatCustomerLabel(options?: {
+  contact_name?: string | null;
+  contact_phone?: string | null;
+}): string {
+  const customerName = options?.contact_name?.trim() || null;
+  const customerPhone = options?.contact_phone?.trim() || null;
+  if (customerName && customerPhone) return `${customerName} (${customerPhone})`;
+  return customerName || customerPhone || 'Customer';
+}
+
 /** Owner and customer alerts for booking lifecycle events. */
 @Injectable()
 export class BookingNotificationService {
@@ -73,18 +84,16 @@ export class BookingNotificationService {
     const when = formatBookingWhen(booking.starts_at, timeZone);
     const resource = booking.resource_name ?? 'Team member';
     const service = booking.service_label ? ` · ${booking.service_label}` : '';
-    const customerName = options?.contact_name?.trim() || null;
-    const customerPhone = options?.contact_phone?.trim() || null;
-    const customer =
-      customerName && customerPhone
-        ? `${customerName} (${customerPhone})`
-        : customerName || customerPhone || 'Customer';
+    const customer = formatCustomerLabel(options);
     const pending = options?.is_pending === true;
     const description = `${customer}\n${resource} · ${when}${service}`;
+    const type = pending
+      ? OwnerNotificationType.BOOKING_REQUESTED
+      : OwnerNotificationType.BOOKING_CREATED;
 
     await this.activity.log(
       userId,
-      pending ? 'booking_requested' : 'booking_created',
+      type,
       pending ? 'New booking request' : 'New appointment booked',
       description,
       {
@@ -92,14 +101,14 @@ export class BookingNotificationService {
         starts_at: booking.starts_at,
         resource_name: booking.resource_name,
         service_label: booking.service_label,
-        contact_name: customerName,
-        contact_phone: customerPhone,
+        contact_name: options?.contact_name?.trim() || null,
+        contact_phone: options?.contact_phone?.trim() || null,
         pending,
       },
     );
 
     void this.ownerNotifications.notify(userId, {
-      type: pending ? 'booking_requested' : 'booking_created',
+      type,
       title: pending ? 'New booking request' : 'New appointment booked',
       body: description,
       metadata: {
@@ -108,8 +117,8 @@ export class BookingNotificationService {
         starts_at: booking.starts_at,
         resource_name: booking.resource_name,
         service_label: booking.service_label,
-        contact_name: customerName,
-        contact_phone: customerPhone,
+        contact_name: options?.contact_name?.trim() || null,
+        contact_phone: options?.contact_phone?.trim() || null,
         pending,
       },
       sendPush: true,
@@ -123,6 +132,77 @@ export class BookingNotificationService {
       customer,
       pending,
     );
+  }
+
+  /** In-app + push when a pending booking is confirmed. */
+  async notifyOwnerConfirmed(
+    userId: number,
+    booking: OwnerBookingAlert,
+    options?: { contact_name?: string | null; contact_phone?: string | null },
+  ): Promise<void> {
+    await this.notifyOwnerLifecycle(userId, booking, {
+      type: OwnerNotificationType.BOOKING_CONFIRMED,
+      title: 'Appointment confirmed',
+      activityTitle: 'Appointment confirmed',
+      options,
+    });
+  }
+
+  /** In-app + push when a booking is cancelled. */
+  async notifyOwnerCancelled(
+    userId: number,
+    booking: OwnerBookingAlert,
+    options?: { contact_name?: string | null; contact_phone?: string | null },
+  ): Promise<void> {
+    await this.notifyOwnerLifecycle(userId, booking, {
+      type: OwnerNotificationType.BOOKING_CANCELLED,
+      title: 'Appointment cancelled',
+      activityTitle: 'Appointment cancelled',
+      options,
+    });
+  }
+
+  private async notifyOwnerLifecycle(
+    userId: number,
+    booking: OwnerBookingAlert,
+    params: {
+      type: string;
+      title: string;
+      activityTitle: string;
+      options?: { contact_name?: string | null; contact_phone?: string | null };
+    },
+  ): Promise<void> {
+    const timeZone = (await this.settings.get(userId, 'timezone')) || 'Asia/Kolkata';
+    const when = formatBookingWhen(booking.starts_at, timeZone);
+    const resource = booking.resource_name ?? 'Team member';
+    const service = booking.service_label ? ` · ${booking.service_label}` : '';
+    const customer = formatCustomerLabel(params.options);
+    const description = `${customer}\n${resource} · ${when}${service}`;
+
+    await this.activity.log(userId, params.type, params.activityTitle, description, {
+      booking_id: booking.id,
+      starts_at: booking.starts_at,
+      resource_name: booking.resource_name,
+      service_label: booking.service_label,
+      contact_name: params.options?.contact_name?.trim() || null,
+      contact_phone: params.options?.contact_phone?.trim() || null,
+    });
+
+    void this.ownerNotifications.notify(userId, {
+      type: params.type,
+      title: params.title,
+      body: description,
+      metadata: {
+        booking_id: booking.id,
+        route: '/scheduling/bookings',
+        starts_at: booking.starts_at,
+        resource_name: booking.resource_name,
+        service_label: booking.service_label,
+        contact_name: params.options?.contact_name?.trim() || null,
+        contact_phone: params.options?.contact_phone?.trim() || null,
+      },
+      sendPush: true,
+    });
   }
 
   /** Sends the customer an interactive confirmation after the owner approves a pending booking. */

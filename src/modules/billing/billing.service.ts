@@ -14,6 +14,7 @@ import { SuperAdminService } from '../../common/super-admin.service';
 
 import { PlatformUpiConfigService } from './platform-upi-config.service';
 import { ManualPaymentExpiryService } from './manual-payment-expiry.service';
+import { BillingNotificationService } from './billing-notification.service';
 
 export type BillingPlan = 'monthly' | 'yearly';
 export type BillingStatusKind =
@@ -72,6 +73,7 @@ export class BillingService {
     private readonly superAdmin: SuperAdminService,
     private readonly upiConfig: PlatformUpiConfigService,
     private readonly paymentExpiry: ManualPaymentExpiryService,
+    private readonly billingNotifications: BillingNotificationService,
   ) {}
 
   isEnabled(): boolean {
@@ -709,6 +711,7 @@ export class BillingService {
       const amountPaise =
         Number(paymentEntity?.amount ?? entity?.amount ?? 0) ||
         (plan === 'yearly' ? this.yearlyPriceInr() : this.monthlyPriceInr()) * 100;
+      const amountInr = Math.round(amountPaise / 100);
 
       await this.recordTransaction({
         userId: user.id,
@@ -716,9 +719,19 @@ export class BillingService {
         razorpayPaymentId: (paymentEntity?.id as string) ?? null,
         razorpaySubscriptionId: subscriptionId,
         plan,
-        amountInr: Math.round(amountPaise / 100),
+        amountInr,
         status: (paymentEntity?.status as string) ?? 'captured',
         metadata: { source: 'webhook' },
+      });
+
+      const notifyUser = freshUser ?? user;
+      void this.billingNotifications.notifyPaymentReceived({
+        to: notifyUser.email,
+        name: notifyUser.name,
+        plan,
+        amountInr,
+        periodEnd: notifyUser.currentPeriodEnd,
+        method: 'Razorpay',
       });
     }
 
@@ -819,6 +832,19 @@ export class BillingService {
             subscriptionCancelAtPeriodEnd: false,
           },
         });
+
+        // Activated / resumed → subscription email + push.
+        // Charged → payment email only (handled in handleWebhookEvent with amount).
+        // Authenticated → status sync only (no charge yet).
+        if (event === 'subscription.activated' || event === 'subscription.resumed') {
+          void this.billingNotifications.notifySubscriptionActivated({
+            userId,
+            to: existing.email,
+            name: existing.name,
+            plan,
+            periodEnd,
+          });
+        }
         break;
       }
       // A charge failed; Razorpay is retrying. Keep access during the grace

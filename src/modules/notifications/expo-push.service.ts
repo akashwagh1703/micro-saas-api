@@ -1,13 +1,14 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
+import { PushChannel } from './owner-notification.types';
 
 export interface ExpoPushPayload {
   title: string;
   body: string;
   data?: Record<string, unknown>;
+  /** Android/Expo channel; defaults to bookings. */
+  channelId?: string;
 }
-
-const BOOKING_CHANNEL_ID = 'bookings';
 
 /** Sends high-priority push alerts via Expo Push API (lock screen + app closed). */
 @Injectable()
@@ -23,18 +24,20 @@ export class ExpoPushService {
     });
     if (!tokens.length) return;
 
+    const channelId = payload.channelId?.trim() || PushChannel.BOOKINGS;
+
     const messages = tokens.map((row) => ({
       to: row.expoPushToken,
       title: payload.title,
       body: payload.body,
       sound: 'default',
       priority: 'high' as const,
-      channelId: BOOKING_CHANNEL_ID,
+      channelId,
       badge: 1,
       ttl: 300,
       data: payload.data ?? {},
       android: {
-        channelId: BOOKING_CHANNEL_ID,
+        channelId,
         priority: 'high' as const,
         sound: 'default',
         vibrate: [0, 300, 200, 300],

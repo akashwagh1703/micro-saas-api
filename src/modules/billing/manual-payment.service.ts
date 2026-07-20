@@ -326,6 +326,7 @@ export class ManualPaymentService {
     });
 
     await this.notifications.notifyPaymentApproved({
+      userId: submission.userId,
       to: submission.user.email,
       name: submission.user.name,
       plan,

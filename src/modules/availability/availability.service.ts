@@ -300,15 +300,22 @@ export class AvailabilityService {
       include: { resource: true, contact: true, conversation: { include: { contact: true } } },
     });
     const serialized = serializeBooking(updated);
+    const contactName =
+      updated.contact?.name ?? updated.conversation?.contact?.name ?? null;
+    const contactPhone =
+      updated.contact?.phone ?? updated.conversation?.contact?.phone ?? null;
+    const contactOpts = { contact_name: contactName, contact_phone: contactPhone };
 
     if (status === 'confirmed' && previousStatus === 'pending') {
       void this.bookingNotifications.notifyCustomerConfirmed(userId, serialized);
+      void this.bookingNotifications.notifyOwnerConfirmed(userId, serialized, contactOpts);
     }
 
     if (status === 'cancelled' && (previousStatus === 'pending' || previousStatus === 'confirmed')) {
       void this.bookingNotifications.notifyCustomerCancelled(userId, serialized, {
         wasPending: previousStatus === 'pending',
       });
+      void this.bookingNotifications.notifyOwnerCancelled(userId, serialized, contactOpts);
     }
 
     return { booking: serialized };

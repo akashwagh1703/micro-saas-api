@@ -6,7 +6,13 @@ import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { serializeUser } from '../../common/serializers';
 import { AuthService } from './auth.service';
 import { SuperAdminService } from '../../common/super-admin.service';
-import { ForgotPasswordDto, LoginDto, RegisterDto } from './dto/auth.dto';
+import {
+  ForgotPasswordDto,
+  LoginDto,
+  RegisterDto,
+  ResetPasswordDto,
+  VerifyEmailDto,
+} from './dto/auth.dto';
 
 @Controller('auth')
 export class AuthController {
@@ -31,6 +37,25 @@ export class AuthController {
   @HttpCode(200)
   forgotPassword(@Body() dto: ForgotPasswordDto) {
     return this.auth.forgotPassword(dto);
+  }
+
+  @Post('reset-password')
+  @HttpCode(200)
+  resetPassword(@Body() dto: ResetPasswordDto) {
+    return this.auth.resetPassword(dto);
+  }
+
+  @Post('verify-email')
+  @HttpCode(200)
+  verifyEmail(@Body() dto: VerifyEmailDto) {
+    return this.auth.verifyEmail(dto);
+  }
+
+  @Post('resend-verification')
+  @HttpCode(200)
+  @UseGuards(TokenAuthGuard)
+  resendVerification(@CurrentUser() user: User) {
+    return this.auth.resendVerification(user);
   }
 
   @Post('logout')

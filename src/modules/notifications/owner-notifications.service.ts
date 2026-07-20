@@ -2,6 +2,7 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ExpoPushService } from './expo-push.service';
+import { pushChannelForType } from './owner-notification.types';
 
 export interface CreateOwnerNotificationInput {
   type: string;
@@ -9,6 +10,8 @@ export interface CreateOwnerNotificationInput {
   body: string;
   metadata?: Record<string, unknown>;
   sendPush?: boolean;
+  /** Override Android/Expo channel; defaults from notification type. */
+  pushChannelId?: string;
 }
 
 function serializeNotification(row: {
@@ -54,6 +57,7 @@ export class OwnerNotificationsService {
       void this.expoPush.sendToUser(userId, {
         title: input.title,
         body: input.body,
+        channelId: input.pushChannelId ?? pushChannelForType(input.type),
         data: {
           type: input.type,
           notification_id: row.id,

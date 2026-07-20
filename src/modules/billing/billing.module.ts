@@ -11,9 +11,11 @@ import { BillingNotificationService } from './billing-notification.service';
 import { ManualPaymentExpiryService } from './manual-payment-expiry.service';
 import { BillingPgBossScheduler } from './billing-pgboss.scheduler';
 import { CareerModule } from '../career/career.module';
+import { NotificationsModule } from '../notifications/notifications.module';
+import { SubscriptionLifecycleService } from './subscription-lifecycle.service';
 
 @Module({
-  imports: [forwardRef(() => CareerModule)],
+  imports: [forwardRef(() => CareerModule), NotificationsModule],
   controllers: [BillingController, BillingWebhookController, PlatformPublicController],
   providers: [
     BillingService,
@@ -23,6 +25,7 @@ import { CareerModule } from '../career/career.module';
     PlatformAuditService,
     BillingNotificationService,
     ManualPaymentExpiryService,
+    SubscriptionLifecycleService,
     BillingPgBossScheduler,
   ],
   exports: [
@@ -32,6 +35,8 @@ import { CareerModule } from '../career/career.module';
     PlatformUpiConfigService,
     PlatformAuditService,
     ManualPaymentExpiryService,
+    BillingNotificationService,
+    SubscriptionLifecycleService,
   ],
 })
 export class BillingModule {}

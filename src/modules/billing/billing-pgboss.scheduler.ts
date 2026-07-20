@@ -1,8 +1,12 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { QueueService } from '../queue/queue.service';
-import { QUEUE_BILLING_PAYMENT_EXPIRY } from '../queue/queue.constants';
+import {
+  QUEUE_BILLING_PAYMENT_EXPIRY,
+  QUEUE_BILLING_SUBSCRIPTION_LIFECYCLE,
+} from '../queue/queue.constants';
 import { ManualPaymentExpiryService } from './manual-payment-expiry.service';
+import { SubscriptionLifecycleService } from './subscription-lifecycle.service';
 
 @Injectable()
 export class BillingPgBossScheduler {
@@ -12,6 +16,7 @@ export class BillingPgBossScheduler {
     private readonly config: ConfigService,
     private readonly queue: QueueService,
     private readonly expiry: ManualPaymentExpiryService,
+    private readonly lifecycle: SubscriptionLifecycleService,
   ) {}
 
   async registerSchedules(): Promise<void> {
@@ -34,6 +39,21 @@ export class BillingPgBossScheduler {
       await this.queue.scheduleCron(QUEUE_BILLING_PAYMENT_EXPIRY, '0 4 * * *', {}, { tz: 'UTC' });
       this.logger.log(
         `pg-boss UPI payment expiry scheduled daily 04:00 UTC (${this.expiry.pendingDays()} day window)`,
+      );
+
+      await this.queue.work(QUEUE_BILLING_SUBSCRIPTION_LIFECYCLE, async () => {
+        this.logger.log('pg-boss: subscription lifecycle reminders');
+        await this.lifecycle.processLifecycleReminders();
+      });
+
+      await this.queue.scheduleCron(
+        QUEUE_BILLING_SUBSCRIPTION_LIFECYCLE,
+        '30 4 * * *',
+        {},
+        { tz: 'UTC' },
+      );
+      this.logger.log(
+        `pg-boss subscription lifecycle scheduled daily 04:30 UTC (${this.lifecycle.expiringDays()}-day expiring window)`,
       );
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);

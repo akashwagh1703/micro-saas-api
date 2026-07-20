@@ -1,7 +1,9 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { ConfigService } from '@nestjs/config';
+import { BadRequestException } from '@nestjs/common';
 import { WebsiteService } from './website.service';
 import { PrismaService } from '../../prisma/prisma.service';
+import { MailService } from '../mail/mail.service';
 
 describe('WebsiteService', () => {
   let service: WebsiteService;
@@ -32,6 +34,14 @@ describe('WebsiteService', () => {
               if (key === 'SMTP_HOST') return '';
               return undefined;
             }),
+          },
+        },
+        {
+          provide: MailService,
+          useValue: {
+            isEnabled: jest.fn().mockReturnValue(false),
+            send: jest.fn().mockResolvedValue({ success: false, error: 'smtp_not_configured', driver: 'log' }),
+            getDriver: jest.fn().mockReturnValue('log'),
           },
         },
       ],

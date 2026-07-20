@@ -1,69 +1,68 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import * as nodemailer from 'nodemailer';
+import { MailService } from '../mail/mail.service';
+import { OwnerNotificationsService } from '../notifications/owner-notifications.service';
+import { OwnerNotificationType } from '../notifications/owner-notification.types';
 
 @Injectable()
 export class BillingNotificationService {
   private readonly logger = new Logger(BillingNotificationService.name);
-  private transporter: nodemailer.Transporter | null = null;
 
-  constructor(private readonly config: ConfigService) {}
+  constructor(
+    private readonly config: ConfigService,
+    private readonly mail: MailService,
+    private readonly ownerNotifications: OwnerNotificationsService,
+  ) {}
 
   isEnabled(): boolean {
-    return !!this.config.get<string>('SMTP_HOST')?.trim();
-  }
-
-  private getTransporter(): nodemailer.Transporter | null {
-    if (!this.isEnabled()) return null;
-    if (!this.transporter) {
-      const port = parseInt(this.config.get<string>('SMTP_PORT') ?? '587', 10);
-      this.transporter = nodemailer.createTransport({
-        host: this.config.get<string>('SMTP_HOST'),
-        port: Number.isNaN(port) ? 587 : port,
-        secure: this.config.get<string>('SMTP_SECURE') === 'true',
-        auth: this.config.get<string>('SMTP_USER')
-          ? {
-              user: this.config.get<string>('SMTP_USER'),
-              pass: this.config.get<string>('SMTP_PASS'),
-            }
-          : undefined,
-      });
-    }
-    return this.transporter;
+    return this.mail.isEnabled();
   }
 
   private portalBillingUrl(): string {
     const portal = this.config.get<string>('PORTAL_URL')?.replace(/\/$/, '');
-    return portal ? `${portal}/settings/billing` : '';
+    return portal ? `${portal}/settings?tab=billing` : '';
+  }
+
+  private formatPeriod(periodEnd: Date): string {
+    return periodEnd.toLocaleDateString(undefined, {
+      day: 'numeric',
+      month: 'long',
+      year: 'numeric',
+    });
   }
 
   private async send(to: string, subject: string, text: string, html?: string): Promise<void> {
-    const transport = this.getTransporter();
-    if (!transport) {
-      this.logger.warn(`SMTP not configured — skipped billing email to ${to}`);
-      return;
-    }
-
-    const from =
-      this.config.get<string>('SMTP_FROM')?.trim() ??
-      this.config.get<string>('SMTP_USER')?.trim() ??
-      'noreply@autowave.local';
-
-    try {
-      await transport.sendMail({
-        from,
-        to,
-        subject,
-        text,
-        html: html ?? text.replace(/\n/g, '<br>'),
-      });
-    } catch (e: unknown) {
-      const message = e instanceof Error ? e.message : String(e);
-      this.logger.warn(`Billing email failed to=${to}: ${message}`);
+    const result = await this.mail.send({ to, subject, text, html });
+    if (!result.success) {
+      this.logger.warn(`Billing email failed to=${to}: ${result.error ?? 'unknown'}`);
     }
   }
 
+  private pushSubscriptionActivated(
+    userId: number,
+    plan: string,
+    periodEnd: Date,
+  ): void {
+    const period = this.formatPeriod(periodEnd);
+    void this.ownerNotifications.notify(userId, {
+      type: OwnerNotificationType.SUBSCRIPTION_ACTIVATED,
+      title: 'Subscription activated',
+      body: `Your ${plan} plan is active until ${period}.`,
+      metadata: {
+        route: '/settings/billing',
+        plan,
+        period_end: periodEnd.toISOString(),
+      },
+      sendPush: true,
+    });
+  }
+
+  /**
+   * UPI manual approve: one email covering payment received + activation,
+   * plus owner push for subscription activated (avoids double email).
+   */
   async notifyPaymentApproved(params: {
+    userId: number;
     to: string;
     name: string;
     plan: string;
@@ -71,17 +70,13 @@ export class BillingNotificationService {
     periodEnd: Date;
   }) {
     const billingUrl = this.portalBillingUrl();
-    const period = params.periodEnd.toLocaleDateString(undefined, {
-      day: 'numeric',
-      month: 'long',
-      year: 'numeric',
-    });
-    const subject = 'AutoWave — UPI payment approved';
+    const period = this.formatPeriod(params.periodEnd);
+    const subject = 'AutoWave — payment received & subscription activated';
     const text = [
       `Hi ${params.name},`,
       '',
-      `Your UPI payment of ₹${params.amountInr} for the ${params.plan} plan was verified.`,
-      `Your subscription is active until ${period}.`,
+      `We received your UPI payment of ₹${params.amountInr} for the ${params.plan} plan.`,
+      `Your subscription is now active until ${period}.`,
       '',
       billingUrl ? `Manage billing: ${billingUrl}` : 'You can go live on your auto-replies now.',
       '',
@@ -89,6 +84,64 @@ export class BillingNotificationService {
     ].join('\n');
 
     await this.send(params.to, subject, text);
+    this.pushSubscriptionActivated(params.userId, params.plan, params.periodEnd);
+  }
+
+  /** Razorpay (or other) — payment captured / charged. Email only. */
+  async notifyPaymentReceived(params: {
+    to: string;
+    name: string;
+    plan: string;
+    amountInr: number;
+    periodEnd?: Date | null;
+    method?: string;
+  }) {
+    const billingUrl = this.portalBillingUrl();
+    const methodLabel = params.method?.trim() || 'card';
+    const periodLine = params.periodEnd
+      ? `Your current period runs until ${this.formatPeriod(params.periodEnd)}.`
+      : null;
+    const subject = 'AutoWave — payment received';
+    const text = [
+      `Hi ${params.name},`,
+      '',
+      `We received your payment of ₹${params.amountInr} for the ${params.plan} plan (${methodLabel}).`,
+      periodLine,
+      '',
+      billingUrl ? `Manage billing: ${billingUrl}` : null,
+      '',
+      '— AutoWave',
+    ]
+      .filter((line) => line !== null)
+      .join('\n');
+
+    await this.send(params.to, subject, text);
+  }
+
+  /** Razorpay subscription.activated / resumed — email + push. */
+  async notifySubscriptionActivated(params: {
+    userId: number;
+    to: string;
+    name: string;
+    plan: string;
+    periodEnd: Date;
+  }) {
+    const billingUrl = this.portalBillingUrl();
+    const period = this.formatPeriod(params.periodEnd);
+    const subject = 'AutoWave — subscription activated';
+    const text = [
+      `Hi ${params.name},`,
+      '',
+      `Your AutoWave ${params.plan} subscription is now active.`,
+      `Access continues until ${period}.`,
+      '',
+      billingUrl ? `Manage billing: ${billingUrl}` : 'You are all set to use AutoWave.',
+      '',
+      '— AutoWave',
+    ].join('\n');
+
+    await this.send(params.to, subject, text);
+    this.pushSubscriptionActivated(params.userId, params.plan, params.periodEnd);
   }
 
   async notifyPaymentRejected(params: {
@@ -151,5 +204,94 @@ export class BillingNotificationService {
     ].join('\n');
 
     await this.send(salesEmail, subject, text);
+  }
+
+  /** Trial or paid period ending within the reminder window — email + push. */
+  async notifySubscriptionExpiring(params: {
+    userId: number;
+    to: string;
+    name: string;
+    kind: 'trial' | 'subscription';
+    endsAt: Date;
+    daysLeft: number;
+  }) {
+    const billingUrl = this.portalBillingUrl();
+    const when = this.formatPeriod(params.endsAt);
+    const what = params.kind === 'trial' ? 'trial' : 'subscription';
+    const dayLabel = params.daysLeft === 1 ? '1 day' : `${params.daysLeft} days`;
+    const subject = `AutoWave — your ${what} expires in ${dayLabel}`;
+    const text = [
+      `Hi ${params.name},`,
+      '',
+      `Your AutoWave ${what} ends on ${when} (${dayLabel} left).`,
+      'Renew or choose a plan to keep auto-replies and bookings running without interruption.',
+      '',
+      billingUrl ? `Manage billing: ${billingUrl}` : null,
+      '',
+      '— AutoWave',
+    ]
+      .filter((line) => line !== null)
+      .join('\n');
+
+    await this.send(params.to, subject, text);
+
+    void this.ownerNotifications.notify(params.userId, {
+      type: OwnerNotificationType.SUBSCRIPTION_EXPIRING,
+      title: `Subscription expires in ${dayLabel}`,
+      body:
+        params.kind === 'trial'
+          ? `Your trial ends on ${when}. Choose a plan to stay live.`
+          : `Your plan ends on ${when}. Renew to keep access.`,
+      metadata: {
+        route: '/settings/billing',
+        kind: params.kind,
+        ends_at: params.endsAt.toISOString(),
+        days_left: params.daysLeft,
+      },
+      sendPush: true,
+    });
+  }
+
+  /** Access window ended — email + push. */
+  async notifySubscriptionExpired(params: {
+    userId: number;
+    to: string;
+    name: string;
+    kind: 'trial' | 'subscription';
+    endedAt: Date;
+  }) {
+    const billingUrl = this.portalBillingUrl();
+    const when = this.formatPeriod(params.endedAt);
+    const what = params.kind === 'trial' ? 'trial' : 'subscription';
+    const subject = `AutoWave — your ${what} has expired`;
+    const text = [
+      `Hi ${params.name},`,
+      '',
+      `Your AutoWave ${what} ended on ${when}.`,
+      'Choose a plan to restore access to auto-replies, inbox, and bookings.',
+      '',
+      billingUrl ? `Renew now: ${billingUrl}` : null,
+      '',
+      '— AutoWave',
+    ]
+      .filter((line) => line !== null)
+      .join('\n');
+
+    await this.send(params.to, subject, text);
+
+    void this.ownerNotifications.notify(params.userId, {
+      type: OwnerNotificationType.SUBSCRIPTION_EXPIRED,
+      title: 'Subscription expired',
+      body:
+        params.kind === 'trial'
+          ? `Your trial ended on ${when}. Choose a plan to continue.`
+          : `Your plan ended on ${when}. Renew to restore access.`,
+      metadata: {
+        route: '/settings/billing',
+        kind: params.kind,
+        ended_at: params.endedAt.toISOString(),
+      },
+      sendPush: true,
+    });
   }
 }

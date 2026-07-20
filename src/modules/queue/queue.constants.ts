@@ -9,6 +9,7 @@ export const QUEUE_CAREER_RETENTION = 'career-resume-text-retention';
 
 export const QUEUE_WORKFLOW_SCHEDULE_TICK = 'workflow-schedule-tick';
 export const QUEUE_BILLING_PAYMENT_EXPIRY = 'billing-payment-expiry';
+export const QUEUE_BILLING_SUBSCRIPTION_LIFECYCLE = 'billing-subscription-lifecycle';
 
 export const ALL_QUEUES = [
   QUEUE_PROCESS_INCOMING,
@@ -21,6 +22,7 @@ export const ALL_QUEUES = [
   QUEUE_CAREER_RETENTION,
   QUEUE_WORKFLOW_SCHEDULE_TICK,
   QUEUE_BILLING_PAYMENT_EXPIRY,
+  QUEUE_BILLING_SUBSCRIPTION_LIFECYCLE,
 ];
 
 export interface SendMessageJob {
