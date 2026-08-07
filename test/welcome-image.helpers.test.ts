@@ -2,6 +2,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   normalizeHttpsImageUrl,
+  resolveWelcomeImageUrl,
   shouldAttachWelcomeImage,
 } from '../src/modules/workflows/nodes/welcome-image.helpers';
 
@@ -27,5 +28,34 @@ describe('welcome-image.helpers', () => {
       }),
       false,
     );
+  });
+
+  it('uses catalog WA logo and never booking welcome image', async () => {
+    const settings = {
+      get: async () => 'https://cdn.example.com/booking-welcome.jpg',
+    };
+    const url = await resolveWelcomeImageUrl(
+      settings,
+      1,
+      {
+        send_welcome_image: true,
+        use_catalog_wa_logo: true,
+        welcome_image_url: '{{catalog_wa_logo_url}}',
+      },
+      { catalog_wa_logo_url: 'https://cdn.example.com/business-logo.jpg' },
+    );
+    assert.equal(url, 'https://cdn.example.com/business-logo.jpg');
+
+    const missing = await resolveWelcomeImageUrl(
+      settings,
+      1,
+      {
+        send_welcome_image: true,
+        use_catalog_wa_logo: true,
+        welcome_image_url: '{{catalog_wa_logo_url}}',
+      },
+      { catalog_wa_logo_url: '' },
+    );
+    assert.equal(missing, null);
   });
 });

@@ -144,7 +144,12 @@ export class PickOptionsNodeExecutor implements NodeExecutor {
         useButtons: mode !== 'time_period_pick' && items.length <= 3,
       });
 
-      const welcomeImageUrl = await resolveWelcomeImageUrl(this.settings, execution.userId, data);
+      const welcomeImageUrl = await resolveWelcomeImageUrl(
+        this.settings,
+        execution.userId,
+        data,
+        context,
+      );
       const useButtons = mode !== 'time_period_pick' && items.length <= 3;
       let skipWelcomeBodyInInteractive = false;
 

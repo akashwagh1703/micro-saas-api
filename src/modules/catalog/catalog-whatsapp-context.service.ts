@@ -51,13 +51,16 @@ export class CatalogWhatsAppContextService {
     const sections = site.sections || [];
     const aboutSection = sections.find((s) => s.type === 'about' && s.enabled !== false);
     const heroSection = sections.find((s) => s.type === 'hero' && s.enabled !== false);
+    const headerSection = sections.find((s) => s.type === 'header' && s.enabled !== false);
     const gallerySection = sections.find((s) => s.type === 'gallery' && s.enabled !== false);
     const productsSection = sections.find((s) => s.type === 'products' && s.enabled !== false);
     const contactSection = sections.find((s) => s.type === 'contact' && s.enabled !== false);
 
     const aboutConfig = asObj(aboutSection?.config);
     const heroConfig = asObj(heroSection?.config);
+    const headerConfig = asObj(headerSection?.config);
     const contactConfig = asObj(contactSection?.config);
+    const theme = asObj(site.theme);
 
     const aboutBody = String(aboutConfig.body ?? '')
       .trim()
@@ -104,6 +107,24 @@ export class CatalogWhatsAppContextService {
 
     const welcomeExtra = [heroHeadline, heroSub, aboutBody].filter(Boolean).join('\n\n');
 
+    const waLogoMediaId = Number(
+      theme.whatsapp_logo_media_id ?? headerConfig.logo_media_id ?? 0,
+    );
+    const waLogoMedia =
+      waLogoMediaId > 0 ? site.media.find((m) => m.id === waLogoMediaId) : undefined;
+    let catalogWaLogoUrl = '';
+    if (waLogoMedia) {
+      if (published) {
+        catalogWaLogoUrl = this.share.buildPublicMediaUrl(waLogoMedia.id);
+      } else {
+        try {
+          catalogWaLogoUrl = this.share.buildSignedUrl(waLogoMedia.id, userId, 72);
+        } catch {
+          catalogWaLogoUrl = this.share.buildPublicMediaUrl(waLogoMedia.id);
+        }
+      }
+    }
+
     return {
       catalog_business_name: businessName,
       catalog_tagline: tagline,
@@ -127,6 +148,7 @@ export class CatalogWhatsAppContextService {
       catalog_website_block: published
         ? `🌐 Explore *${businessName}* online:\n\n${catalogUrl}\n\nPhotos, products, and more — all in one place.`
         : `🌐 The website for *${businessName}* will be ready once it's published.\n\nMeanwhile, tap *Order* and we'll reach out to help!`,
+      catalog_wa_logo_url: catalogWaLogoUrl,
       catalog_status: site.status || '',
       catalog_is_published: published ? '1' : '0',
       catalog_image_count: String(images.length),
@@ -155,6 +177,7 @@ export class CatalogWhatsAppContextService {
       catalog_image_url_3: '',
       catalog_image_url_4: '',
       catalog_image_url_5: '',
+      catalog_wa_logo_url: '',
       catalog_status: '',
       catalog_is_published: '0',
       catalog_image_count: '0',

@@ -1,19 +1,41 @@
 import { SettingsService } from '../../settings/settings.service';
+import { substituteContext } from './booking-node.helpers';
 
 const APPOINTMENT_SOURCES = new Set(['appointment_services', 'salon_services']);
 
-/** Resolve HTTPS image URL for booking welcome (node override → tenant setting). */
+/**
+ * Resolve HTTPS image URL for interactive pick headers.
+ * Catalog flows: use_catalog_wa_logo + {{catalog_wa_logo_url}} (never booking welcome image).
+ * Booking flows: node override → tenant welcome_image_url setting.
+ */
 export async function resolveWelcomeImageUrl(
   settings: SettingsService,
   userId: number,
   nodeData: Record<string, unknown>,
+  context?: Record<string, unknown>,
 ): Promise<string | null> {
   if (!shouldAttachWelcomeImage(nodeData)) {
     return null;
   }
 
-  const nodeUrl = String(nodeData.welcome_image_url ?? '').trim();
-  if (nodeUrl) {
+  const ctx = context ?? {};
+
+  // Catalog WhatsApp logo — never fall back to booking welcome image.
+  if (nodeData.use_catalog_wa_logo === true) {
+    const fromPlaceholder = substituteContext(
+      String(nodeData.welcome_image_url ?? '{{catalog_wa_logo_url}}'),
+      ctx,
+    ).trim();
+    const fromContext = String(ctx.catalog_wa_logo_url ?? '').trim();
+    return (
+      normalizeHttpsImageUrl(fromPlaceholder.includes('{{') ? '' : fromPlaceholder) ??
+      normalizeHttpsImageUrl(fromContext)
+    );
+  }
+
+  const rawNodeUrl = String(nodeData.welcome_image_url ?? '').trim();
+  const nodeUrl = substituteContext(rawNodeUrl, ctx).trim();
+  if (nodeUrl && !nodeUrl.includes('{{')) {
     return normalizeHttpsImageUrl(nodeUrl);
   }
 

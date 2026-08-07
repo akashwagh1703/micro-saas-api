@@ -493,12 +493,27 @@ export class WorkflowTemplateService {
     }
     const def = workflow.definition as unknown as WorkflowDefinition;
     const nodeIds = (def?.nodes ?? []).map((n) => n.id);
-    // pick-ready-order = images-only catalog branch + post-gallery order prompt
+    // Current = WA logo wiring + post-catalog buttons labeled Website / Order (not "Place order")
+    const sendWebsite = (def?.nodes ?? []).find((n) => n.id === 'send-website');
+    const hasCatalogWaLogo = String(sendWebsite?.data?.media_url ?? '').includes(
+      'catalog_wa_logo_url',
+    );
+    const pickReady = (def?.nodes ?? []).find((n) => n.id === 'pick-ready-order');
+    const readyOptions = Array.isArray(pickReady?.data?.options) ? pickReady.data.options : [];
+    const hasWebsiteAndOrderLabels =
+      readyOptions.some((o: { text?: string }) => String(o?.text ?? '') === 'Website') &&
+      readyOptions.some((o: { text?: string }) => String(o?.text ?? '') === 'Order') &&
+      !readyOptions.some((o: { text?: string }) => /place order/i.test(String(o?.text ?? '')));
+    const pickMenu = (def?.nodes ?? []).find((n) => n.id === 'pick-menu');
+    const welcomeHeaderOk = String(pickMenu?.data?.header ?? '') === '✨ Welcome';
     const alreadyCurrent =
       nodeIds.includes('pick-menu') &&
       nodeIds.includes('pick-ready-order') &&
       nodeIds.includes('send-image-5') &&
-      nodeIds.includes('send-order-thanks');
+      nodeIds.includes('send-order-thanks') &&
+      hasCatalogWaLogo &&
+      hasWebsiteAndOrderLabels &&
+      welcomeHeaderOk;
     if (alreadyCurrent) return null;
 
     const template = findGuidedTemplate('catalog-share');

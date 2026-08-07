@@ -131,6 +131,7 @@ function pickOptionsNode(
     next_node_id?: string;
   }[],
   footer?: string,
+  extra?: Record<string, unknown>,
 ) {
   return {
     id,
@@ -144,6 +145,7 @@ function pickOptionsNode(
       body,
       footer,
       options,
+      ...extra,
     },
   };
 }
@@ -978,8 +980,8 @@ const catalogShare: WorkflowTemplate = {
           200,
           'Welcome menu',
           'menu_choice',
-          '{{catalog_business_name}}',
-          '✨ Hello {{contact_name}}!\n\nWelcome to *{{catalog_business_name}}*{{catalog_tagline_line}}\n\nWe’re delighted you’re here. How can we make your day better?',
+          '✨ Welcome',
+          'Hi {{contact_name}}! 👋\n\nThanks for connecting with *{{catalog_business_name}}*{{catalog_tagline_line}}\n\nHow can we help you today? Tap an option below.',
           [
             {
               text: 'Catalog',
@@ -1000,7 +1002,12 @@ const catalogShare: WorkflowTemplate = {
               next_node_id: 'save-lead-order',
             },
           ],
-          'Choose an option below',
+          'We’re glad you’re here',
+          {
+            send_welcome_image: true,
+            use_catalog_wa_logo: true,
+            welcome_image_url: '{{catalog_wa_logo_url}}',
+          },
         ),
         x: 280,
       },
@@ -1066,23 +1073,28 @@ const catalogShare: WorkflowTemplate = {
           940,
           'Ready to order',
           'menu_choice',
-          'Ready to order?',
-          '📸 That’s a peek at *{{catalog_business_name}}*!\n\nReady to place your order? Tap below and our team will take care of everything for you. ✨',
+          'Ready next?',
+          '📸 That’s a peek at what we offer!\n\nTap below to visit our website or place an order — *{{catalog_business_name}}* is here to help. ✨',
           [
-            {
-              text: 'Place order',
-              description: 'We’ll reach out to confirm',
-              value: 'order',
-              next_node_id: 'save-lead-order',
-            },
             {
               text: 'Website',
               description: 'Open our full website',
               value: 'website',
               next_node_id: 'send-website',
             },
+            {
+              text: 'Order',
+              description: 'We’ll reach out to confirm',
+              value: 'order',
+              next_node_id: 'save-lead-order',
+            },
           ],
-          'Tap to continue',
+          'Website or Order',
+          {
+            send_welcome_image: true,
+            use_catalog_wa_logo: true,
+            welcome_image_url: '{{catalog_wa_logo_url}}',
+          },
         ),
         x: 40,
       },
@@ -1093,7 +1105,11 @@ const catalogShare: WorkflowTemplate = {
           340,
           'Send website link',
           '{{catalog_website_block}}',
-          'Sends published /c/{slug} website link for the business',
+          'Sends business website link with optional WhatsApp logo',
+          {
+            media_url: '{{catalog_wa_logo_url}}',
+            optional_media: true,
+          },
         ),
         x: 320,
       },
@@ -1121,7 +1137,11 @@ const catalogShare: WorkflowTemplate = {
           480,
           'Order thank you',
           '🎉 Thank you, {{contact_name}}!\n\nYour order request has been sent to *{{catalog_business_name}}*.\n\nOur team will reach out shortly to confirm the details.\n\nWe appreciate you choosing us — can’t wait to serve you! 💚',
-          'Confirms order request was forwarded to the business',
+          'Confirms order request with optional WhatsApp logo',
+          {
+            media_url: '{{catalog_wa_logo_url}}',
+            optional_media: true,
+          },
         ),
         x: 600,
       },

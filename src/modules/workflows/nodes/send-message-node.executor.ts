@@ -24,24 +24,32 @@ export class SendMessageNodeExecutor implements NodeExecutor {
     const message = substituteContext(String(data.message ?? ''), context);
     const fallbackMessage = substituteContext(String(data.fallback_message ?? ''), context);
 
-    // Allow {{catalog_image_url}} etc. in media_url; skip image send when unresolved/empty.
+    // Allow {{catalog_image_url}} / {{catalog_wa_logo_url}} in media_url; skip when empty.
+    // Do NOT auto-attach Settings → Welcome image on every text node (that leaked the wrong
+    // booking logo onto catalog Website/Order replies). Opt in with send_welcome_image.
     const rawNodeMedia = String(data.media_url ?? data.welcome_image_url ?? '').trim();
     const resolvedNodeMedia = substituteContext(rawNodeMedia, context).trim();
     const nodeMedia =
       resolvedNodeMedia && !resolvedNodeMedia.includes('{{') ? resolvedNodeMedia : '';
-    const settingMedia = (await this.settings.get(execution.userId, 'welcome_image_url'))?.trim();
     const preferCatalogImage = data.use_catalog_image === true;
     const catalogMedia = preferCatalogImage
       ? String(context.catalog_image_url ?? '').trim()
       : '';
+    let settingMedia = '';
+    if (data.send_welcome_image === true || data.include_welcome_image === true) {
+      settingMedia = (await this.settings.get(execution.userId, 'welcome_image_url'))?.trim() || '';
+    }
     const mediaUrl =
       normalizeHttpsImageUrl(nodeMedia) ??
       normalizeHttpsImageUrl(catalogMedia) ??
-      (rawNodeMedia ? null : normalizeHttpsImageUrl(settingMedia ?? '')) ??
+      normalizeHttpsImageUrl(settingMedia) ??
       null;
 
-    // Optional gallery nodes: no resolvable image → skip (don't send caption-only spam).
-    const optionalMedia = data.optional_media === true || rawNodeMedia.includes('{{catalog_image');
+    // Optional gallery / WA logo nodes: no resolvable image → skip (text-only is fine).
+    const optionalMedia =
+      data.optional_media === true ||
+      rawNodeMedia.includes('{{catalog_image') ||
+      rawNodeMedia.includes('{{catalog_wa_logo');
     if (optionalMedia && !mediaUrl) {
       return {
         success: true,
