@@ -19,6 +19,7 @@ export const BUSINESS_LABELS: Record<string, string> = {
   ca_accountant: 'CA / Accountant',
   support: 'Customer Support Team',
   career_ai: 'CareerAI Bot',
+  catalog: 'Catalog / Brochure',
   other: 'Business',
 };
 
@@ -29,6 +30,7 @@ export const USE_CASE_LABELS: Record<string, string> = {
   sales_assistant: 'Sales Assistant',
   faq_bot: 'FAQ Bot',
   ai_chat: 'AI Chat Assistant',
+  catalog_share: 'Catalog / Brochure',
 };
 
 /** Short phrase describing the business, injected into AI prompts. */
@@ -47,6 +49,8 @@ const BUSINESS_CONTEXT: Record<string, string> = {
   support: 'a customer support team resolving customer issues quickly and politely',
   career_ai:
     'an AI-powered career assistant helping job seekers find roles, generate cover letters, and track applications over WhatsApp',
+  catalog:
+    'a business sharing a product catalog or brochure with photos, prices, and a public website link over WhatsApp',
   other: 'a business helping its customers over WhatsApp',
 };
 
@@ -58,6 +62,7 @@ const USE_CASE_FALLBACK: Record<string, string> = {
   sales_assistant: 'ai-support-assistant',
   faq_bot: 'keyword-faq',
   ai_chat: 'ai-support-assistant',
+  catalog_share: 'catalog-share',
 };
 
 /**
@@ -102,6 +107,9 @@ const COMBO_OVERRIDES: Record<string, string> = {
   'local_shop:appointment_booking': 'local-shop-support',
   'local_shop:sales_assistant': 'local-shop-support',
   'local_shop:ai_chat': 'local-shop-support',
+
+  // Catalog / brochure (Website settings + public /c/{slug})
+  'catalog:catalog_share': 'catalog-share',
 
   // Travel
   'travel:appointment_booking': 'travel-booking',
@@ -201,6 +209,7 @@ export const USE_CASE_TRIGGER_KEYWORDS: Record<string, string[]> = {
   faq_bot: ['faq', 'hours', 'location', 'info', 'timing', 'address', 'where'],
   customer_support: ['help', 'support', 'issue', 'problem', 'complaint', 'assist'],
   sales_assistant: ['order', 'purchase', 'catalog', 'product', 'shop', 'buy'],
+  catalog_share: ['hi', 'hello', 'catalog', 'menu', 'price', 'product', 'brochure'],
   ai_chat: [],
 };
 

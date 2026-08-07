@@ -31,6 +31,7 @@ import { IntegrationsModule } from './modules/integrations/integrations.module';
 import { AvailabilityModule } from './modules/availability/availability.module';
 import { NotificationsModule } from './modules/notifications/notifications.module';
 import { MailModule } from './modules/mail/mail.module';
+import { CatalogModule } from './modules/catalog/catalog.module';
 import { AppController } from './app.controller';
 
 @Module({
@@ -60,6 +61,7 @@ import { AppController } from './app.controller';
     CareerModule,
     AdminModule,
     WebsiteModule,
+    CatalogModule,
     InteractiveMessagesModule,
     IntegrationsModule,
     AvailabilityModule,

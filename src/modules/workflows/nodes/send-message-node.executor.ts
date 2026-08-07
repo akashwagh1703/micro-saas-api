@@ -23,12 +23,41 @@ export class SendMessageNodeExecutor implements NodeExecutor {
     const data = node.data ?? {};
     const message = substituteContext(String(data.message ?? ''), context);
     const fallbackMessage = substituteContext(String(data.fallback_message ?? ''), context);
-    const text = message.trim() || fallbackMessage || 'Thanks for your message!';
 
-    const nodeMedia = String(data.media_url ?? data.welcome_image_url ?? '').trim();
+    // Allow {{catalog_image_url}} etc. in media_url; skip image send when unresolved/empty.
+    const rawNodeMedia = String(data.media_url ?? data.welcome_image_url ?? '').trim();
+    const resolvedNodeMedia = substituteContext(rawNodeMedia, context).trim();
+    const nodeMedia =
+      resolvedNodeMedia && !resolvedNodeMedia.includes('{{') ? resolvedNodeMedia : '';
     const settingMedia = (await this.settings.get(execution.userId, 'welcome_image_url'))?.trim();
+    const preferCatalogImage = data.use_catalog_image === true;
+    const catalogMedia = preferCatalogImage
+      ? String(context.catalog_image_url ?? '').trim()
+      : '';
     const mediaUrl =
-      normalizeHttpsImageUrl(nodeMedia) ?? normalizeHttpsImageUrl(settingMedia ?? '') ?? null;
+      normalizeHttpsImageUrl(nodeMedia) ??
+      normalizeHttpsImageUrl(catalogMedia) ??
+      (rawNodeMedia ? null : normalizeHttpsImageUrl(settingMedia ?? '')) ??
+      null;
+
+    // Optional gallery nodes: no resolvable image → skip (don't send caption-only spam).
+    const optionalMedia = data.optional_media === true || rawNodeMedia.includes('{{catalog_image');
+    if (optionalMedia && !mediaUrl) {
+      return {
+        success: true,
+        output: { skipped: true, reason: 'no_catalog_media' },
+      };
+    }
+
+    // Optional text nodes (e.g. products list): skip when placeholder resolved empty.
+    if (data.optional_text === true && !message.trim() && !mediaUrl) {
+      return {
+        success: true,
+        output: { skipped: true, reason: 'empty_optional_text' },
+      };
+    }
+
+    const text = message.trim() || fallbackMessage.trim() || 'Thanks for your message!';
 
     if (mediaUrl && execution.conversationId) {
       const imageResult = await this.inbox.sendOutgoingImageByLink(

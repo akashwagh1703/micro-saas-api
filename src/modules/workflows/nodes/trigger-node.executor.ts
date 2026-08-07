@@ -1,12 +1,16 @@
 import { Injectable } from '@nestjs/common';
 import { WorkflowExecution } from '@prisma/client';
 import { SettingsService } from '../../settings/settings.service';
+import { CatalogWhatsAppContextService } from '../../catalog/catalog-whatsapp-context.service';
 import { businessLabel } from '../business-workflow';
 import { NodeExecutionResult, NodeExecutor } from './node-executor.interface';
 
 @Injectable()
 export class TriggerNodeExecutor implements NodeExecutor {
-  constructor(private readonly settings: SettingsService) {}
+  constructor(
+    private readonly settings: SettingsService,
+    private readonly catalogWhatsApp: CatalogWhatsAppContextService,
+  ) {}
 
   async execute(
     execution: WorkflowExecution,
@@ -17,8 +21,15 @@ export class TriggerNodeExecutor implements NodeExecutor {
     const businessDescription = await this.settings.get(execution.userId, 'business_description');
     const configuredName = await this.settings.get(execution.userId, 'business_name');
     const business_label = businessCategory ? businessLabel(businessCategory) : '';
-    const business_name =
+    let business_name =
       configuredName?.trim() || businessDescription?.trim() || business_label || 'Our business';
+
+    const catalogCtx = await this.catalogWhatsApp.buildContext(execution.userId);
+    if (catalogCtx.catalog_business_name) {
+      business_name = catalogCtx.catalog_business_name;
+    } else {
+      catalogCtx.catalog_business_name = business_name;
+    }
 
     return {
       success: true,
@@ -32,6 +43,7 @@ export class TriggerNodeExecutor implements NodeExecutor {
         payload: context.payload ?? null,
         business_label,
         business_name,
+        ...catalogCtx,
       },
     };
   }

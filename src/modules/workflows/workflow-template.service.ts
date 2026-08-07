@@ -10,6 +10,7 @@ import {
 import { resolveLeadApiChannelFromTrigger } from './workflow-trigger-channel';
 import { currentBusinessPublishedWhere, parseUseCases } from '../../common/workflow-scope';
 import { validateBusinessSetup } from '../../platform/catalog-validation';
+import { getVertical } from '../../platform/business-verticals.registry';
 import { isSchedulingVertical } from '../../platform/appointment-services';
 import { WORKFLOW_TEMPLATES, WorkflowDefinition, findTemplate } from './workflow-templates';
 import { findAnyTemplate, findGuidedTemplate } from './business-workflow-templates';
@@ -167,8 +168,11 @@ export class WorkflowTemplateService {
       await this.settings.ensureAppointmentServicesDefaults(userId, businessCategory);
     }
 
-    // CareerAI uses a dedicated WhatsApp bot — no generic auto-reply workflows needed.
-    if (businessCategory === CAREER_AI_BUSINESS) {
+    // CareerAI / catalog brochure use dedicated flows — no generic auto-reply templates yet.
+    if (
+      businessCategory === CAREER_AI_BUSINESS ||
+      getVertical(businessCategory)?.skip_workflows
+    ) {
       return [];
     }
 
@@ -222,6 +226,9 @@ export class WorkflowTemplateService {
     if (existing) {
       if (useCase === 'appointment_booking' && isSchedulingVertical(businessCategory)) {
         return (await this.upgradeAppointmentWorkflowIfNeeded(userId, existing)) ?? existing;
+      }
+      if (useCase === 'catalog_share' && businessCategory === 'catalog') {
+        return (await this.upgradeCatalogWorkflowIfNeeded(existing)) ?? existing;
       }
       return existing;
     }
@@ -471,6 +478,39 @@ export class WorkflowTemplateService {
         name: workflow.name?.includes('·')
           ? workflow.name
           : `${businessLabel(workflow.businessCategory!)} · ${useCaseLabel('appointment_booking')}`,
+      },
+    });
+  }
+
+  /**
+   * Replaces older catalog-share graphs with the Phase 7 template (products + contact + publish-aware link).
+   * No-op when the workflow already has the products node.
+   */
+  async upgradeCatalogWorkflowIfNeeded(workflow: Workflow): Promise<Workflow | null> {
+    if (workflow.useCase !== 'catalog_share' || workflow.businessCategory !== 'catalog') {
+      return null;
+    }
+    const def = workflow.definition as unknown as WorkflowDefinition;
+    const nodeIds = (def?.nodes ?? []).map((n) => n.id);
+    const alreadyCurrent =
+      nodeIds.includes('send-products') && nodeIds.includes('send-catalog-link');
+    if (alreadyCurrent) return null;
+
+    const template = findGuidedTemplate('catalog-share');
+    if (!template) return null;
+
+    let definition = JSON.parse(JSON.stringify(template.definition)) as WorkflowDefinition;
+    definition = applyUseCaseTriggerKeywords(definition, 'catalog_share');
+
+    return this.prisma.workflow.update({
+      where: { id: workflow.id },
+      data: {
+        definition: definition as any,
+        sourceTemplate: 'catalog-share',
+        description: template.description,
+        name: workflow.name?.includes('·')
+          ? workflow.name
+          : `${businessLabel('catalog')} · ${useCaseLabel('catalog_share')}`,
       },
     });
   }

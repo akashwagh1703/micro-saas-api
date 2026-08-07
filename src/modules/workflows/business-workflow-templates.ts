@@ -28,12 +28,19 @@ function aiNode(id: string, y: number, label: string, summary: string, prompt: s
   };
 }
 
-function sendNode(id: string, y: number, label: string, message: string, summary?: string) {
+function sendNode(
+  id: string,
+  y: number,
+  label: string,
+  message: string,
+  summary?: string,
+  extra?: Record<string, unknown>,
+) {
   return {
     id,
     type: 'send_message',
     y,
-    data: { label, summary: summary ?? 'Sends WhatsApp reply', message },
+    data: { label, summary: summary ?? 'Sends WhatsApp reply', message, ...extra },
   };
 }
 
@@ -924,6 +931,68 @@ const supportTeamAssistant: WorkflowTemplate = {
   ]),
 };
 
+/**
+ * Catalog / brochure — Hi → welcome + hero/about → gallery (≤3) → products → link + contact.
+ * Placeholders {{catalog_*}} filled at runtime from CatalogSite (Phase 7 dynamic content).
+ */
+const catalogShare: WorkflowTemplate = {
+  slug: 'catalog-share',
+  name: 'Catalog Brochure Share',
+  description:
+    'Welcome customers with live website content, photos, products, then your short catalog link.',
+  category: 'guided',
+  trigger_type: 'message_received',
+  definition: linearFlow([
+    triggerNode(80, 'whatsapp'),
+    sendNode(
+      'send-welcome',
+      200,
+      'Welcome + business info',
+      'Hi {{contact_name}}! 👋\n\nWelcome to *{{catalog_business_name}}*{{catalog_tagline_line}}.\n\n{{catalog_welcome_extra}}How can we help you today?',
+      'Greets with name, tagline, hero, and about from Website settings',
+    ),
+    sendNode(
+      'send-image-1',
+      320,
+      'Gallery photo 1',
+      'Here’s a look at what we offer 📸',
+      'Sends first catalog gallery image when available (max 3 for WhatsApp)',
+      { media_url: '{{catalog_image_url}}', optional_media: true },
+    ),
+    sendNode(
+      'send-image-2',
+      440,
+      'Gallery photo 2',
+      '',
+      'Sends second gallery image when available',
+      { media_url: '{{catalog_image_url_2}}', optional_media: true },
+    ),
+    sendNode(
+      'send-image-3',
+      560,
+      'Gallery photo 3',
+      '',
+      'Sends third gallery image when available',
+      { media_url: '{{catalog_image_url_3}}', optional_media: true },
+    ),
+    sendNode(
+      'send-products',
+      680,
+      'Products snapshot',
+      '{{catalog_products_block}}',
+      'Lists up to 3 active products with display prices',
+      { optional_text: true },
+    ),
+    sendNode(
+      'send-catalog-link',
+      800,
+      'Catalog link + contact',
+      '{{catalog_link_block}}{{catalog_contact_block}}Reply here if you have questions — we’re happy to help!',
+      'Public /c/{slug} link only when website is published; plus contact details',
+    ),
+  ]),
+};
+
 export const GUIDED_WORKFLOW_TEMPLATES: WorkflowTemplate[] = [
   salonAppointment,
   sportsTurfBooking,
@@ -946,6 +1015,7 @@ export const GUIDED_WORKFLOW_TEMPLATES: WorkflowTemplate[] = [
   caAccountantAppointment,
   caAccountantSupport,
   supportTeamAssistant,
+  catalogShare,
 ];
 
 export function findGuidedTemplate(slug: string): WorkflowTemplate | undefined {

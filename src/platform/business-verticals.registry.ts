@@ -40,6 +40,7 @@ const ACTIVE_USE_CASE_KEYS = [
   'appointment_booking',
   'lead_generation',
   'customer_support',
+  'catalog_share',
 ] as const;
 
 export const USE_CASE_DEFINITIONS: UseCaseDefinition[] = [
@@ -62,6 +63,13 @@ export const USE_CASE_DEFINITIONS: UseCaseDefinition[] = [
     label: 'Customer Support',
     hint: 'Answer questions and resolve issues automatically.',
     example: 'Order status, complaints, general help.',
+    visible_in_signup: true,
+  },
+  {
+    key: 'catalog_share',
+    label: 'Catalog / Brochure',
+    hint: 'Share business info, photos, and a short website link on WhatsApp.',
+    example: 'Customer says Hi → welcome, photos, catalog link.',
     visible_in_signup: true,
   },
   {
@@ -198,6 +206,19 @@ export const BUSINESS_VERTICALS: BusinessVerticalDefinition[] = [
     recommended_use_cases: ['lead_generation'],
     supports_use_case_picker: true,
     allowed_use_cases: ['lead_generation', 'customer_support'],
+    max_use_cases: 1,
+    visible_in_signup: true,
+  },
+  {
+    key: 'catalog',
+    label: 'Catalog / Brochure',
+    hint: 'Share info, photos, and prices via WhatsApp + a public page (no cart).',
+    example: 'Customer says Hi → welcome, gallery, short catalog link.',
+    kind: 'workflow',
+    portal_route: '/website',
+    recommended_use_cases: ['catalog_share'],
+    supports_use_case_picker: false,
+    allowed_use_cases: ['catalog_share'],
     max_use_cases: 1,
     visible_in_signup: true,
   },

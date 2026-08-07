@@ -5,6 +5,7 @@ import { BillingModule } from '../billing/billing.module';
 import { LeadsModule } from '../leads/leads.module';
 import { AvailabilityModule } from '../availability/availability.module';
 import { InboxModule } from '../inbox/inbox.module';
+import { CatalogModule } from '../catalog/catalog.module';
 import { WorkflowsController } from './workflows.controller';
 import { WorkflowWebhookController } from './workflow-webhook.controller';
 import { WorkflowValidator } from './workflow-validator.service';
@@ -33,7 +34,15 @@ import { WorkflowValidationInteractiveService } from './workflow-validation-inte
 import { WorkflowInteractiveSendService } from './workflow-interactive-send.service';
 
 @Module({
-  imports: [IntegrationsModule, SettingsModule, BillingModule, LeadsModule, AvailabilityModule, InboxModule],
+  imports: [
+    IntegrationsModule,
+    SettingsModule,
+    BillingModule,
+    LeadsModule,
+    AvailabilityModule,
+    InboxModule,
+    CatalogModule,
+  ],
   controllers: [
     WorkflowsController,
     WorkflowWebhookController,
