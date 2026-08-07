@@ -209,7 +209,19 @@ export const USE_CASE_TRIGGER_KEYWORDS: Record<string, string[]> = {
   faq_bot: ['faq', 'hours', 'location', 'info', 'timing', 'address', 'where'],
   customer_support: ['help', 'support', 'issue', 'problem', 'complaint', 'assist'],
   sales_assistant: ['order', 'purchase', 'catalog', 'product', 'shop', 'buy'],
-  catalog_share: ['hi', 'hello', 'catalog', 'menu', 'price', 'product', 'brochure'],
+  catalog_share: [
+    'hi',
+    'hello',
+    'hey',
+    'catalog',
+    'catalogue',
+    'menu',
+    'website',
+    'order',
+    'price',
+    'product',
+    'brochure',
+  ],
   ai_chat: [],
 };
 

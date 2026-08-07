@@ -69,7 +69,7 @@ export const USE_CASE_DEFINITIONS: UseCaseDefinition[] = [
     key: 'catalog_share',
     label: 'Catalog / Brochure',
     hint: 'Share business info, photos, and a short website link on WhatsApp.',
-    example: 'Customer says Hi → welcome, photos, catalog link.',
+    example: 'Customer says Hi → Catalog / Website / Order menu.',
     visible_in_signup: true,
   },
   {
@@ -213,7 +213,7 @@ export const BUSINESS_VERTICALS: BusinessVerticalDefinition[] = [
     key: 'catalog',
     label: 'Catalog / Brochure',
     hint: 'Share info, photos, and prices via WhatsApp + a public page (no cart).',
-    example: 'Customer says Hi → welcome, gallery, short catalog link.',
+    example: 'Customer says Hi → Catalog photos, Website link, or Order request.',
     kind: 'workflow',
     portal_route: '/website',
     recommended_use_cases: ['catalog_share'],

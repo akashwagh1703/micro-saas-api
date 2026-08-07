@@ -124,7 +124,12 @@ function pickOptionsNode(
   field: string,
   header: string,
   body: string,
-  options: { text: string; description?: string; value: string }[],
+  options: {
+    text: string;
+    description?: string;
+    value: string;
+    next_node_id?: string;
+  }[],
   footer?: string,
 ) {
   return {
@@ -140,6 +145,27 @@ function pickOptionsNode(
       footer,
       options,
     },
+  };
+}
+
+/** Build a workflow graph from node defs + explicit edges (for branching menus). */
+function graphFlow(
+  nodeDefs: Array<{ id: string; type: string; y: number; x?: number; data: Record<string, any> }>,
+  edgeDefs: Array<{ id: string; source: string; target: string; sourceHandle?: string | null }>,
+): import('./workflow-templates').WorkflowDefinition {
+  return {
+    nodes: nodeDefs.map((def) => ({
+      id: def.id,
+      type: def.type,
+      position: { x: def.x ?? 200, y: def.y },
+      data: def.data,
+    })),
+    edges: edgeDefs.map((e) => ({
+      id: e.id,
+      source: e.source,
+      target: e.target,
+      sourceHandle: e.sourceHandle ?? null,
+    })),
   };
 }
 
@@ -932,65 +958,191 @@ const supportTeamAssistant: WorkflowTemplate = {
 };
 
 /**
- * Catalog / brochure — Hi → welcome + hero/about → gallery (≤3) → products → link + contact.
- * Placeholders {{catalog_*}} filled at runtime from CatalogSite (Phase 7 dynamic content).
+ * Catalog / brochure — Hi → welcome menu (Catalog / Website / Order).
+ * Catalog → up to 5 photos → ask to order; Website → public link; Order → lead + thank-you.
+ * Placeholders {{catalog_*}} filled at runtime from CatalogSite.
  */
 const catalogShare: WorkflowTemplate = {
   slug: 'catalog-share',
   name: 'Catalog Brochure Share',
   description:
-    'Welcome customers with live website content, photos, products, then your short catalog link.',
+    'Welcome with business name, then Catalog photos, Website link, or Order request.',
   category: 'guided',
   trigger_type: 'message_received',
-  definition: linearFlow([
-    triggerNode(80, 'whatsapp'),
-    sendNode(
-      'send-welcome',
-      200,
-      'Welcome + business info',
-      'Hi {{contact_name}}! 👋\n\nWelcome to *{{catalog_business_name}}*{{catalog_tagline_line}}.\n\n{{catalog_welcome_extra}}How can we help you today?',
-      'Greets with name, tagline, hero, and about from Website settings',
-    ),
-    sendNode(
-      'send-image-1',
-      320,
-      'Gallery photo 1',
-      'Here’s a look at what we offer 📸',
-      'Sends first catalog gallery image when available (max 3 for WhatsApp)',
-      { media_url: '{{catalog_image_url}}', optional_media: true },
-    ),
-    sendNode(
-      'send-image-2',
-      440,
-      'Gallery photo 2',
-      '',
-      'Sends second gallery image when available',
-      { media_url: '{{catalog_image_url_2}}', optional_media: true },
-    ),
-    sendNode(
-      'send-image-3',
-      560,
-      'Gallery photo 3',
-      '',
-      'Sends third gallery image when available',
-      { media_url: '{{catalog_image_url_3}}', optional_media: true },
-    ),
-    sendNode(
-      'send-products',
-      680,
-      'Products snapshot',
-      '{{catalog_products_block}}',
-      'Lists up to 3 active products with display prices',
-      { optional_text: true },
-    ),
-    sendNode(
-      'send-catalog-link',
-      800,
-      'Catalog link + contact',
-      '{{catalog_link_block}}{{catalog_contact_block}}Reply here if you have questions — we’re happy to help!',
-      'Public /c/{slug} link only when website is published; plus contact details',
-    ),
-  ]),
+  definition: graphFlow(
+    [
+      { ...triggerNode(80, 'whatsapp'), x: 280 },
+      {
+        ...pickOptionsNode(
+          'pick-menu',
+          200,
+          'Welcome menu',
+          'menu_choice',
+          '{{catalog_business_name}}',
+          'Hi {{contact_name}}! 👋\n\nWelcome to *{{catalog_business_name}}*{{catalog_tagline_line}}.\n\nHow can I help you today?',
+          [
+            {
+              text: 'Catalog',
+              description: 'See photos of what we offer',
+              value: 'catalog',
+              next_node_id: 'send-image-1',
+            },
+            {
+              text: 'Website',
+              description: 'Get our website link',
+              value: 'website',
+              next_node_id: 'send-website',
+            },
+            {
+              text: 'Order',
+              description: 'Send an order request',
+              value: 'order',
+              next_node_id: 'save-lead-order',
+            },
+          ],
+          'Tap an option below',
+        ),
+        x: 280,
+      },
+      // Catalog branch (left)
+      {
+        ...sendNode(
+          'send-image-1',
+          340,
+          'Catalog photo 1',
+          'Here’s a look at *{{catalog_business_name}}* ✨',
+          'First catalog gallery image (up to 5)',
+          { media_url: '{{catalog_image_url}}', optional_media: true },
+        ),
+        x: 40,
+      },
+      {
+        ...sendNode(
+          'send-image-2',
+          460,
+          'Catalog photo 2',
+          '',
+          'Second gallery image when available',
+          { media_url: '{{catalog_image_url_2}}', optional_media: true },
+        ),
+        x: 40,
+      },
+      {
+        ...sendNode(
+          'send-image-3',
+          580,
+          'Catalog photo 3',
+          '',
+          'Third gallery image when available',
+          { media_url: '{{catalog_image_url_3}}', optional_media: true },
+        ),
+        x: 40,
+      },
+      {
+        ...sendNode(
+          'send-image-4',
+          700,
+          'Catalog photo 4',
+          '',
+          'Fourth gallery image when available',
+          { media_url: '{{catalog_image_url_4}}', optional_media: true },
+        ),
+        x: 40,
+      },
+      {
+        ...sendNode(
+          'send-image-5',
+          820,
+          'Catalog photo 5',
+          '',
+          'Fifth gallery image when available',
+          { media_url: '{{catalog_image_url_5}}', optional_media: true },
+        ),
+        x: 40,
+      },
+      {
+        ...pickOptionsNode(
+          'pick-after-catalog',
+          940,
+          'Ask for order',
+          'menu_choice',
+          'Ready to order?',
+          'Loved what you saw? 💫\n\nWould you like to place an order with *{{catalog_business_name}}*?',
+          [
+            {
+              text: 'Place order',
+              description: 'We’ll reach out to confirm',
+              value: 'order',
+              next_node_id: 'save-lead-order',
+            },
+            {
+              text: 'Website',
+              description: 'Open our full website',
+              value: 'website',
+              next_node_id: 'send-website',
+            },
+          ],
+          'Tap below to continue',
+        ),
+        x: 40,
+      },
+      // Website branch (center)
+      {
+        ...sendNode(
+          'send-website',
+          340,
+          'Send website link',
+          '{{catalog_website_block}}',
+          'Sends published /c/{slug} website link for the business',
+        ),
+        x: 320,
+      },
+      // Order branch (right)
+      {
+        id: 'save-lead-order',
+        type: 'save_lead',
+        y: 340,
+        x: 600,
+        data: {
+          label: 'Save order request',
+          summary: 'Saves order enquiry to Leads',
+          notes: 'Catalog order request from WhatsApp',
+          collected_fields: ['menu_choice'],
+          api: buildSaveLeadApiPlaceholder(
+            ['menu_choice'],
+            'Catalog order request from WhatsApp',
+            'whatsapp',
+          ),
+        },
+      },
+      {
+        ...sendNode(
+          'send-order-thanks',
+          480,
+          'Order thank you',
+          '✅ Perfect, {{contact_name}}!\n\nYour request has been sent to *{{catalog_business_name}}*.\n\nOur team will reach out to you shortly.\n\nThank you for choosing us — we look forward to serving you! 🙏',
+          'Confirms order request was forwarded to the business',
+        ),
+        x: 600,
+      },
+    ],
+    [
+      { id: 'e1', source: 'trigger-1', target: 'pick-menu' },
+      // Default edge for pick-menu (Catalog); Website/Order use option next_node_id
+      { id: 'e2', source: 'pick-menu', target: 'send-image-1' },
+      { id: 'e3', source: 'send-image-1', target: 'send-image-2' },
+      { id: 'e4', source: 'send-image-2', target: 'send-image-3' },
+      { id: 'e5', source: 'send-image-3', target: 'send-image-4' },
+      { id: 'e6', source: 'send-image-4', target: 'send-image-5' },
+      { id: 'e7', source: 'send-image-5', target: 'pick-after-catalog' },
+      { id: 'e8', source: 'pick-after-catalog', target: 'save-lead-order' },
+      { id: 'e9', source: 'save-lead-order', target: 'send-order-thanks' },
+      // Canvas viz edges (routing uses next_node_id on options)
+      { id: 'e10', source: 'pick-menu', target: 'send-website' },
+      { id: 'e11', source: 'pick-menu', target: 'save-lead-order' },
+      { id: 'e12', source: 'pick-after-catalog', target: 'send-website' },
+    ],
+  ),
 };
 
 export const GUIDED_WORKFLOW_TEMPLATES: WorkflowTemplate[] = [

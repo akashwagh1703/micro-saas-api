@@ -209,9 +209,16 @@ export class WorkflowsController {
   async publish(@CurrentUser('id') userId: number, @Param('id', ParseIntPipe) id: number) {
     await this.billing.assertPlatformAccess(userId);
     let workflow = await this.findOrFail(userId, id);
-    const upgraded = await this.templates.upgradeAppointmentWorkflowIfNeeded(userId, workflow);
-    if (upgraded) {
-      workflow = upgraded;
+    const upgradedAppointment = await this.templates.upgradeAppointmentWorkflowIfNeeded(
+      userId,
+      workflow,
+    );
+    if (upgradedAppointment) {
+      workflow = upgradedAppointment;
+    }
+    const upgradedCatalog = await this.templates.upgradeCatalogWorkflowIfNeeded(workflow);
+    if (upgradedCatalog) {
+      workflow = upgradedCatalog;
     }
     const errors = this.validator.validate(workflow.definition as any);
     if (errors.length > 0) {
@@ -222,12 +229,15 @@ export class WorkflowsController {
       data: { status: 'published', isActive: true },
     });
     const synced = await this.triggers.onPublished(updated);
+    const upgraded = !!(upgradedAppointment || upgradedCatalog);
     return {
       workflow: serializeWorkflow(synced),
-      upgraded: !!upgraded,
-      hint: upgraded
+      upgraded,
+      hint: upgradedAppointment
         ? 'Workflow was refreshed to the latest appointment booking flow before going live.'
-        : undefined,
+        : upgradedCatalog
+          ? 'Workflow was refreshed to the latest Catalog / Website / Order menu before going live.'
+          : undefined,
     };
   }
 

@@ -29,6 +29,9 @@ interface PickOptionRow {
   text: string;
   description?: string;
   value: string;
+  /** Optional per-option jump (overrides the node's single outgoing edge). */
+  next_node_id?: string;
+  nextNodeId?: string;
 }
 
 /** Sends a WhatsApp button/list picker and pauses until the customer taps an option. */
@@ -114,11 +117,12 @@ export class PickOptionsNodeExecutor implements NodeExecutor {
 
         items = options.map((option, index) => {
           const value = String(option.value ?? option.text ?? '').trim();
+          const optionNext = String(option.next_node_id ?? option.nextNodeId ?? '').trim();
           return {
             optionText: String(option.text ?? value).trim(),
             description: option.description ? String(option.description) : undefined,
             displayOrder: index,
-            nextNodeId,
+            nextNodeId: optionNext || nextNodeId,
             metadata: {
               [field]: value,
               context_field: field,

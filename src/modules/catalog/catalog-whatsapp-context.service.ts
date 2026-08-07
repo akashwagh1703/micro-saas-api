@@ -6,7 +6,7 @@ import { buildCatalogPublicUrl } from './catalog.constants';
 
 export type CatalogWhatsAppContext = Record<string, string>;
 
-const MAX_WA_IMAGES = 3;
+const MAX_WA_IMAGES = 5;
 const MAX_WA_PRODUCTS = 3;
 const MAX_ABOUT_CHARS = 500;
 
@@ -33,7 +33,7 @@ export class CatalogWhatsAppContextService {
         media: {
           where: { kind: 'image' },
           orderBy: [{ sortOrder: 'asc' }, { id: 'asc' }],
-          take: 12,
+          take: 20,
         },
         products: {
           where: { isActive: true },
@@ -82,7 +82,7 @@ export class CatalogWhatsAppContextService {
     );
 
     const imageUrls = await Promise.all(
-      [0, 1, 2].map(async (i) => {
+      Array.from({ length: MAX_WA_IMAGES }, async (_, i) => {
         const media = images[i];
         if (!media) return '';
         // Published sites: stable public HTTPS proxy (good for WhatsApp fetch/cache).
@@ -122,6 +122,11 @@ export class CatalogWhatsAppContextService {
       catalog_image_url: imageUrls[0] || '',
       catalog_image_url_2: imageUrls[1] || '',
       catalog_image_url_3: imageUrls[2] || '',
+      catalog_image_url_4: imageUrls[3] || '',
+      catalog_image_url_5: imageUrls[4] || '',
+      catalog_website_block: published
+        ? `🌐 Here's the website for *${businessName}*:\n\n${catalogUrl}\n\nBrowse products, photos, and more anytime!`
+        : `🌐 The website for *${businessName}* will be ready once it's published.\n\nMeanwhile, reply here or tap *Order* and we'll reach out!`,
       catalog_status: site.status || '',
       catalog_is_published: published ? '1' : '0',
       catalog_image_count: String(images.length),
@@ -141,11 +146,15 @@ export class CatalogWhatsAppContextService {
       catalog_url: '',
       catalog_link_block:
         'Create and publish your Website page to share a full catalog link with customers.\n\n',
+      catalog_website_block:
+        'Create and publish your Website page to share a link with customers.',
       catalog_products_block: '',
       catalog_contact_block: '',
       catalog_image_url: '',
       catalog_image_url_2: '',
       catalog_image_url_3: '',
+      catalog_image_url_4: '',
+      catalog_image_url_5: '',
       catalog_status: '',
       catalog_is_published: '0',
       catalog_image_count: '0',

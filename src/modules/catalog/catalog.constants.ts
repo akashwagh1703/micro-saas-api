@@ -15,10 +15,14 @@ export type CatalogStatus = (typeof CATALOG_STATUSES)[number];
 export const CATALOG_SECTION_TYPES = [
   'header',
   'hero',
+  'highlights',
   'about',
   'gallery',
   'products',
+  'testimonials',
+  'faq',
   'contact',
+  'footer',
 ] as const;
 export type CatalogSectionType = (typeof CATALOG_SECTION_TYPES)[number];
 
@@ -30,11 +34,45 @@ export const CATALOG_DEFAULT_SECTIONS: Array<{
 }> = [
   { type: 'header', title: 'Header', sortOrder: 0, enabled: true },
   { type: 'hero', title: 'Hero', sortOrder: 1, enabled: true },
-  { type: 'about', title: 'About', sortOrder: 2, enabled: true },
-  { type: 'gallery', title: 'Gallery', sortOrder: 3, enabled: true },
-  { type: 'products', title: 'Products', sortOrder: 4, enabled: true },
-  { type: 'contact', title: 'Contact', sortOrder: 5, enabled: true },
+  { type: 'highlights', title: 'Highlights', sortOrder: 2, enabled: true },
+  { type: 'about', title: 'About', sortOrder: 3, enabled: true },
+  { type: 'gallery', title: 'Gallery', sortOrder: 4, enabled: true },
+  { type: 'products', title: 'Products', sortOrder: 5, enabled: true },
+  { type: 'testimonials', title: 'Testimonials', sortOrder: 6, enabled: true },
+  { type: 'faq', title: 'FAQ', sortOrder: 7, enabled: true },
+  { type: 'contact', title: 'Contact', sortOrder: 8, enabled: true },
+  { type: 'footer', title: 'Footer', sortOrder: 9, enabled: true },
 ];
+
+/** Phase 2–3 caps for brochure sections. */
+export const CATALOG_HIGHLIGHTS_MAX = 4;
+export const CATALOG_TESTIMONIALS_MAX = 6;
+export const CATALOG_FAQ_MAX = 10;
+export const CATALOG_SOCIALS_MAX = 6;
+
+export const CATALOG_SOCIAL_NETWORKS = [
+  'instagram',
+  'facebook',
+  'youtube',
+  'x',
+  'linkedin',
+  'website',
+] as const;
+
+/** site.theme JSON — used by public brochure (light / dark / auto). */
+export const CATALOG_THEME_MODES = ['light', 'dark', 'auto'] as const;
+export type CatalogThemeMode = (typeof CATALOG_THEME_MODES)[number];
+
+export const CATALOG_DEFAULT_THEME = {
+  mode: 'light' as CatalogThemeMode,
+  accent: '#0c8a76',
+  accent_ink: '#055445',
+  hero_from: '#083642',
+  hero_to: '#0f7a68',
+};
+
+/** Max slides in hero background slider. */
+export const CATALOG_HERO_SLIDER_MAX = 5;
 
 export const CATALOG_MEDIA_KINDS = ['image', 'document'] as const;
 export type CatalogMediaKind = (typeof CATALOG_MEDIA_KINDS)[number];

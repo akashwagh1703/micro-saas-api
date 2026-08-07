@@ -12,7 +12,14 @@ import { CatalogStorageService } from './catalog-storage.service';
 import {
   CATALOG_BUSINESS_TYPE,
   CATALOG_DEFAULT_SECTIONS,
+  CATALOG_DEFAULT_THEME,
   CATALOG_DOCUMENT_MIME,
+  CATALOG_HERO_SLIDER_MAX,
+  CATALOG_FAQ_MAX,
+  CATALOG_HIGHLIGHTS_MAX,
+  CATALOG_SOCIAL_NETWORKS,
+  CATALOG_SOCIALS_MAX,
+  CATALOG_TESTIMONIALS_MAX,
   CATALOG_IMAGE_MIME,
   CATALOG_MAX_DOCUMENT_BYTES,
   CATALOG_MAX_IMAGE_BYTES,
@@ -23,6 +30,7 @@ import {
   CATALOG_SLUG_MIN,
   CATALOG_SLUG_REGEX,
   CATALOG_STORAGE_PREFIX,
+  CATALOG_THEME_MODES,
   CATALOG_USE_CASE,
   buildCatalogPublicUrl,
   normalizeCatalogSlug,
@@ -74,6 +82,14 @@ export class CatalogService {
       storage_prefix: CATALOG_STORAGE_PREFIX,
       max_image_bytes: CATALOG_MAX_IMAGE_BYTES,
       max_document_bytes: CATALOG_MAX_DOCUMENT_BYTES,
+      hero_slider_max: CATALOG_HERO_SLIDER_MAX,
+      highlights_max: CATALOG_HIGHLIGHTS_MAX,
+      testimonials_max: CATALOG_TESTIMONIALS_MAX,
+      faq_max: CATALOG_FAQ_MAX,
+      socials_max: CATALOG_SOCIALS_MAX,
+      social_networks: [...CATALOG_SOCIAL_NETWORKS],
+      theme_modes: [...CATALOG_THEME_MODES],
+      default_theme: CATALOG_DEFAULT_THEME,
       products_in_v1: true,
       documents_in_v1: true,
       no_autowave_branding_on_public: true,
@@ -94,10 +110,11 @@ export class CatalogService {
   }
 
   async getMine(userId: number) {
-    const site = await this.findSiteForUser(userId, true);
+    let site = await this.findSiteForUser(userId, true);
     if (!site) {
       return { site: null };
     }
+    site = await this.ensureDefaultSections(site);
     return {
       site: serializeCatalogSite(
         site,
@@ -127,7 +144,7 @@ export class CatalogService {
         contactEmail: dto.contact_email?.trim() || null,
         contactWhatsapp: dto.contact_whatsapp?.trim() || null,
         address: dto.address?.trim() || null,
-        theme: (dto.theme as Prisma.InputJsonValue) ?? undefined,
+        theme: (dto.theme as Prisma.InputJsonValue) ?? CATALOG_DEFAULT_THEME,
         sections: {
           create: CATALOG_DEFAULT_SECTIONS.map((s) => ({
             type: s.type,
@@ -217,7 +234,9 @@ export class CatalogService {
   }
 
   async publish(userId: number) {
-    const site = await this.requireSite(userId);
+    let site = await this.findSiteForUser(userId, true);
+    if (!site) throw new NotFoundException('Catalog site not found — create one first');
+    site = await this.ensureDefaultSections(site);
     const updated = await this.prisma.catalogSite.update({
       where: { id: site.id },
       data: {
@@ -628,6 +647,29 @@ export class CatalogService {
         include: { image: true },
       },
     };
+  }
+
+  /** Adds any missing default sections (e.g. footer) for older sites. */
+  private async ensureDefaultSections<T extends { id: number; userId: number; sections?: { type: string }[] }>(
+    site: T,
+  ): Promise<T> {
+    const existing = new Set((site.sections ?? []).map((s) => s.type));
+    const missing = CATALOG_DEFAULT_SECTIONS.filter((s) => !existing.has(s.type));
+    if (!missing.length) return site;
+
+    await this.prisma.catalogSection.createMany({
+      data: missing.map((s) => ({
+        siteId: site.id,
+        type: s.type,
+        title: s.title,
+        sortOrder: s.sortOrder,
+        enabled: s.enabled,
+        config: {},
+      })),
+    });
+
+    const refreshed = await this.findSiteForUser(site.userId, true);
+    return (refreshed ?? site) as T;
   }
 
   private async findSiteForUser(userId: number, withRelations: boolean) {

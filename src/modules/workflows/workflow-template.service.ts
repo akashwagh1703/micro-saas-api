@@ -483,8 +483,9 @@ export class WorkflowTemplateService {
   }
 
   /**
-   * Replaces older catalog-share graphs with the Phase 7 template (products + contact + publish-aware link).
-   * No-op when the workflow already has the products node.
+   * Replaces older catalog-share graphs with the menu flow
+   * (Catalog photos / Website link / Order thank-you).
+   * No-op when the workflow already has the welcome menu + 5th image node.
    */
   async upgradeCatalogWorkflowIfNeeded(workflow: Workflow): Promise<Workflow | null> {
     if (workflow.useCase !== 'catalog_share' || workflow.businessCategory !== 'catalog') {
@@ -493,7 +494,9 @@ export class WorkflowTemplateService {
     const def = workflow.definition as unknown as WorkflowDefinition;
     const nodeIds = (def?.nodes ?? []).map((n) => n.id);
     const alreadyCurrent =
-      nodeIds.includes('send-products') && nodeIds.includes('send-catalog-link');
+      nodeIds.includes('pick-menu') &&
+      nodeIds.includes('send-image-5') &&
+      nodeIds.includes('send-order-thanks');
     if (alreadyCurrent) return null;
 
     const template = findGuidedTemplate('catalog-share');
@@ -501,6 +504,7 @@ export class WorkflowTemplateService {
 
     let definition = JSON.parse(JSON.stringify(template.definition)) as WorkflowDefinition;
     definition = applyUseCaseTriggerKeywords(definition, 'catalog_share');
+    definition = await this.injectSaveLeadApi(workflow.userId, definition);
 
     return this.prisma.workflow.update({
       where: { id: workflow.id },
