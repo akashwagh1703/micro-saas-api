@@ -979,11 +979,11 @@ const catalogShare: WorkflowTemplate = {
           'Welcome menu',
           'menu_choice',
           '{{catalog_business_name}}',
-          'Hi {{contact_name}}! 👋\n\nWelcome to *{{catalog_business_name}}*{{catalog_tagline_line}}.\n\nHow can I help you today?',
+          '✨ Hello {{contact_name}}!\n\nWelcome to *{{catalog_business_name}}*{{catalog_tagline_line}}\n\nWe’re delighted you’re here. How can we make your day better?',
           [
             {
               text: 'Catalog',
-              description: 'See photos of what we offer',
+              description: 'Browse our photos',
               value: 'catalog',
               next_node_id: 'send-image-1',
             },
@@ -995,23 +995,23 @@ const catalogShare: WorkflowTemplate = {
             },
             {
               text: 'Order',
-              description: 'Send an order request',
+              description: 'Request an order',
               value: 'order',
               next_node_id: 'save-lead-order',
             },
           ],
-          'Tap an option below',
+          'Choose an option below',
         ),
         x: 280,
       },
-      // Catalog branch (left)
+      // Catalog branch — images only (no captions), then ready-to-order prompt
       {
         ...sendNode(
           'send-image-1',
           340,
           'Catalog photo 1',
-          'Here’s a look at *{{catalog_business_name}}* ✨',
-          'First catalog gallery image (up to 5)',
+          '',
+          'First catalog gallery image only (no text caption)',
           { media_url: '{{catalog_image_url}}', optional_media: true },
         ),
         x: 40,
@@ -1062,12 +1062,12 @@ const catalogShare: WorkflowTemplate = {
       },
       {
         ...pickOptionsNode(
-          'pick-after-catalog',
+          'pick-ready-order',
           940,
-          'Ask for order',
+          'Ready to order',
           'menu_choice',
           'Ready to order?',
-          'Loved what you saw? 💫\n\nWould you like to place an order with *{{catalog_business_name}}*?',
+          '📸 That’s a peek at *{{catalog_business_name}}*!\n\nReady to place your order? Tap below and our team will take care of everything for you. ✨',
           [
             {
               text: 'Place order',
@@ -1082,7 +1082,7 @@ const catalogShare: WorkflowTemplate = {
               next_node_id: 'send-website',
             },
           ],
-          'Tap below to continue',
+          'Tap to continue',
         ),
         x: 40,
       },
@@ -1120,7 +1120,7 @@ const catalogShare: WorkflowTemplate = {
           'send-order-thanks',
           480,
           'Order thank you',
-          '✅ Perfect, {{contact_name}}!\n\nYour request has been sent to *{{catalog_business_name}}*.\n\nOur team will reach out to you shortly.\n\nThank you for choosing us — we look forward to serving you! 🙏',
+          '🎉 Thank you, {{contact_name}}!\n\nYour order request has been sent to *{{catalog_business_name}}*.\n\nOur team will reach out shortly to confirm the details.\n\nWe appreciate you choosing us — can’t wait to serve you! 💚',
           'Confirms order request was forwarded to the business',
         ),
         x: 600,
@@ -1134,13 +1134,13 @@ const catalogShare: WorkflowTemplate = {
       { id: 'e4', source: 'send-image-2', target: 'send-image-3' },
       { id: 'e5', source: 'send-image-3', target: 'send-image-4' },
       { id: 'e6', source: 'send-image-4', target: 'send-image-5' },
-      { id: 'e7', source: 'send-image-5', target: 'pick-after-catalog' },
-      { id: 'e8', source: 'pick-after-catalog', target: 'save-lead-order' },
+      { id: 'e7', source: 'send-image-5', target: 'pick-ready-order' },
+      { id: 'e8', source: 'pick-ready-order', target: 'save-lead-order' },
       { id: 'e9', source: 'save-lead-order', target: 'send-order-thanks' },
       // Canvas viz edges (routing uses next_node_id on options)
       { id: 'e10', source: 'pick-menu', target: 'send-website' },
       { id: 'e11', source: 'pick-menu', target: 'save-lead-order' },
-      { id: 'e12', source: 'pick-after-catalog', target: 'send-website' },
+      { id: 'e12', source: 'pick-ready-order', target: 'send-website' },
     ],
   ),
 };

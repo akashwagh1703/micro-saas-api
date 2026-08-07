@@ -125,8 +125,8 @@ export class CatalogWhatsAppContextService {
       catalog_image_url_4: imageUrls[3] || '',
       catalog_image_url_5: imageUrls[4] || '',
       catalog_website_block: published
-        ? `🌐 Here's the website for *${businessName}*:\n\n${catalogUrl}\n\nBrowse products, photos, and more anytime!`
-        : `🌐 The website for *${businessName}* will be ready once it's published.\n\nMeanwhile, reply here or tap *Order* and we'll reach out!`,
+        ? `🌐 Explore *${businessName}* online:\n\n${catalogUrl}\n\nPhotos, products, and more — all in one place.`
+        : `🌐 The website for *${businessName}* will be ready once it's published.\n\nMeanwhile, tap *Order* and we'll reach out to help!`,
       catalog_status: site.status || '',
       catalog_is_published: published ? '1' : '0',
       catalog_image_count: String(images.length),

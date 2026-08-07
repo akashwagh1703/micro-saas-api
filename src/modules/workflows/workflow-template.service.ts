@@ -493,8 +493,10 @@ export class WorkflowTemplateService {
     }
     const def = workflow.definition as unknown as WorkflowDefinition;
     const nodeIds = (def?.nodes ?? []).map((n) => n.id);
+    // pick-ready-order = images-only catalog branch + post-gallery order prompt
     const alreadyCurrent =
       nodeIds.includes('pick-menu') &&
+      nodeIds.includes('pick-ready-order') &&
       nodeIds.includes('send-image-5') &&
       nodeIds.includes('send-order-thanks');
     if (alreadyCurrent) return null;

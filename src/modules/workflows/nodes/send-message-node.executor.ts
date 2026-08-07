@@ -57,33 +57,35 @@ export class SendMessageNodeExecutor implements NodeExecutor {
       };
     }
 
-    const text = message.trim() || fallbackMessage.trim() || 'Thanks for your message!';
+    // Catalog gallery: allow empty caption (do not invent "Thanks for your message!").
+    const text = message.trim() || fallbackMessage.trim();
 
     if (mediaUrl && execution.conversationId) {
       const imageResult = await this.inbox.sendOutgoingImageByLink(
         execution.userId,
         execution.conversationId,
         mediaUrl,
-        text,
+        text || undefined,
         { source: 'workflow_send_message', workflowId: execution.workflowId, nodeId: node.id },
       );
       if (imageResult.success) {
         return {
           success: true,
-          output: { queued: true, message: text, with_image: true },
+          output: { queued: true, message: text || null, with_image: true },
         };
       }
     }
 
+    const content = text || 'Thanks for your message!';
     await this.queue.enqueueSendMessage({
       userId: execution.userId,
       conversationId: execution.conversationId,
-      content: text,
+      content,
     });
 
     return {
       success: true,
-      output: { queued: true, message: text },
+      output: { queued: true, message: content },
     };
   }
 }
