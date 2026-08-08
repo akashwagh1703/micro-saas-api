@@ -24,6 +24,11 @@ export class SubmitManualPaymentDto {
   @MinLength(8)
   @MaxLength(64)
   upi_transaction_id: string;
+
+  /** platform = bots; website = brochure publish add-on. Defaults to platform. */
+  @IsOptional()
+  @IsIn(['platform', 'website'])
+  product?: 'platform' | 'website';
 }
 
 export class RejectPaymentSubmissionDto {

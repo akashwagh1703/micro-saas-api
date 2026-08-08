@@ -3,6 +3,7 @@ import {
   Controller,
   Get,
   Post,
+  Query,
   UploadedFile,
   UseGuards,
   UseInterceptors,
@@ -34,8 +35,12 @@ export class BillingController {
   }
 
   @Get('manual-payment/latest')
-  async latestManualPayment(@CurrentUser('id') userId: number) {
-    const submission = await this.manualPayment.getLatestSubmission(userId);
+  async latestManualPayment(
+    @CurrentUser('id') userId: number,
+    @Query('product') product?: string,
+  ) {
+    const resolved = product === 'website' ? 'website' : 'platform';
+    const submission = await this.manualPayment.getLatestSubmission(userId, resolved);
     return { submission };
   }
 
@@ -51,10 +56,17 @@ export class BillingController {
     @Body() dto: SubmitManualPaymentDto,
     @UploadedFile() file?: { buffer: Buffer; mimetype: string; size: number },
   ) {
-    return this.manualPayment.submitManualPayment(userId, dto.plan, dto.upi_transaction_id, {
-      buffer: file?.buffer ?? Buffer.alloc(0),
-      mimetype: file?.mimetype ?? 'image/jpeg',
-    });
+    const product = dto.product === 'website' ? 'website' : 'platform';
+    return this.manualPayment.submitManualPayment(
+      userId,
+      dto.plan,
+      dto.upi_transaction_id,
+      {
+        buffer: file?.buffer ?? Buffer.alloc(0),
+        mimetype: file?.mimetype ?? 'image/jpeg',
+      },
+      product,
+    );
   }
 
   @Post('subscribe')

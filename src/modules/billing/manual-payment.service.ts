@@ -7,7 +7,7 @@ import {
 } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
-import { BillingPlan, BillingService } from './billing.service';
+import { BillingPlan, BillingProduct, BillingService } from './billing.service';
 import { PaymentProofStorageService } from './payment-proof-storage.service';
 import { PlatformUpiConfigService } from './platform-upi-config.service';
 import { PlatformAuditService } from './platform-audit.service';
@@ -46,15 +46,28 @@ export class ManualPaymentService {
   ) {}
 
   getPaymentConfig() {
-    return this.upiConfig.getPublicConfig(
+    const platform = this.upiConfig.getPublicConfig(
       this.billing.monthlyPriceInr(),
       this.billing.yearlyPriceInr(),
     );
+    return {
+      ...platform,
+      website: {
+        billing_enabled: this.billing.isWebsiteBillingEnabled(),
+        prices: {
+          monthly_inr: this.billing.websiteMonthlyPriceInr(),
+          yearly_inr: this.billing.websiteYearlyPriceInr(),
+        },
+      },
+    };
   }
 
-  async getLatestSubmission(userId: number): Promise<PaymentSubmissionView | null> {
+  async getLatestSubmission(
+    userId: number,
+    product: BillingProduct = 'platform',
+  ): Promise<PaymentSubmissionView | null> {
     const row = await this.prisma.paymentSubmission.findFirst({
-      where: { userId, product: 'platform' },
+      where: { userId, product },
       orderBy: { createdAt: 'desc' },
     });
     return row ? this.toView(row) : null;
@@ -65,9 +78,13 @@ export class ManualPaymentService {
     plan: BillingPlan,
     upiTransactionId: string,
     file: { buffer: Buffer; mimetype: string },
+    product: BillingProduct = 'platform',
   ): Promise<{ submission: PaymentSubmissionView; status: Awaited<ReturnType<BillingService['getStatus']>> }> {
     if (!this.billing.isEnabled()) {
       throw new UnprocessableEntityException('Billing is not enabled.');
+    }
+    if (product === 'website' && !this.billing.isWebsiteBillingEnabled()) {
+      throw new UnprocessableEntityException('Website add-on billing is not enabled.');
     }
     if (!this.upiConfig.isUpiManualEnabled()) {
       throw new UnprocessableEntityException('UPI manual payments are not enabled.');
@@ -96,29 +113,42 @@ export class ManualPaymentService {
 
     const user = await this.billing.getUser(userId);
     const current = this.billing.resolveStatus(user);
-    if (current.status === 'active') {
-      throw new UnprocessableEntityException('You already have an active subscription.');
-    }
-    if (current.status === 'pending_verification') {
-      throw new UnprocessableEntityException(
-        'A payment is already under review. Wait for verification or contact support.',
-      );
+
+    if (product === 'website') {
+      const website = current.website;
+      if (website.status === 'active') {
+        throw new UnprocessableEntityException('You already have an active Website add-on.');
+      }
+      if (website.status === 'pending_verification') {
+        throw new UnprocessableEntityException(
+          'A Website add-on payment is already under review. Wait for verification or contact support.',
+        );
+      }
+    } else {
+      if (current.status === 'active') {
+        throw new UnprocessableEntityException('You already have an active subscription.');
+      }
+      if (current.status === 'pending_verification') {
+        throw new UnprocessableEntityException(
+          'A payment is already under review. Wait for verification or contact support.',
+        );
+      }
     }
 
     const duplicate = await this.prisma.paymentSubmission.findFirst({
       where: {
-        product: 'platform',
+        product,
         upiTransactionId: utr,
         status: { in: ['pending', 'approved'] },
       },
     });
     if (duplicate) {
-      const user = await this.billing.getUser(userId);
       await this.audit.log({
         action: 'payment.duplicate_utr',
         targetUserId: userId,
         paymentSubmissionId: duplicate.id,
         details: {
+          product,
           upi_transaction_id: utr,
           existing_status: duplicate.status,
           existing_user_id: duplicate.userId,
@@ -136,12 +166,12 @@ export class ManualPaymentService {
       });
     }
 
-    const amountInr = plan === 'monthly' ? this.billing.monthlyPriceInr() : this.billing.yearlyPriceInr();
+    const amountInr = this.billing.priceInrForProduct(product, plan);
 
     const submission = await this.prisma.paymentSubmission.create({
       data: {
         userId,
-        product: 'platform',
+        product,
         plan,
         amountInr,
         upiTransactionId: utr,
@@ -162,21 +192,33 @@ export class ManualPaymentService {
       data: { screenshotToken: token },
     });
 
-    await this.prisma.user.update({
-      where: { id: userId },
-      data: {
-        subscriptionStatus: 'pending_verification',
-        subscriptionPlan: plan,
-      },
-    });
+    if (product === 'website') {
+      await this.prisma.user.update({
+        where: { id: userId },
+        data: {
+          websiteSubscriptionStatus: 'pending_verification',
+          websiteSubscriptionPlan: plan,
+        },
+      });
+    } else {
+      await this.prisma.user.update({
+        where: { id: userId },
+        data: {
+          subscriptionStatus: 'pending_verification',
+          subscriptionPlan: plan,
+        },
+      });
+    }
 
-    this.logger.log(`Manual payment submitted userId=${userId} plan=${plan} utr=${utr}`);
+    this.logger.log(
+      `Manual payment submitted userId=${userId} product=${product} plan=${plan} utr=${utr}`,
+    );
 
     await this.audit.log({
       action: 'payment.submitted',
       targetUserId: userId,
       paymentSubmissionId: submission.id,
-      details: { plan, amount_inr: amountInr, upi_transaction_id: utr },
+      details: { product, plan, amount_inr: amountInr, upi_transaction_id: utr },
     });
 
     const updated = await this.prisma.paymentSubmission.findUniqueOrThrow({
@@ -191,12 +233,18 @@ export class ManualPaymentService {
 
   async listSubmissions(params: {
     status?: string;
+    product?: string;
     page?: number;
     perPage?: number;
   }): Promise<{ data: PaymentSubmissionView[]; total: number; page: number; per_page: number }> {
     const page = Math.max(1, params.page ?? 1);
     const perPage = Math.min(100, Math.max(1, params.perPage ?? 20));
-    const where: Prisma.PaymentSubmissionWhereInput = { product: 'platform' };
+    const where: Prisma.PaymentSubmissionWhereInput = {};
+    if (params.product?.trim()) {
+      where.product = params.product.trim();
+    } else {
+      where.product = { in: ['platform', 'website'] };
+    }
     if (params.status?.trim()) {
       where.status = params.status.trim();
     }
@@ -224,7 +272,7 @@ export class ManualPaymentService {
 
   async getSubmission(id: number): Promise<PaymentSubmissionView> {
     const row = await this.prisma.paymentSubmission.findFirst({
-      where: { id, product: 'platform' },
+      where: { id, product: { in: ['platform', 'website'] } },
       include: { user: { select: { name: true, email: true } } },
     });
     if (!row) throw new NotFoundException('Payment submission not found');
@@ -233,7 +281,7 @@ export class ManualPaymentService {
 
   async readSubmissionScreenshot(id: number): Promise<{ buffer: Buffer; mimeType: string }> {
     const row = await this.prisma.paymentSubmission.findFirst({
-      where: { id, product: 'platform' },
+      where: { id, product: { in: ['platform', 'website'] } },
     });
     if (!row) throw new NotFoundException('Payment submission not found');
     const file = await this.proofStorage.readProof(row.userId, row.id, row.screenshotToken);
@@ -243,7 +291,7 @@ export class ManualPaymentService {
 
   async approveSubmission(adminUserId: number, submissionId: number) {
     const submission = await this.prisma.paymentSubmission.findFirst({
-      where: { id: submissionId, product: 'platform' },
+      where: { id: submissionId, product: { in: ['platform', 'website'] } },
       include: { user: { select: { id: true, name: true, email: true } } },
     });
     if (!submission) throw new NotFoundException('Payment submission not found');
@@ -251,9 +299,10 @@ export class ManualPaymentService {
       throw new UnprocessableEntityException(`Submission is already ${submission.status}.`);
     }
 
+    const product = submission.product as BillingProduct;
     const utrConflict = await this.prisma.paymentSubmission.findFirst({
       where: {
-        product: 'platform',
+        product,
         upiTransactionId: submission.upiTransactionId,
         status: 'approved',
         id: { not: submission.id },
@@ -266,6 +315,7 @@ export class ManualPaymentService {
         targetUserId: submission.userId,
         paymentSubmissionId: submission.id,
         details: {
+          product,
           upi_transaction_id: submission.upiTransactionId,
           conflict_submission_id: utrConflict.id,
         },
@@ -278,18 +328,30 @@ export class ManualPaymentService {
     const plan = submission.plan as BillingPlan;
     const periodEnd = this.billing.estimatePeriodEndForPlan(plan);
 
-    await this.prisma.user.update({
-      where: { id: submission.userId },
-      data: {
-        subscriptionStatus: 'active',
-        subscriptionPlan: plan,
-        currentPeriodEnd: periodEnd,
-        subscriptionCancelAtPeriodEnd: false,
-      },
-    });
+    if (product === 'website') {
+      await this.prisma.user.update({
+        where: { id: submission.userId },
+        data: {
+          websiteSubscriptionStatus: 'active',
+          websiteSubscriptionPlan: plan,
+          websiteCurrentPeriodEnd: periodEnd,
+        },
+      });
+    } else {
+      await this.prisma.user.update({
+        where: { id: submission.userId },
+        data: {
+          subscriptionStatus: 'active',
+          subscriptionPlan: plan,
+          currentPeriodEnd: periodEnd,
+          subscriptionCancelAtPeriodEnd: false,
+        },
+      });
+    }
 
     const txn = await this.billing.recordManualTransaction({
       userId: submission.userId,
+      product,
       eventType: 'manual.approved',
       plan,
       amountInr: submission.amountInr,
@@ -310,7 +372,9 @@ export class ManualPaymentService {
       },
     });
 
-    this.logger.log(`Payment approved submission=${submissionId} userId=${submission.userId}`);
+    this.logger.log(
+      `Payment approved submission=${submissionId} product=${product} userId=${submission.userId}`,
+    );
 
     await this.audit.log({
       action: 'payment.approved',
@@ -318,6 +382,7 @@ export class ManualPaymentService {
       targetUserId: submission.userId,
       paymentSubmissionId: submission.id,
       details: {
+        product,
         plan,
         amount_inr: submission.amountInr,
         upi_transaction_id: submission.upiTransactionId,
@@ -342,7 +407,7 @@ export class ManualPaymentService {
 
   async rejectSubmission(adminUserId: number, submissionId: number, reason: string) {
     const submission = await this.prisma.paymentSubmission.findFirst({
-      where: { id: submissionId, product: 'platform' },
+      where: { id: submissionId, product: { in: ['platform', 'website'] } },
       include: { user: { select: { id: true, name: true, email: true, trialEndsAt: true } } },
     });
     if (!submission) throw new NotFoundException('Payment submission not found');
@@ -350,18 +415,29 @@ export class ManualPaymentService {
       throw new UnprocessableEntityException(`Submission is already ${submission.status}.`);
     }
 
+    const product = submission.product as BillingProduct;
     const trimmedReason = reason.trim().slice(0, 500) || 'Payment could not be verified.';
-
     const trialStillValid = submission.user.trialEndsAt > new Date();
 
-    await this.prisma.user.update({
-      where: { id: submission.userId },
-      data: {
-        subscriptionStatus: trialStillValid ? 'trial' : 'expired',
-        subscriptionPlan: trialStillValid ? null : submission.plan,
-        currentPeriodEnd: null,
-      },
-    });
+    if (product === 'website') {
+      await this.prisma.user.update({
+        where: { id: submission.userId },
+        data: {
+          websiteSubscriptionStatus: trialStillValid ? 'none' : 'expired',
+          websiteSubscriptionPlan: null,
+          websiteCurrentPeriodEnd: null,
+        },
+      });
+    } else {
+      await this.prisma.user.update({
+        where: { id: submission.userId },
+        data: {
+          subscriptionStatus: trialStillValid ? 'trial' : 'expired',
+          subscriptionPlan: trialStillValid ? null : submission.plan,
+          currentPeriodEnd: null,
+        },
+      });
+    }
 
     await this.prisma.paymentSubmission.update({
       where: { id: submission.id },
@@ -375,6 +451,7 @@ export class ManualPaymentService {
 
     await this.billing.recordManualTransaction({
       userId: submission.userId,
+      product,
       eventType: 'manual.rejected',
       plan: submission.plan as BillingPlan,
       amountInr: submission.amountInr,
@@ -384,7 +461,9 @@ export class ManualPaymentService {
       status: 'rejected',
     });
 
-    this.logger.log(`Payment rejected submission=${submissionId} userId=${submission.userId}`);
+    this.logger.log(
+      `Payment rejected submission=${submissionId} product=${product} userId=${submission.userId}`,
+    );
 
     await this.audit.log({
       action: 'payment.rejected',
@@ -392,6 +471,7 @@ export class ManualPaymentService {
       targetUserId: submission.userId,
       paymentSubmissionId: submission.id,
       details: {
+        product,
         plan: submission.plan,
         reason: trimmedReason,
         upi_transaction_id: submission.upiTransactionId,

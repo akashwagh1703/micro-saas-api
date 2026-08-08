@@ -35,7 +35,7 @@ export class ManualPaymentExpiryService {
     const stale = await this.prisma.paymentSubmission.findMany({
       where: {
         userId,
-        product: 'platform',
+        product: { in: ['platform', 'website'] },
         status: 'pending',
         createdAt: { lt: this.cutoffDate() },
       },
@@ -43,7 +43,11 @@ export class ManualPaymentExpiryService {
 
     let count = 0;
     for (const row of stale) {
-      if (await this.expireSubmission(row.id)) count += 1;
+      if (row.product === 'website') {
+        if (await this.expireWebsiteSubmission(row.id)) count += 1;
+      } else if (await this.expireSubmission(row.id)) {
+        count += 1;
+      }
     }
     return count;
   }
@@ -66,12 +70,12 @@ export class ManualPaymentExpiryService {
     return count;
   }
 
-  /** Cron: expire all stale pending platform and career seeker submissions. */
+  /** Cron: expire all stale pending platform, website, and career seeker submissions. */
   async expireStalePendingSubmissions(): Promise<number> {
     const cutoff = this.cutoffDate();
     const stale = await this.prisma.paymentSubmission.findMany({
       where: {
-        product: { in: ['platform', 'career_seeker'] },
+        product: { in: ['platform', 'website', 'career_seeker'] },
         status: 'pending',
         createdAt: { lt: cutoff },
       },
@@ -82,6 +86,8 @@ export class ManualPaymentExpiryService {
     for (const row of stale) {
       if (row.product === 'career_seeker') {
         if (await this.expireCareerSubmission(row.id)) count += 1;
+      } else if (row.product === 'website') {
+        if (await this.expireWebsiteSubmission(row.id)) count += 1;
       } else if (await this.expireSubmission(row.id)) {
         count += 1;
       }
@@ -136,6 +142,75 @@ export class ManualPaymentExpiryService {
       targetUserId: submission.userId,
       paymentSubmissionId: submission.id,
       details: {
+        plan: submission.plan,
+        upi_transaction_id: submission.upiTransactionId,
+        pending_days: this.pendingDays(),
+      },
+    });
+
+    await this.notifications.notifyPaymentExpired({
+      to: submission.user.email,
+      name: submission.user.name,
+      plan: submission.plan,
+    });
+
+    return true;
+  }
+
+  private async expireWebsiteSubmission(submissionId: number): Promise<boolean> {
+    const submission = await this.prisma.paymentSubmission.findFirst({
+      where: { id: submissionId, product: 'website', status: 'pending' },
+      include: {
+        user: {
+          select: {
+            id: true,
+            name: true,
+            email: true,
+            websiteSubscriptionStatus: true,
+            trialEndsAt: true,
+          },
+        },
+      },
+    });
+    if (!submission) return false;
+
+    const trialStillValid = submission.user.trialEndsAt > new Date();
+
+    await this.prisma.$transaction(async (tx) => {
+      await tx.paymentSubmission.update({
+        where: { id: submission.id },
+        data: { status: 'expired' },
+      });
+
+      if (submission.user.websiteSubscriptionStatus === 'pending_verification') {
+        const otherPending = await tx.paymentSubmission.count({
+          where: {
+            userId: submission.userId,
+            product: 'website',
+            status: 'pending',
+            id: { not: submission.id },
+          },
+        });
+
+        if (otherPending === 0) {
+          await tx.user.update({
+            where: { id: submission.userId },
+            data: {
+              websiteSubscriptionStatus: trialStillValid ? 'none' : 'expired',
+              websiteSubscriptionPlan: null,
+              websiteCurrentPeriodEnd: null,
+            },
+          });
+        }
+      }
+    });
+
+    await this.audit.log({
+      action: 'payment.expired',
+      targetUserId: submission.userId,
+      paymentSubmissionId: submission.id,
+      details: {
+        product: 'website',
         plan: submission.plan,
         upi_transaction_id: submission.upiTransactionId,
         pending_days: this.pendingDays(),

@@ -69,8 +69,10 @@ describe('WebsiteController', () => {
       const config = await controller.getWebsiteConfig();
       assert.ok(config.apiUrl);
       assert.ok(config.websiteUrl);
-      assert.equal(config.industries.length, 6);
+      assert.equal(config.industries.length, 7);
       assert.ok(config.pricing);
+      assert.ok(config.pricing.website_addon);
+      assert.equal(config.pricing.trial.includes_website_publish, true);
       assert.equal(config.features.demoRequest, true);
     });
 

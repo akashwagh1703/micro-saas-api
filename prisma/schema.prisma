@@ -23,7 +23,7 @@ model User {
   createdAt       DateTime? @default(now()) @map("created_at")
   updatedAt       DateTime? @updatedAt @map("updated_at")
 
-  // Platform billing (14-day trial, then Razorpay monthly/yearly)
+  // Platform billing (trial, then Razorpay / UPI monthly/yearly)
   trialEndsAt            DateTime  @map("trial_ends_at")
   subscriptionStatus     String    @default("trial") @map("subscription_status") @db.VarChar(32)
   subscriptionPlan       String?   @map("subscription_plan") @db.VarChar(20)
@@ -34,6 +34,12 @@ model User {
   // Idempotency for subscription lifecycle emails/pushes (stores the endsAt we already notified for)
   billingExpiringNotifiedFor DateTime? @map("billing_expiring_notified_for")
   billingExpiredNotifiedFor  DateTime? @map("billing_expired_notified_for")
+
+  // Website add-on (brochure publish) — independent of platform subscription
+  // none | pending_verification | active | expired | cancelled
+  websiteSubscriptionStatus String    @default("none") @map("website_subscription_status") @db.VarChar(32)
+  websiteSubscriptionPlan   String?   @map("website_subscription_plan") @db.VarChar(20)
+  websiteCurrentPeriodEnd   DateTime? @map("website_current_period_end")
 
   whatsAppAccount     WhatsAppAccount?
   instagramAccount    InstagramAccount?

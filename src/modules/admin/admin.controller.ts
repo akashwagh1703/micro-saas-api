@@ -99,10 +99,12 @@ export class AdminController {
   @Get('payment-submissions')
   listPaymentSubmissions(
     @Query('status') status = 'pending',
+    @Query('product') product = '',
     @Query('page') page = '1',
   ) {
     return this.manualPayment.listSubmissions({
       status: status || undefined,
+      product: product || undefined,
       page: parseInt(page, 10) || 1,
     });
   }

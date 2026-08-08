@@ -17,6 +17,7 @@ import { ManualPaymentExpiryService } from './manual-payment-expiry.service';
 import { BillingNotificationService } from './billing-notification.service';
 
 export type BillingPlan = 'monthly' | 'yearly';
+export type BillingProduct = 'platform' | 'website';
 export type BillingStatusKind =
   | 'trial'
   | 'active'
@@ -24,6 +25,36 @@ export type BillingStatusKind =
   | 'expired'
   | 'cancelled'
   | 'pending_verification';
+export type WebsiteBillingStatusKind =
+  | 'none'
+  | 'trial'
+  | 'active'
+  | 'expired'
+  | 'cancelled'
+  | 'pending_verification';
+
+export interface PendingSubmissionView {
+  id: number;
+  product?: string;
+  plan: string;
+  amount_inr: number;
+  upi_transaction_id: string;
+  status: string;
+  created_at: string;
+  rejection_reason: string | null;
+}
+
+export interface WebsiteBillingStatus {
+  billing_enabled: boolean;
+  status: WebsiteBillingStatusKind;
+  plan: BillingPlan | null;
+  has_access: boolean;
+  trial_ends_at: string | null;
+  current_period_end: string | null;
+  days_left: number | null;
+  prices: { monthly_inr: number; yearly_inr: number };
+  pending_submission: PendingSubmissionView | null;
+}
 
 export interface BillingStatus {
   billing_enabled: boolean;
@@ -40,15 +71,9 @@ export interface BillingStatus {
   upi_configured: boolean;
   razorpay_configured: boolean;
   razorpay_webhook_url: string;
-  pending_submission: {
-    id: number;
-    plan: string;
-    amount_inr: number;
-    upi_transaction_id: string;
-    status: string;
-    created_at: string;
-    rejection_reason: string | null;
-  } | null;
+  pending_submission: PendingSubmissionView | null;
+  /** Website add-on (brochure publish). Independent of platform subscription. */
+  website: WebsiteBillingStatus;
 }
 
 export interface BillingTransactionView {
@@ -81,7 +106,7 @@ export class BillingService {
   }
 
   trialDays(): number {
-    return Number(this.config.get<string>('BILLING_TRIAL_DAYS', '14'));
+    return Number(this.config.get<string>('BILLING_TRIAL_DAYS', '7'));
   }
 
   monthlyPriceInr(): number {
@@ -90,6 +115,27 @@ export class BillingService {
 
   yearlyPriceInr(): number {
     return Number(this.config.get<string>('PLATFORM_PRICE_YEARLY_INR', '999'));
+  }
+
+  isWebsiteBillingEnabled(): boolean {
+    if (!this.isEnabled()) return false;
+    const flag = this.config.get<string>('BILLING_WEBSITE_ENABLED', 'true');
+    return flag !== 'false';
+  }
+
+  websiteMonthlyPriceInr(): number {
+    return Number(this.config.get<string>('WEBSITE_PRICE_MONTHLY_INR', '99'));
+  }
+
+  websiteYearlyPriceInr(): number {
+    return Number(this.config.get<string>('WEBSITE_PRICE_YEARLY_INR', '799'));
+  }
+
+  priceInrForProduct(product: BillingProduct, plan: BillingPlan): number {
+    if (product === 'website') {
+      return plan === 'monthly' ? this.websiteMonthlyPriceInr() : this.websiteYearlyPriceInr();
+    }
+    return plan === 'monthly' ? this.monthlyPriceInr() : this.yearlyPriceInr();
   }
 
   private getRazorpay(): Razorpay | null {
@@ -132,32 +178,184 @@ export class BillingService {
     return user;
   }
 
-  resolveStatus(user: User, pendingSubmission?: {
+  private toPendingView(pendingSubmission?: {
     id: number;
+    product?: string;
     plan: string;
     amountInr: number;
     upiTransactionId: string;
     status: string;
     createdAt: Date;
     rejectionReason: string | null;
-  } | null): BillingStatus {
+  } | null): PendingSubmissionView | null {
+    if (!pendingSubmission) return null;
+    return {
+      id: pendingSubmission.id,
+      product: pendingSubmission.product,
+      plan: pendingSubmission.plan,
+      amount_inr: pendingSubmission.amountInr,
+      upi_transaction_id: pendingSubmission.upiTransactionId,
+      status: pendingSubmission.status,
+      created_at: pendingSubmission.createdAt.toISOString(),
+      rejection_reason: pendingSubmission.rejectionReason,
+    };
+  }
+
+  resolveWebsiteStatus(
+    user: User,
+    pendingSubmission?: {
+      id: number;
+      product?: string;
+      plan: string;
+      amountInr: number;
+      upiTransactionId: string;
+      status: string;
+      createdAt: Date;
+      rejectionReason: string | null;
+    } | null,
+  ): WebsiteBillingStatus {
+    const prices = {
+      monthly_inr: this.websiteMonthlyPriceInr(),
+      yearly_inr: this.websiteYearlyPriceInr(),
+    };
+    const pending_submission = this.toPendingView(pendingSubmission);
+    const trialEnds = user.trialEndsAt;
+    const now = new Date();
+
+    if (this.superAdmin.isSuperAdmin(user.email) || !this.isWebsiteBillingEnabled()) {
+      return {
+        billing_enabled: false,
+        status: 'active',
+        plan: null,
+        has_access: true,
+        trial_ends_at: null,
+        current_period_end: null,
+        days_left: null,
+        prices,
+        pending_submission,
+      };
+    }
+
+    const periodEnd = user.websiteCurrentPeriodEnd;
+    const plan = (user.websiteSubscriptionPlan as BillingPlan) ?? null;
+    const withinPaidPeriod = !!periodEnd && periodEnd > now;
+    const trialActive = trialEnds > now;
+
+    if (user.websiteSubscriptionStatus === 'pending_verification') {
+      return {
+        billing_enabled: true,
+        status: 'pending_verification',
+        plan,
+        // Trial still includes Website publish while payment is under review.
+        has_access: trialActive || withinPaidPeriod,
+        trial_ends_at: trialEnds.toISOString(),
+        current_period_end: periodEnd ? periodEnd.toISOString() : null,
+        days_left: trialActive ? this.daysUntil(trialEnds) : withinPaidPeriod ? this.daysUntil(periodEnd!) : 0,
+        prices,
+        pending_submission,
+      };
+    }
+
+    if (user.websiteSubscriptionStatus === 'active' && withinPaidPeriod) {
+      return {
+        billing_enabled: true,
+        status: 'active',
+        plan,
+        has_access: true,
+        trial_ends_at: trialEnds.toISOString(),
+        current_period_end: periodEnd!.toISOString(),
+        days_left: this.daysUntil(periodEnd!),
+        prices,
+        pending_submission,
+      };
+    }
+
+    if (user.websiteSubscriptionStatus === 'cancelled' && withinPaidPeriod) {
+      return {
+        billing_enabled: true,
+        status: 'cancelled',
+        plan,
+        has_access: true,
+        trial_ends_at: trialEnds.toISOString(),
+        current_period_end: periodEnd!.toISOString(),
+        days_left: this.daysUntil(periodEnd!),
+        prices,
+        pending_submission,
+      };
+    }
+
+    if (trialActive) {
+      return {
+        billing_enabled: true,
+        status: 'trial',
+        plan: null,
+        has_access: true,
+        trial_ends_at: trialEnds.toISOString(),
+        current_period_end: null,
+        days_left: this.daysUntil(trialEnds),
+        prices,
+        pending_submission,
+      };
+    }
+
+    if (user.websiteSubscriptionStatus === 'none' && !periodEnd) {
+      return {
+        billing_enabled: true,
+        status: 'none',
+        plan: null,
+        has_access: false,
+        trial_ends_at: trialEnds.toISOString(),
+        current_period_end: null,
+        days_left: 0,
+        prices,
+        pending_submission,
+      };
+    }
+
+    return {
+      billing_enabled: true,
+      status: 'expired',
+      plan,
+      has_access: false,
+      trial_ends_at: trialEnds.toISOString(),
+      current_period_end: periodEnd ? periodEnd.toISOString() : null,
+      days_left: 0,
+      prices,
+      pending_submission,
+    };
+  }
+
+  resolveStatus(
+    user: User,
+    pendingSubmission?: {
+      id: number;
+      product?: string;
+      plan: string;
+      amountInr: number;
+      upiTransactionId: string;
+      status: string;
+      createdAt: Date;
+      rejectionReason: string | null;
+    } | null,
+    websitePendingSubmission?: {
+      id: number;
+      product?: string;
+      plan: string;
+      amountInr: number;
+      upiTransactionId: string;
+      status: string;
+      createdAt: Date;
+      rejectionReason: string | null;
+    } | null,
+  ): BillingStatus {
     const now = new Date();
     const prices = { monthly_inr: this.monthlyPriceInr(), yearly_inr: this.yearlyPriceInr() };
     const razorpay_configured = this.isRazorpayConfigured();
     const razorpay_webhook_url = this.getRazorpayWebhookUrl();
     const payment_mode = this.upiConfig.paymentMode();
     const upi_configured = this.upiConfig.getPublicConfig(prices.monthly_inr, prices.yearly_inr).upi_configured;
-    const pending_submission = pendingSubmission
-      ? {
-          id: pendingSubmission.id,
-          plan: pendingSubmission.plan,
-          amount_inr: pendingSubmission.amountInr,
-          upi_transaction_id: pendingSubmission.upiTransactionId,
-          status: pendingSubmission.status,
-          created_at: pendingSubmission.createdAt.toISOString(),
-          rejection_reason: pendingSubmission.rejectionReason,
-        }
-      : null;
+    const pending_submission = this.toPendingView(pendingSubmission);
+    const website = this.resolveWebsiteStatus(user, websitePendingSubmission);
     const base = {
       prices,
       payment_mode,
@@ -165,6 +363,7 @@ export class BillingService {
       razorpay_configured,
       razorpay_webhook_url,
       pending_submission,
+      website,
     };
 
     if (this.superAdmin.isSuperAdmin(user.email)) {
@@ -301,8 +500,18 @@ export class BillingService {
             orderBy: { createdAt: 'desc' },
           })
         : null;
-    const submissionForView = pending ?? latestRejected;
-    return this.resolveStatus(user, submissionForView);
+    const websitePending = await this.prisma.paymentSubmission.findFirst({
+      where: { userId, product: 'website', status: 'pending' },
+      orderBy: { createdAt: 'desc' },
+    });
+    const websiteLatestRejected =
+      user.websiteSubscriptionStatus !== 'pending_verification'
+        ? await this.prisma.paymentSubmission.findFirst({
+            where: { userId, product: 'website', status: 'rejected' },
+            orderBy: { createdAt: 'desc' },
+          })
+        : null;
+    return this.resolveStatus(user, pending ?? latestRejected, websitePending ?? websiteLatestRejected);
   }
 
   async hasPlatformAccess(userId: number): Promise<boolean> {
@@ -310,6 +519,13 @@ export class BillingService {
     if (this.superAdmin.isSuperAdmin(user.email)) return true;
     if (!this.isEnabled()) return true;
     return this.resolveStatus(user).has_access;
+  }
+
+  async hasWebsiteAccess(userId: number): Promise<boolean> {
+    const user = await this.getUser(userId);
+    if (this.superAdmin.isSuperAdmin(user.email)) return true;
+    if (!this.isWebsiteBillingEnabled()) return true;
+    return this.resolveWebsiteStatus(user).has_access;
   }
 
   async assertPlatformAccess(userId: number): Promise<void> {
@@ -325,6 +541,25 @@ export class BillingService {
     throw new ForbiddenException({
       message: 'Your free trial has ended. Subscribe to continue using AutoWave.',
       code: 'subscription_required',
+    });
+  }
+
+  async assertWebsiteAccess(userId: number): Promise<void> {
+    if (await this.hasWebsiteAccess(userId)) return;
+    const status = await this.getStatus(userId);
+    const website = status.website;
+    if (website.status === 'pending_verification') {
+      throw new ForbiddenException({
+        message:
+          'Your Website add-on payment is under review. Publish will unlock once our team verifies it (usually within 24 hours).',
+        code: 'website_payment_pending_verification',
+        prices: website.prices,
+      });
+    }
+    throw new ForbiddenException({
+      message: 'Website publish requires the Website add-on. Subscribe to publish your brochure.',
+      code: 'WEBSITE_REQUIRED',
+      prices: website.prices,
     });
   }
 
@@ -747,9 +982,11 @@ export class BillingService {
     paymentSubmissionId: number;
     reviewedByAdminId: number;
     status?: string;
+    product?: BillingProduct;
   }) {
     return this.recordTransaction({
       userId: data.userId,
+      product: data.product ?? 'platform',
       eventType: data.eventType,
       plan: data.plan,
       amountInr: data.amountInr,
@@ -765,6 +1002,7 @@ export class BillingService {
 
   private async recordTransaction(data: {
     userId: number;
+    product?: BillingProduct;
     eventType: string;
     razorpayPaymentId?: string | null;
     razorpaySubscriptionId?: string | null;
@@ -783,7 +1021,7 @@ export class BillingService {
     return this.prisma.billingTransaction.create({
       data: {
         userId: data.userId,
-        product: 'platform',
+        product: data.product ?? 'platform',
         eventType: data.eventType,
         razorpayPaymentId: data.razorpayPaymentId ?? null,
         razorpaySubscriptionId: data.razorpaySubscriptionId ?? null,

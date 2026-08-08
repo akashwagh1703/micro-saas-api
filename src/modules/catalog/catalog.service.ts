@@ -7,6 +7,7 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import { BillingService } from '../billing/billing.service';
 import { CatalogShareService } from './catalog-share.service';
 import { CatalogStorageService } from './catalog-storage.service';
 import {
@@ -66,6 +67,7 @@ export class CatalogService {
     private readonly config: ConfigService,
     private readonly storage: CatalogStorageService,
     private readonly share: CatalogShareService,
+    private readonly billing: BillingService,
   ) {}
 
   getPhase0Config() {
@@ -234,6 +236,9 @@ export class CatalogService {
   }
 
   async publish(userId: number) {
+    // Website add-on: draft editing stays open; only publish is gated.
+    await this.billing.assertWebsiteAccess(userId);
+
     let site = await this.findSiteForUser(userId, true);
     if (!site) throw new NotFoundException('Catalog site not found — create one first');
     site = await this.ensureDefaultSections(site);

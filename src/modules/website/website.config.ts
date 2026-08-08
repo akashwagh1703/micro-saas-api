@@ -27,6 +27,7 @@ const DEFAULT_FEATURES = [
   'Create & use workflows',
   'Advanced analytics dashboard',
   'Any business type support',
+  'Draft brochure website builder',
 ];
 
 export function normalizeBusinessTypeId(raw?: string): string {
@@ -50,8 +51,11 @@ function parseInr(envKey: string, fallback: number): number {
 export function buildWebsitePublicConfig() {
   const monthlyPrice = parseInr('PLATFORM_PRICE_MONTHLY_INR', 99);
   const yearlyPrice = parseInr('PLATFORM_PRICE_YEARLY_INR', 999);
-  const trialDays = parseInr('BILLING_TRIAL_DAYS', 14);
+  const trialDays = parseInr('BILLING_TRIAL_DAYS', 7);
   const yearlySavings = Math.max(0, monthlyPrice * 12 - yearlyPrice);
+  const websiteEnabled = (process.env.BILLING_WEBSITE_ENABLED ?? 'true') !== 'false';
+  const websiteMonthly = parseInr('WEBSITE_PRICE_MONTHLY_INR', 99);
+  const websiteYearly = parseInr('WEBSITE_PRICE_YEARLY_INR', 799);
 
   return {
     apiUrl: process.env.APP_URL || process.env.API_URL || 'https://api.autowave.playltp.in',
@@ -66,6 +70,9 @@ export function buildWebsitePublicConfig() {
       trial: {
         days: trialDays,
         price: 0,
+        /** Trial includes bots + Website publish (not forever-free). */
+        includes_website_publish: true,
+        summary: `${trialDays}-day free trial — WhatsApp bots and Website publish included`,
       },
       plans: [
         {
@@ -96,6 +103,21 @@ export function buildWebsitePublicConfig() {
           ctaLabel: 'Start Free Trial',
         },
       ],
+      website_addon: {
+        enabled: websiteEnabled,
+        name: 'Website add-on',
+        monthly_inr: websiteMonthly,
+        yearly_inr: websiteYearly,
+        currency: 'INR',
+        description:
+          'Optional. Publish your public brochure page (/c/slug). Draft editing is included with the platform plan.',
+        trial_includes_publish: true,
+        features: [
+          'Publish public brochure at /c/slug',
+          'Share from WhatsApp',
+          'Draft editing stays free with your plan',
+        ],
+      },
     },
   };
 }
