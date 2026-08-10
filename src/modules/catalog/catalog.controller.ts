@@ -214,6 +214,15 @@ export class CatalogController {
     });
   }
 
+  /** Sales / income analytics — must be registered before orders/:id */
+  @Get('orders/analytics')
+  salesAnalytics(
+    @CurrentUser('id') userId: number,
+    @Query('days') days?: string,
+  ) {
+    return this.orders.salesAnalytics(userId, days);
+  }
+
   /** CSV export for Excel — must be registered before orders/:id */
   @Get('orders/export.csv')
   async exportOrdersCsv(

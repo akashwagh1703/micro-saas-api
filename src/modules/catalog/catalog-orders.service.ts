@@ -26,6 +26,11 @@ import {
 import { serializeCatalogOrder } from './catalog.serializer';
 import { CatalogPackingSlipService } from './catalog-packing-slip.service';
 import { buildCourierTrackingUrl } from './catalog-tracking-url.util';
+import {
+  aggregateCatalogSalesAnalytics,
+  buildCatalogDateRange,
+  resolveCatalogAnalyticsDays,
+} from './catalog-sales-analytics.util';
 
 export type CatalogOrderListOpts = {
   order_status?: string;
@@ -212,6 +217,52 @@ export class CatalogOrdersService {
     ]);
 
     return [headers, ...rows].map((row) => row.map(csvEscape).join(',')).join('\r\n');
+  }
+
+  /** Order counts + paid income for dashboard / sales analytics. */
+  async salesAnalytics(userId: number, daysRaw?: string) {
+    await this.requireSite(userId);
+    const days = resolveCatalogAnalyticsDays(daysRaw);
+    const { from, to, prevFrom, prevTo } = buildCatalogDateRange(days);
+
+    const select = {
+      orderStatus: true,
+      amountInr: true,
+      productId: true,
+      productName: true,
+      createdAt: true,
+    } as const;
+
+    const [current, previous] = await Promise.all([
+      this.prisma.catalogOrder.findMany({
+        where: { userId, createdAt: { gte: from, lt: to } },
+        select,
+        take: 10_000,
+      }),
+      this.prisma.catalogOrder.findMany({
+        where: { userId, createdAt: { gte: prevFrom, lt: prevTo } },
+        select,
+        take: 10_000,
+      }),
+    ]);
+
+    return aggregateCatalogSalesAnalytics(
+      days,
+      current.map((o) => ({
+        orderStatus: o.orderStatus,
+        amountInr: Number(o.amountInr),
+        productId: o.productId,
+        productName: o.productName,
+        createdAt: o.createdAt,
+      })),
+      previous.map((o) => ({
+        orderStatus: o.orderStatus,
+        amountInr: Number(o.amountInr),
+        productId: o.productId,
+        productName: o.productName,
+        createdAt: o.createdAt,
+      })),
+    );
   }
 
   async setShippingAddress(
