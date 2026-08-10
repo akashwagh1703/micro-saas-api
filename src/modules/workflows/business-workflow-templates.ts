@@ -960,15 +960,15 @@ const supportTeamAssistant: WorkflowTemplate = {
 };
 
 /**
- * Catalog / brochure — Hi → welcome menu (Catalog / Website / Order).
- * Catalog → up to 5 photos → ask to order; Website → public link; Order → lead + thank-you.
+ * Catalog commerce (Phase 4) — Hi → Website | Catalog.
+ * Catalog → products 5/page → Order (in stock) → merchant QR → screenshot → pending verification.
  * Placeholders {{catalog_*}} filled at runtime from CatalogSite.
  */
 const catalogShare: WorkflowTemplate = {
   slug: 'catalog-share',
-  name: 'Catalog Brochure Share',
+  name: 'Catalog Shop',
   description:
-    'Welcome with business name, then Catalog photos, Website link, or Order request.',
+    'Welcome menu (Website / Catalog), browse products with stock, order via business UPI QR + screenshot verification.',
   category: 'guided',
   trigger_type: 'message_received',
   definition: graphFlow(
@@ -984,22 +984,16 @@ const catalogShare: WorkflowTemplate = {
           'Hi {{contact_name}}! 👋\n\nThanks for connecting with *{{catalog_business_name}}*{{catalog_tagline_line}}\n\nHow can we help you today? Tap an option below.',
           [
             {
-              text: 'Catalog',
-              description: 'Browse our photos',
-              value: 'catalog',
-              next_node_id: 'send-image-1',
-            },
-            {
-              text: 'Website',
+              text: '🌐 Website',
               description: 'Get our website link',
               value: 'website',
               next_node_id: 'send-website',
             },
             {
-              text: 'Order',
-              description: 'Request an order',
-              value: 'order',
-              next_node_id: 'save-lead-order',
+              text: '🛍️ Catalog',
+              description: 'Browse products & order',
+              value: 'catalog',
+              next_node_id: 'list-catalog-products',
             },
           ],
           'We’re glad you’re here',
@@ -1011,98 +1005,76 @@ const catalogShare: WorkflowTemplate = {
         ),
         x: 280,
       },
-      // Catalog branch — images only (no captions), then ready-to-order prompt
       {
-        ...sendNode(
-          'send-image-1',
-          340,
-          'Catalog photo 1',
-          '',
-          'First catalog gallery image only (no text caption)',
-          { media_url: '{{catalog_image_url}}', optional_media: true },
-        ),
+        id: 'list-catalog-products',
+        type: 'list_catalog_products',
+        y: 360,
         x: 40,
+        data: {
+          label: 'Browse catalog',
+          summary: 'Products 5/page with Order when in stock',
+          page_size: 5,
+          create_order_node_id: 'create-catalog-order',
+          main_menu_node_id: 'pick-menu',
+          header: '🛍️ Catalog',
+        },
+      },
+      {
+        id: 'create-catalog-order',
+        type: 'create_catalog_order',
+        y: 500,
+        x: 40,
+        data: {
+          label: 'Create order',
+          summary: 'Creates CatalogOrder (qty 1) and loads payment QR',
+        },
       },
       {
         ...sendNode(
-          'send-image-2',
-          460,
-          'Catalog photo 2',
-          '',
-          'Second gallery image when available',
-          { media_url: '{{catalog_image_url_2}}', optional_media: true },
-        ),
-        x: 40,
-      },
-      {
-        ...sendNode(
-          'send-image-3',
-          580,
-          'Catalog photo 3',
-          '',
-          'Third gallery image when available',
-          { media_url: '{{catalog_image_url_3}}', optional_media: true },
-        ),
-        x: 40,
-      },
-      {
-        ...sendNode(
-          'send-image-4',
-          700,
-          'Catalog photo 4',
-          '',
-          'Fourth gallery image when available',
-          { media_url: '{{catalog_image_url_4}}', optional_media: true },
-        ),
-        x: 40,
-      },
-      {
-        ...sendNode(
-          'send-image-5',
-          820,
-          'Catalog photo 5',
-          '',
-          'Fifth gallery image when available',
-          { media_url: '{{catalog_image_url_5}}', optional_media: true },
-        ),
-        x: 40,
-      },
-      {
-        ...pickOptionsNode(
-          'pick-ready-order',
-          940,
-          'Ready to order',
-          'menu_choice',
-          'Ready next?',
-          '📸 That’s a peek at what we offer!\n\nTap below to visit our website or place an order — *{{catalog_business_name}}* is here to help. ✨',
-          [
-            {
-              text: 'Website',
-              description: 'Open our full website',
-              value: 'website',
-              next_node_id: 'send-website',
-            },
-            {
-              text: 'Order',
-              description: 'We’ll reach out to confirm',
-              value: 'order',
-              next_node_id: 'save-lead-order',
-            },
-          ],
-          'Website or Order',
+          'send-payment-qr',
+          640,
+          'Send payment QR',
+          '🧾 *Order {{catalog_order_number}}*\n\n*{{catalog_order_product_name}}*\nAmount: *₹{{catalog_order_amount}}*\n\n{{catalog_payment_upi_line}}\n\nScan the business UPI QR below to pay, then send a screenshot of the payment.',
+          'Sends merchant payment QR (not AutoWave billing)',
           {
-            send_welcome_image: true,
-            use_catalog_wa_logo: true,
-            welcome_image_url: '{{catalog_wa_logo_url}}',
+            media_url: '{{catalog_payment_qr_url}}',
+            optional_media: true,
           },
         ),
         x: 40,
       },
-      // Website branch (center)
+      {
+        id: 'collect-payment-screenshot',
+        type: 'collect_payment_screenshot',
+        y: 780,
+        x: 40,
+        data: {
+          label: 'Collect payment screenshot',
+          summary: 'Waits for customer UPI payment image',
+          question:
+            '📸 Please send a *screenshot* of your UPI payment for order *{{catalog_order_number}}*.\n\nWe will verify it shortly — you will get a confirmation once approved.',
+          retry_message:
+            'Please send a *photo/screenshot* of your UPI payment (an image), not a text message.',
+        },
+      },
+      {
+        ...sendNode(
+          'send-payment-received',
+          920,
+          'Payment received',
+          '✅ Thanks! We received your payment screenshot for order *{{catalog_order_number}}*.\n\n*{{catalog_business_name}}* is verifying it now. You will get a WhatsApp message once it is confirmed or if we need anything else.',
+          'Acknowledges screenshot; owner verifies in Orders',
+          {
+            media_url: '{{catalog_wa_logo_url}}',
+            optional_media: true,
+          },
+        ),
+        x: 40,
+      },
       {
         ...sendNode(
           'send-website',
-          340,
+          360,
           'Send website link',
           '{{catalog_website_block}}',
           'Sends business website link with optional WhatsApp logo',
@@ -1111,56 +1083,17 @@ const catalogShare: WorkflowTemplate = {
             optional_media: true,
           },
         ),
-        x: 320,
-      },
-      // Order branch (right)
-      {
-        id: 'save-lead-order',
-        type: 'save_lead',
-        y: 340,
-        x: 600,
-        data: {
-          label: 'Save order request',
-          summary: 'Saves order enquiry to Leads',
-          notes: 'Catalog order request from WhatsApp',
-          collected_fields: ['menu_choice'],
-          api: buildSaveLeadApiPlaceholder(
-            ['menu_choice'],
-            'Catalog order request from WhatsApp',
-            'whatsapp',
-          ),
-        },
-      },
-      {
-        ...sendNode(
-          'send-order-thanks',
-          480,
-          'Order thank you',
-          '🎉 Thank you, {{contact_name}}!\n\nYour order request has been sent to *{{catalog_business_name}}*.\n\nOur team will reach out shortly to confirm the details.\n\nWe appreciate you choosing us — can’t wait to serve you! 💚',
-          'Confirms order request with optional WhatsApp logo',
-          {
-            media_url: '{{catalog_wa_logo_url}}',
-            optional_media: true,
-          },
-        ),
-        x: 600,
+        x: 420,
       },
     ],
     [
       { id: 'e1', source: 'trigger-1', target: 'pick-menu' },
-      // Default edge for pick-menu (Catalog); Website/Order use option next_node_id
-      { id: 'e2', source: 'pick-menu', target: 'send-image-1' },
-      { id: 'e3', source: 'send-image-1', target: 'send-image-2' },
-      { id: 'e4', source: 'send-image-2', target: 'send-image-3' },
-      { id: 'e5', source: 'send-image-3', target: 'send-image-4' },
-      { id: 'e6', source: 'send-image-4', target: 'send-image-5' },
-      { id: 'e7', source: 'send-image-5', target: 'pick-ready-order' },
-      { id: 'e8', source: 'pick-ready-order', target: 'save-lead-order' },
-      { id: 'e9', source: 'save-lead-order', target: 'send-order-thanks' },
-      // Canvas viz edges (routing uses next_node_id on options)
-      { id: 'e10', source: 'pick-menu', target: 'send-website' },
-      { id: 'e11', source: 'pick-menu', target: 'save-lead-order' },
-      { id: 'e12', source: 'pick-ready-order', target: 'send-website' },
+      { id: 'e2', source: 'pick-menu', target: 'list-catalog-products' },
+      { id: 'e3', source: 'pick-menu', target: 'send-website' },
+      { id: 'e4', source: 'list-catalog-products', target: 'create-catalog-order' },
+      { id: 'e5', source: 'create-catalog-order', target: 'send-payment-qr' },
+      { id: 'e6', source: 'send-payment-qr', target: 'collect-payment-screenshot' },
+      { id: 'e7', source: 'collect-payment-screenshot', target: 'send-payment-received' },
     ],
   ),
 };

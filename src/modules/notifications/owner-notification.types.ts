@@ -9,6 +9,9 @@ export const OwnerNotificationType = {
   SUBSCRIPTION_ACTIVATED: 'subscription_activated',
   SUBSCRIPTION_EXPIRING: 'subscription_expiring',
   SUBSCRIPTION_EXPIRED: 'subscription_expired',
+  CATALOG_ORDER_PAYMENT_SUBMITTED: 'catalog_order_payment_submitted',
+  CATALOG_ORDER_CONFIRMED: 'catalog_order_confirmed',
+  CATALOG_ORDER_REJECTED: 'catalog_order_rejected',
 } as const;
 
 
@@ -35,6 +38,9 @@ export function pushChannelForType(type: string): PushChannelId {
     type.startsWith('payment_')
   ) {
     return PushChannel.BILLING;
+  }
+  if (type.startsWith('catalog_order_')) {
+    return PushChannel.LEADS;
   }
   return PushChannel.BOOKINGS;
 }

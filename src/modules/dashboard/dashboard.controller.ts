@@ -8,6 +8,7 @@ import { buildVisibleWorkflowsWhere } from '../../common/workflow-scope';
 import { SettingsService } from '../settings/settings.service';
 import { buildChannelAnalytics, resolveAnalyticsDays } from './dashboard-analytics';
 import { computeBookingDashboardStats } from './dashboard-booking-stats';
+import { computeCatalogDashboardStats } from './dashboard-catalog-stats';
 
 @Controller('dashboard')
 @UseGuards(TokenAuthGuard)
@@ -56,6 +57,7 @@ export class DashboardController {
     ]);
 
     const bookingStats = await computeBookingDashboardStats(this.prisma, this.settings, userId);
+    const catalogStats = await computeCatalogDashboardStats(this.prisma, userId);
 
     return {
       total_messages: totalMessages,
@@ -76,6 +78,7 @@ export class DashboardController {
       instagram_display: instagramAccount?.displayName ?? null,
       ai_usage: aiUsage,
       ...bookingStats,
+      ...catalogStats,
     };
   }
 

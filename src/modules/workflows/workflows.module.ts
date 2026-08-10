@@ -28,10 +28,14 @@ import { BookSlotNodeExecutor } from './nodes/book-slot-node.executor';
 import { PickOptionsNodeExecutor } from './nodes/pick-options-node.executor';
 // Phase 5: Interactive Message Services
 import { InteractiveMessageNodeExecutor } from './nodes/interactive-message-node.executor';
+import { ListCatalogProductsNodeExecutor } from './nodes/list-catalog-products-node.executor';
+import { CreateCatalogOrderNodeExecutor } from './nodes/create-catalog-order-node.executor';
+import { CollectPaymentScreenshotNodeExecutor } from './nodes/collect-payment-screenshot-node.executor';
 import { UserStateService } from './user-state.service';
 import { InteractiveMessageHandlerService } from './interactive-message-handler.service';
 import { WorkflowValidationInteractiveService } from './workflow-validation-interactive.service';
 import { WorkflowInteractiveSendService } from './workflow-interactive-send.service';
+import { CryptoModule } from '../../common/crypto/crypto.module';
 
 @Module({
   imports: [
@@ -42,6 +46,7 @@ import { WorkflowInteractiveSendService } from './workflow-interactive-send.serv
     AvailabilityModule,
     InboxModule,
     CatalogModule,
+    CryptoModule,
   ],
   controllers: [
     WorkflowsController,
@@ -68,6 +73,9 @@ import { WorkflowInteractiveSendService } from './workflow-interactive-send.serv
     PickOptionsNodeExecutor,
     // Phase 5: Interactive Message Services
     InteractiveMessageNodeExecutor,
+    ListCatalogProductsNodeExecutor,
+    CreateCatalogOrderNodeExecutor,
+    CollectPaymentScreenshotNodeExecutor,
     UserStateService,
     InteractiveMessageHandlerService,
     WorkflowValidationInteractiveService,

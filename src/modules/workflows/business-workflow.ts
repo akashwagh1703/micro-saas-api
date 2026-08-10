@@ -30,7 +30,7 @@ export const USE_CASE_LABELS: Record<string, string> = {
   sales_assistant: 'Sales Assistant',
   faq_bot: 'FAQ Bot',
   ai_chat: 'AI Chat Assistant',
-  catalog_share: 'Catalog / Brochure',
+  catalog_share: 'Catalog Shop',
 };
 
 /** Short phrase describing the business, injected into AI prompts. */

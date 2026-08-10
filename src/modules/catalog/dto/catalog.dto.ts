@@ -180,6 +180,11 @@ export class CreateCatalogProductDto {
   @IsOptional()
   @IsBoolean()
   is_active?: boolean;
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  stock_quantity?: number;
 }
 
 export class UpdateCatalogProductDto {
@@ -216,6 +221,11 @@ export class UpdateCatalogProductDto {
   @IsOptional()
   @IsBoolean()
   is_active?: boolean;
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  stock_quantity?: number;
 }
 
 export class UpdateCatalogMediaDto {
@@ -236,6 +246,77 @@ export class UpdateCatalogMediaDto {
   @IsOptional()
   @IsIn([...CATALOG_MEDIA_KINDS])
   kind?: (typeof CATALOG_MEDIA_KINDS)[number];
+}
+
+/** Per-business merchant UPI / QR for catalog order checkout (not platform billing). */
+export class UpdateCatalogPaymentSettingsDto {
+  @IsOptional()
+  @IsBoolean()
+  payments_enabled?: boolean;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(80)
+  upi_vpa?: string | null;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  upi_payee_name?: string | null;
+
+  @IsOptional()
+  @IsInt()
+  qr_media_id?: number | null;
+}
+
+/** Owner / WA create order (qty fixed to 1 in v1). */
+export class CreateCatalogOrderDto {
+  @Type(() => Number)
+  @IsInt()
+  product_id!: number;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(30)
+  customer_phone?: string | null;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(160)
+  customer_name?: string | null;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  contact_id?: number | null;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  conversation_id?: number | null;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  workflow_execution_id?: number | null;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  notes?: string | null;
+}
+
+export class AttachCatalogOrderScreenshotDto {
+  @Type(() => Number)
+  @IsInt()
+  media_id!: number;
+}
+
+export class RejectCatalogOrderDto {
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  reason?: string | null;
 }
 
 /** Used only for OpenAPI/docs clarity; section type validation is in constants. */

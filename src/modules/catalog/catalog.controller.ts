@@ -23,11 +23,16 @@ import { Response } from 'express';
 import { TokenAuthGuard } from '../../common/guards/token-auth.guard';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { CatalogService } from './catalog.service';
+import { CatalogOrdersService } from './catalog-orders.service';
 import {
+  AttachCatalogOrderScreenshotDto,
+  CreateCatalogOrderDto,
   CreateCatalogProductDto,
   CreateCatalogSiteDto,
+  RejectCatalogOrderDto,
   ReorderCatalogSectionsDto,
   UpdateCatalogMediaDto,
+  UpdateCatalogPaymentSettingsDto,
   UpdateCatalogProductDto,
   UpdateCatalogSectionDto,
   UpdateCatalogSiteDto,
@@ -38,7 +43,10 @@ import { CATALOG_MAX_DOCUMENT_BYTES } from './catalog.constants';
 @Controller('catalog')
 @UseGuards(TokenAuthGuard)
 export class CatalogController {
-  constructor(private readonly catalog: CatalogService) {}
+  constructor(
+    private readonly catalog: CatalogService,
+    private readonly orders: CatalogOrdersService,
+  ) {}
 
   /** Phase 0 locked decisions — useful for portal/app builders. */
   @Get('config')
@@ -129,6 +137,79 @@ export class CatalogController {
     @Param('id', ParseIntPipe) id: number,
   ) {
     return this.catalog.deleteProduct(userId, id);
+  }
+
+  /** Merchant UPI / QR for catalog order checkout (per business). */
+  @Get('payment-settings')
+  getPaymentSettings(@CurrentUser('id') userId: number) {
+    return this.catalog.getPaymentSettings(userId);
+  }
+
+  @Patch('payment-settings')
+  updatePaymentSettings(
+    @CurrentUser('id') userId: number,
+    @Body() dto: UpdateCatalogPaymentSettingsDto,
+  ) {
+    return this.catalog.updatePaymentSettings(userId, dto);
+  }
+
+  /** Catalog commerce orders (Phase 3). */
+  @Get('orders')
+  listOrders(
+    @CurrentUser('id') userId: number,
+    @Query('order_status') orderStatus?: string,
+    @Query('payment_status') paymentStatus?: string,
+    @Query('limit') limitRaw?: string,
+    @Query('offset') offsetRaw?: string,
+  ) {
+    const limit = limitRaw ? parseInt(limitRaw, 10) : undefined;
+    const offset = offsetRaw ? parseInt(offsetRaw, 10) : undefined;
+    return this.orders.list(userId, {
+      order_status: orderStatus,
+      payment_status: paymentStatus,
+      limit: Number.isFinite(limit) ? limit : undefined,
+      offset: Number.isFinite(offset) ? offset : undefined,
+    });
+  }
+
+  @Get('orders/:id')
+  getOrder(
+    @CurrentUser('id') userId: number,
+    @Param('id', ParseIntPipe) id: number,
+  ) {
+    return this.orders.get(userId, id);
+  }
+
+  @Post('orders')
+  @HttpCode(HttpStatus.CREATED)
+  createOrder(@CurrentUser('id') userId: number, @Body() dto: CreateCatalogOrderDto) {
+    return this.orders.create(userId, dto);
+  }
+
+  @Post('orders/:id/screenshot')
+  attachOrderScreenshot(
+    @CurrentUser('id') userId: number,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: AttachCatalogOrderScreenshotDto,
+  ) {
+    return this.orders.attachScreenshot(userId, id, dto);
+  }
+
+  @Post('orders/:id/confirm')
+  confirmOrder(
+    @CurrentUser('id') userId: number,
+    @Param('id', ParseIntPipe) id: number,
+  ) {
+    return this.orders.confirm(userId, id);
+  }
+
+  @Post('orders/:id/reject')
+  rejectOrder(
+    @CurrentUser('id') userId: number,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: RejectCatalogOrderDto,
+  ) {
+    return this.orders.reject(userId, id, dto);
   }
 
   @Get('media')

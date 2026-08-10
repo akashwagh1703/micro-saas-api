@@ -1,5 +1,6 @@
 import {
   CatalogMedia,
+  CatalogOrder,
   CatalogProduct,
   CatalogSection,
   CatalogSite,
@@ -51,6 +52,7 @@ export function serializeCatalogProduct(
   p: CatalogProduct & { image?: CatalogMedia | null },
   publicMediaUrl: (mediaId: number) => string,
 ) {
+  const stockQuantity = p.stockQuantity ?? 0;
   return {
     id: p.id,
     site_id: p.siteId,
@@ -62,6 +64,9 @@ export function serializeCatalogProduct(
     image: p.image ? serializeCatalogMedia(p.image, publicMediaUrl) : null,
     sort_order: p.sortOrder,
     is_active: p.isActive,
+    stock_quantity: stockQuantity,
+    /** Derived: stock_quantity > 0 → in_stock; else out_of_stock */
+    stock_status: stockQuantity > 0 ? ('in_stock' as const) : ('out_of_stock' as const),
     created_at: p.createdAt,
     updated_at: p.updatedAt,
   };
@@ -98,6 +103,73 @@ export function serializeCatalogSite(
     products: products
       .filter((p) => opts?.includeDraft || p.isActive)
       .map((p) => serializeCatalogProduct(p, publicMediaUrl)),
+    /** Owner-only merchant checkout settings (not exposed on public brochure). */
+    payment: serializeCatalogPayment(site, media, publicMediaUrl),
+  };
+}
+
+export function serializeCatalogPayment(
+  site: CatalogSite,
+  media: CatalogMedia[] | undefined,
+  publicMediaUrl: (mediaId: number) => string,
+) {
+  const qrMediaId = site.paymentQrMediaId ?? null;
+  const qr =
+    qrMediaId != null
+      ? (media ?? []).find((m) => m.id === qrMediaId) ?? null
+      : null;
+  const paymentsEnabled = site.paymentsEnabled === true;
+  return {
+    payments_enabled: paymentsEnabled,
+    upi_vpa: site.paymentUpiVpa ?? null,
+    upi_payee_name: site.paymentUpiPayeeName ?? null,
+    qr_media_id: qrMediaId,
+    qr: qr ? serializeCatalogMedia(qr, publicMediaUrl) : null,
+    configured: paymentsEnabled && qrMediaId != null,
+  };
+}
+
+export function serializeCatalogOrder(
+  order: CatalogOrder & { paymentScreenshot?: CatalogMedia | null },
+  publicMediaUrl: (mediaId: number) => string,
+) {
+  return {
+    id: order.id,
+    order_number: order.orderNumber,
+    user_id: order.userId,
+    site_id: order.siteId,
+    contact_id: order.contactId,
+    customer_phone: order.customerPhone,
+    customer_name: order.customerName,
+    product_id: order.productId,
+    product_name: order.productName,
+    product_price: order.productPrice != null ? Number(order.productPrice) : null,
+    product_image_media_id: order.productImageMediaId,
+    product_image_url:
+      order.productImageMediaId != null
+        ? publicMediaUrl(order.productImageMediaId)
+        : null,
+    quantity: order.quantity,
+    amount_inr: Number(order.amountInr),
+    payment_status: order.paymentStatus,
+    order_status: order.orderStatus,
+    payment_screenshot_media_id: order.paymentScreenshotMediaId,
+    payment_screenshot: order.paymentScreenshot
+      ? serializeCatalogMedia(order.paymentScreenshot, publicMediaUrl)
+      : order.paymentScreenshotMediaId != null
+        ? {
+            id: order.paymentScreenshotMediaId,
+            url: publicMediaUrl(order.paymentScreenshotMediaId),
+          }
+        : null,
+    verified_at: order.verifiedAt,
+    verified_by_user_id: order.verifiedByUserId,
+    rejection_reason: order.rejectionReason,
+    notes: order.notes,
+    conversation_id: order.conversationId,
+    workflow_execution_id: order.workflowExecutionId,
+    created_at: order.createdAt,
+    updated_at: order.updatedAt,
   };
 }
 
@@ -110,6 +182,7 @@ export function serializePublicCatalog(
   const full = serializeCatalogSite(site, publicBaseUrl, publicMediaUrl, {
     includeDraft: false,
   });
+  // Intentionally omit `payment` — merchant QR is private to WA checkout / owner portal.
   return {
     slug: full.slug,
     business_name: full.business_name,

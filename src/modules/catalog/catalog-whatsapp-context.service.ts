@@ -147,7 +147,7 @@ export class CatalogWhatsAppContextService {
       catalog_image_url_5: imageUrls[4] || '',
       catalog_website_block: published
         ? `🌐 Explore *${businessName}* online:\n\n${catalogUrl}\n\nPhotos, products, and more — all in one place.`
-        : `🌐 The website for *${businessName}* will be ready once it's published.\n\nMeanwhile, tap *Order* and we'll reach out to help!`,
+        : `🌐 The website for *${businessName}* will be ready once it's published.\n\nMeanwhile, tap *Catalog* to browse products and order here on WhatsApp!`,
       catalog_wa_logo_url: catalogWaLogoUrl,
       catalog_status: site.status || '',
       catalog_is_published: published ? '1' : '0',

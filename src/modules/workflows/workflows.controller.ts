@@ -205,6 +205,25 @@ export class WorkflowsController {
     };
   }
 
+  /** Upgrades catalog brochure/lead graphs to the commerce shop flow (Phase 4+). */
+  @Post('sync-catalog-commerce')
+  async syncCatalogCommerce(@CurrentUser('id') userId: number) {
+    await this.billing.assertPlatformAccess(userId);
+    const result = await this.templates.syncAllCatalogWorkflows(userId);
+    await this.activity.log(
+      userId,
+      'workflow_synced',
+      `Catalog commerce workflows upgraded: ${result.upgraded}`,
+    );
+    return {
+      message:
+        result.upgraded > 0
+          ? `Updated ${result.upgraded} catalog workflow(s) to the WhatsApp shop flow (Website | Catalog → order → QR). Republish if they were already live.`
+          : 'Catalog shop workflows are already up to date.',
+      ...result,
+    };
+  }
+
   @Post(':id/publish')
   async publish(@CurrentUser('id') userId: number, @Param('id', ParseIntPipe) id: number) {
     await this.billing.assertPlatformAccess(userId);
@@ -236,7 +255,7 @@ export class WorkflowsController {
       hint: upgradedAppointment
         ? 'Workflow was refreshed to the latest appointment booking flow before going live.'
         : upgradedCatalog
-          ? 'Workflow was refreshed to the latest Catalog / Website / Order menu before going live.'
+          ? 'Workflow was refreshed to the latest Catalog shop flow (Website | Catalog → order → QR) before going live.'
           : undefined,
     };
   }

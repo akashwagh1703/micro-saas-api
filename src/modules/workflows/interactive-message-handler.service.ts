@@ -194,6 +194,15 @@ export class InteractiveMessageHandlerService {
         if (meta.time_period != null) {
           context.time_period = meta.time_period;
         }
+        if (meta.catalog_product_id != null) {
+          context.catalog_product_id = meta.catalog_product_id;
+        }
+        if (meta.catalog_product_offset != null) {
+          context.catalog_product_offset = meta.catalog_product_offset;
+        }
+        if (meta.catalog_action != null) {
+          context.catalog_action = meta.catalog_action;
+        }
       }
 
       await this.prisma.workflowExecution.update({

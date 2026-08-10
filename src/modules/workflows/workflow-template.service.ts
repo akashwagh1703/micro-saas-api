@@ -24,6 +24,7 @@ import {
   useCaseLabel,
 } from './business-workflow';
 import { CAREER_AI_BUSINESS } from '../career/career.constants';
+import { isCatalogCommerceWorkflowDefinitionCurrent } from './catalog-commerce-workflow';
 
 export interface TemplateSummary {
   slug: string;
@@ -483,45 +484,22 @@ export class WorkflowTemplateService {
   }
 
   /**
-   * Replaces older catalog-share graphs with the menu flow
-   * (Catalog photos / Website link / Order thank-you).
-   * No-op when the workflow already has the welcome menu + 5th image node.
+   * Replaces older catalog-share graphs with the Phase 4 commerce shop flow
+   * (Website | Catalog → products → Order → QR → screenshot).
+   * No-op when the workflow already has the commerce nodes.
    */
   async upgradeCatalogWorkflowIfNeeded(workflow: Workflow): Promise<Workflow | null> {
     if (workflow.useCase !== 'catalog_share' || workflow.businessCategory !== 'catalog') {
       return null;
     }
     const def = workflow.definition as unknown as WorkflowDefinition;
-    const nodeIds = (def?.nodes ?? []).map((n) => n.id);
-    // Current = WA logo wiring + post-catalog buttons labeled Website / Order (not "Place order")
-    const sendWebsite = (def?.nodes ?? []).find((n) => n.id === 'send-website');
-    const hasCatalogWaLogo = String(sendWebsite?.data?.media_url ?? '').includes(
-      'catalog_wa_logo_url',
-    );
-    const pickReady = (def?.nodes ?? []).find((n) => n.id === 'pick-ready-order');
-    const readyOptions = Array.isArray(pickReady?.data?.options) ? pickReady.data.options : [];
-    const hasWebsiteAndOrderLabels =
-      readyOptions.some((o: { text?: string }) => String(o?.text ?? '') === 'Website') &&
-      readyOptions.some((o: { text?: string }) => String(o?.text ?? '') === 'Order') &&
-      !readyOptions.some((o: { text?: string }) => /place order/i.test(String(o?.text ?? '')));
-    const pickMenu = (def?.nodes ?? []).find((n) => n.id === 'pick-menu');
-    const welcomeHeaderOk = String(pickMenu?.data?.header ?? '') === '✨ Welcome';
-    const alreadyCurrent =
-      nodeIds.includes('pick-menu') &&
-      nodeIds.includes('pick-ready-order') &&
-      nodeIds.includes('send-image-5') &&
-      nodeIds.includes('send-order-thanks') &&
-      hasCatalogWaLogo &&
-      hasWebsiteAndOrderLabels &&
-      welcomeHeaderOk;
-    if (alreadyCurrent) return null;
+    if (isCatalogCommerceWorkflowDefinitionCurrent(def)) return null;
 
     const template = findGuidedTemplate('catalog-share');
     if (!template) return null;
 
     let definition = JSON.parse(JSON.stringify(template.definition)) as WorkflowDefinition;
     definition = applyUseCaseTriggerKeywords(definition, 'catalog_share');
-    definition = await this.injectSaveLeadApi(workflow.userId, definition);
 
     return this.prisma.workflow.update({
       where: { id: workflow.id },
@@ -534,6 +512,33 @@ export class WorkflowTemplateService {
           : `${businessLabel('catalog')} · ${useCaseLabel('catalog_share')}`,
       },
     });
+  }
+
+  /** Upgrades every catalog_share workflow for a tenant (published or draft). */
+  async syncAllCatalogWorkflows(userId: number): Promise<{ upgraded: number; workflow_ids: number[] }> {
+    const category = await this.settings.get(userId, 'business_category');
+    if (category !== 'catalog') {
+      return { upgraded: 0, workflow_ids: [] };
+    }
+
+    const workflows = await this.prisma.workflow.findMany({
+      where: {
+        userId,
+        businessCategory: 'catalog',
+        useCase: 'catalog_share',
+        isArchived: false,
+      },
+    });
+
+    const workflow_ids: number[] = [];
+    for (const row of workflows) {
+      const updated = await this.upgradeCatalogWorkflowIfNeeded(row);
+      if (updated) {
+        workflow_ids.push(updated.id);
+      }
+    }
+
+    return { upgraded: workflow_ids.length, workflow_ids };
   }
 
   /** Upgrades every appointment_booking workflow for a tenant (published or draft). */

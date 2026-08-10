@@ -41,12 +41,14 @@ import {
   CreateCatalogSiteDto,
   ReorderCatalogSectionsDto,
   UpdateCatalogMediaDto,
+  UpdateCatalogPaymentSettingsDto,
   UpdateCatalogProductDto,
   UpdateCatalogSectionDto,
   UpdateCatalogSiteDto,
 } from './dto/catalog.dto';
 import {
   serializeCatalogMedia,
+  serializeCatalogPayment,
   serializeCatalogProduct,
   serializeCatalogSection,
   serializeCatalogSite,
@@ -357,6 +359,7 @@ export class CatalogService {
         imageMediaId: dto.image_media_id ?? null,
         sortOrder: dto.sort_order ?? 0,
         isActive: dto.is_active ?? true,
+        stockQuantity: dto.stock_quantity ?? 0,
       },
       include: { image: true },
     });
@@ -397,6 +400,7 @@ export class CatalogService {
           : {}),
         ...(dto.sort_order !== undefined ? { sortOrder: dto.sort_order } : {}),
         ...(dto.is_active !== undefined ? { isActive: dto.is_active } : {}),
+        ...(dto.stock_quantity !== undefined ? { stockQuantity: dto.stock_quantity } : {}),
       },
       include: { image: true },
     });
@@ -411,6 +415,55 @@ export class CatalogService {
     if (!product) throw new NotFoundException('Product not found');
     await this.prisma.catalogProduct.delete({ where: { id: product.id } });
     return { ok: true };
+  }
+
+  async getPaymentSettings(userId: number) {
+    const site = await this.requireSite(userId);
+    const media = await this.prisma.catalogMedia.findMany({
+      where: { siteId: site.id },
+    });
+    return { payment: serializeCatalogPayment(site, media, this.mediaUrl) };
+  }
+
+  async updatePaymentSettings(userId: number, dto: UpdateCatalogPaymentSettingsDto) {
+    const site = await this.requireSite(userId);
+
+    if (dto.qr_media_id != null) {
+      await this.assertMediaOnSite(site.id, dto.qr_media_id);
+    }
+
+    if (dto.payments_enabled === true) {
+      const nextQrId =
+        dto.qr_media_id !== undefined ? dto.qr_media_id : site.paymentQrMediaId;
+      if (nextQrId == null) {
+        throw new BadRequestException(
+          'Upload a payment QR code before enabling customer payments.',
+        );
+      }
+    }
+
+    const updated = await this.prisma.catalogSite.update({
+      where: { id: site.id },
+      data: {
+        ...(dto.payments_enabled !== undefined
+          ? { paymentsEnabled: dto.payments_enabled }
+          : {}),
+        ...(dto.upi_vpa !== undefined
+          ? { paymentUpiVpa: dto.upi_vpa?.trim() || null }
+          : {}),
+        ...(dto.upi_payee_name !== undefined
+          ? { paymentUpiPayeeName: dto.upi_payee_name?.trim() || null }
+          : {}),
+        ...(dto.qr_media_id !== undefined
+          ? { paymentQrMediaId: dto.qr_media_id }
+          : {}),
+      },
+    });
+
+    const media = await this.prisma.catalogMedia.findMany({
+      where: { siteId: site.id },
+    });
+    return { payment: serializeCatalogPayment(updated, media, this.mediaUrl) };
   }
 
   async listMedia(userId: number) {

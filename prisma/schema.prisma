@@ -73,6 +73,7 @@ model User {
   pushDeviceTokens    PushDeviceToken[]
   authEmailTokens     AuthEmailToken[]
   catalogSite         CatalogSite?
+  catalogOrders       CatalogOrder[]
 
   @@map("users")
 }
@@ -173,6 +174,7 @@ model Contact {
   workflowExecutions WorkflowExecution[]
   careerProfile      CareerProfile?
   bookings           Booking[]
+  catalogOrders      CatalogOrder[]
 
   @@unique([userId, phone])
   @@unique([userId, instagramUserId])
@@ -964,6 +966,11 @@ model CatalogSite {
   contactWhatsapp String?   @map("contact_whatsapp") @db.VarChar(30)
   address         String?
   publishedAt     DateTime? @map("published_at")
+  // Merchant checkout (catalog commerce) — per-business UPI QR, not platform billing
+  paymentQrMediaId    Int?     @map("payment_qr_media_id")
+  paymentUpiVpa       String?  @map("payment_upi_vpa") @db.VarChar(80)
+  paymentUpiPayeeName String?  @map("payment_upi_payee_name") @db.VarChar(120)
+  paymentsEnabled     Boolean  @default(false) @map("payments_enabled")
   createdAt       DateTime  @default(now()) @map("created_at")
   updatedAt       DateTime  @updatedAt @map("updated_at")
 
@@ -971,6 +978,7 @@ model CatalogSite {
   sections CatalogSection[]
   media    CatalogMedia[]
   products CatalogProduct[]
+  orders   CatalogOrder[]
 
   @@index([status])
   @@map("catalog_sites")
@@ -1012,6 +1020,7 @@ model CatalogMedia {
   site     CatalogSite      @relation(fields: [siteId], references: [id], onDelete: Cascade)
   section  CatalogSection?  @relation(fields: [sectionId], references: [id], onDelete: SetNull)
   products CatalogProduct[]
+  orderScreenshots CatalogOrder[] @relation("CatalogOrderScreenshot")
 
   @@index([siteId, kind])
   @@index([sectionId, sortOrder])
@@ -1028,12 +1037,56 @@ model CatalogProduct {
   imageMediaId  Int?     @map("image_media_id")
   sortOrder     Int      @default(0) @map("sort_order")
   isActive      Boolean  @default(true) @map("is_active")
+  /// Inventory for catalog commerce (Phase 1). 0 = out of stock.
+  stockQuantity Int      @default(0) @map("stock_quantity")
   createdAt     DateTime @default(now()) @map("created_at")
   updatedAt     DateTime @updatedAt @map("updated_at")
 
   site  CatalogSite   @relation(fields: [siteId], references: [id], onDelete: Cascade)
   image CatalogMedia? @relation(fields: [imageMediaId], references: [id], onDelete: SetNull)
+  orders CatalogOrder[]
 
   @@index([siteId, sortOrder])
+  @@index([siteId, isActive, stockQuantity])
   @@map("catalog_products")
+}
+
+/// Catalog commerce order (Phase 3). Qty=1 in v1; stock deducts only on owner confirm.
+model CatalogOrder {
+  id                       Int       @id @default(autoincrement())
+  orderNumber              String    @unique @map("order_number") @db.VarChar(32)
+  userId                   Int       @map("user_id")
+  siteId                   Int       @map("site_id")
+  contactId                Int?      @map("contact_id")
+  customerPhone            String?   @map("customer_phone") @db.VarChar(30)
+  customerName             String?   @map("customer_name") @db.VarChar(160)
+  productId                Int?      @map("product_id")
+  productName              String    @map("product_name") @db.VarChar(160)
+  productPrice             Decimal?  @map("product_price") @db.Decimal(12, 2)
+  productImageMediaId      Int?      @map("product_image_media_id")
+  quantity                 Int       @default(1)
+  amountInr                Decimal   @map("amount_inr") @db.Decimal(12, 2)
+  paymentStatus            String    @map("payment_status") @db.VarChar(32)
+  orderStatus              String    @map("order_status") @db.VarChar(32)
+  paymentScreenshotMediaId Int?      @map("payment_screenshot_media_id")
+  verifiedAt               DateTime? @map("verified_at")
+  verifiedByUserId         Int?      @map("verified_by_user_id")
+  rejectionReason          String?   @map("rejection_reason") @db.VarChar(500)
+  notes                    String?
+  conversationId           Int?      @map("conversation_id")
+  workflowExecutionId      Int?      @map("workflow_execution_id")
+  createdAt                DateTime  @default(now()) @map("created_at")
+  updatedAt                DateTime  @updatedAt @map("updated_at")
+
+  user               User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  site               CatalogSite     @relation(fields: [siteId], references: [id], onDelete: Cascade)
+  contact            Contact?        @relation(fields: [contactId], references: [id], onDelete: SetNull)
+  product            CatalogProduct? @relation(fields: [productId], references: [id], onDelete: SetNull)
+  paymentScreenshot  CatalogMedia?   @relation("CatalogOrderScreenshot", fields: [paymentScreenshotMediaId], references: [id], onDelete: SetNull)
+
+  @@index([userId, createdAt])
+  @@index([userId, orderStatus, createdAt])
+  @@index([userId, paymentStatus, createdAt])
+  @@index([siteId, createdAt])
+  @@map("catalog_orders")
 }

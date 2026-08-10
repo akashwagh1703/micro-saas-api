@@ -49,7 +49,8 @@ export class SendMessageNodeExecutor implements NodeExecutor {
     const optionalMedia =
       data.optional_media === true ||
       rawNodeMedia.includes('{{catalog_image') ||
-      rawNodeMedia.includes('{{catalog_wa_logo');
+      rawNodeMedia.includes('{{catalog_wa_logo') ||
+      rawNodeMedia.includes('{{catalog_payment_qr');
     if (optionalMedia && !mediaUrl) {
       return {
         success: true,

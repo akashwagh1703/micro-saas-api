@@ -16,6 +16,7 @@ const INTERACTIVE_PAUSE_NODE_TYPES = new Set([
   'pick_options',
   'list_resources',
   'list_slots',
+  'list_catalog_products',
   'interactive_message',
 ]);
 
@@ -182,6 +183,7 @@ export class IncomingMessageProcessor {
       userId: number;
       conversationId: number;
       content: string | null;
+      metadata?: unknown;
       contact: { channel: string; username: string | null };
     },
     content: string,
@@ -197,17 +199,21 @@ export class IncomingMessageProcessor {
       if (pausedNode && INTERACTIVE_PAUSE_NODE_TYPES.has(pausedNode.type)) {
         const conversationId = waiting.conversationId ?? message.conversationId;
         if (conversationId) {
+          const catalogBrowse = pausedNode.type === 'list_catalog_products';
           await this.queue.enqueueSendMessage({
             userId: message.userId,
             conversationId,
-            content:
-              'Please tap one of the buttons in our last message to continue your booking. ' +
-              'Or send *book* to start a fresh booking.',
+            content: catalogBrowse
+              ? 'Please tap an option in our last catalog message to continue (Order, More Products, or Main Menu).'
+              : 'Please tap one of the buttons in our last message to continue your booking. ' +
+                'Or send *book* to start a fresh booking.',
           });
         }
         return true;
       }
     }
+
+    const inboundImage = extractInboundWhatsAppImage(message.metadata);
 
     await this.prisma.workflowExecution.update({
       where: { id: waiting.id },
@@ -220,10 +226,30 @@ export class IncomingMessageProcessor {
           channel: message.contact.channel,
           contact_username: message.contact.username ?? '',
           __resuming: true,
+          ...(inboundImage
+            ? {
+                __inbound_wa_image_id: inboundImage.id,
+                __inbound_wa_image_mime: inboundImage.mime,
+              }
+            : {
+                __inbound_wa_image_id: '',
+                __inbound_wa_image_mime: '',
+              }),
         },
       },
     });
     await this.queue.enqueueExecuteWorkflow(waiting.id);
     return true;
   }
+}
+
+function extractInboundWhatsAppImage(
+  metadata: unknown,
+): { id: string; mime: string } | null {
+  if (!metadata || typeof metadata !== 'object') return null;
+  const raw = (metadata as { raw?: Record<string, unknown> }).raw;
+  if (!raw || typeof raw !== 'object') return null;
+  const img = raw.image as { id?: string; mime_type?: string } | undefined;
+  if (!img?.id) return null;
+  return { id: String(img.id), mime: img.mime_type || 'image/jpeg' };
 }
