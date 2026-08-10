@@ -14,9 +14,12 @@ import {
   substituteContext,
 } from './booking-node.helpers';
 
+const OTHER_CATEGORY_ID = 0;
+
 /**
- * WhatsApp catalog browse (Phase 4): active products, 5/page, Order only if in stock.
- * Pagination cursor: context.catalog_product_offset
+ * WhatsApp catalog browse: products in selected category, 5/page.
+ * Requires context.catalog_category_id (0 = uncategorized / Other).
+ * Pagination: context.catalog_product_offset
  */
 @Injectable()
 export class ListCatalogProductsNodeExecutor implements NodeExecutor {
@@ -60,13 +63,68 @@ export class ListCatalogProductsNodeExecutor implements NodeExecutor {
       );
       const createOrderNodeId = String(data.create_order_node_id ?? 'create-catalog-order');
       const mainMenuNodeId = String(data.main_menu_node_id ?? 'pick-menu');
+      const categoriesNodeId = String(data.categories_node_id ?? 'list-catalog-categories');
       const selfNodeId = String(node.id);
+
+      const rawCategoryId = context.catalog_category_id;
+      if (rawCategoryId == null || rawCategoryId === '') {
+        const template = await createDynamicInteractiveTemplate(this.prisma, execution.userId, {
+          name: `wf-${execution.id}-${node.id}-pick-cat`,
+          header: 'Catalog',
+          body: 'Please choose a *category* first to see products.',
+          items: [
+            {
+              optionText: 'Categories',
+              description: 'Browse by category',
+              displayOrder: 0,
+              nextNodeId: categoriesNodeId,
+              metadata: {
+                catalog_action: 'categories',
+                catalog_category_offset: 0,
+                catalog_product_offset: 0,
+              },
+            },
+            {
+              optionText: 'Main Menu',
+              description: 'Back to start',
+              displayOrder: 1,
+              nextNodeId: mainMenuNodeId,
+              metadata: { catalog_action: 'main_menu' },
+            },
+          ],
+          useButtons: true,
+        });
+        return this.deliverAndPause(execution, contactPhone, node.id, template.id, {
+          catalog_redirect_to_categories: true,
+          catalog_product_offset: 0,
+        });
+      }
+
+      const categoryId = Number(rawCategoryId);
+      let categoryName = String(context.catalog_category_name || '').trim();
+      if (!categoryName) {
+        if (categoryId === OTHER_CATEGORY_ID) {
+          categoryName = 'Other';
+        } else {
+          const cat = await this.prisma.catalogCategory.findFirst({
+            where: { id: categoryId, siteId: site.id },
+            select: { name: true },
+          });
+          categoryName = cat?.name || 'Products';
+        }
+      }
 
       let offset = Number(context.catalog_product_offset ?? 0);
       if (!Number.isFinite(offset) || offset < 0) offset = 0;
 
       const products = await this.prisma.catalogProduct.findMany({
-        where: { siteId: site.id, isActive: true },
+        where: {
+          siteId: site.id,
+          isActive: true,
+          ...(categoryId === OTHER_CATEGORY_ID
+            ? { categoryId: null }
+            : { categoryId }),
+        },
         orderBy: [{ sortOrder: 'asc' }, { id: 'asc' }],
         include: { image: true },
       });
@@ -74,19 +132,24 @@ export class ListCatalogProductsNodeExecutor implements NodeExecutor {
       if (!products.length) {
         const template = await createDynamicInteractiveTemplate(this.prisma, execution.userId, {
           name: `wf-${execution.id}-${node.id}-empty`,
-          header: 'Catalog',
-          body: substituteContext(
-            String(
-              data.empty_message ??
-                'No products are listed yet for *{{catalog_business_name}}*.\n\nTap below to return to the main menu.',
-            ),
-            context,
-          ),
+          header: truncate(categoryName, 60),
+          body: `No products in *${categoryName}* right now.\n\nPick another category or return to the main menu.`,
           items: [
             {
-              optionText: '🏠 Main Menu',
-              description: 'Back to start',
+              optionText: 'Categories',
+              description: 'Browse other categories',
               displayOrder: 0,
+              nextNodeId: categoriesNodeId,
+              metadata: {
+                catalog_action: 'categories',
+                catalog_category_offset: 0,
+                catalog_product_offset: 0,
+              },
+            },
+            {
+              optionText: 'Main Menu',
+              description: 'Back to start',
+              displayOrder: 1,
               nextNodeId: mainMenuNodeId,
               metadata: { catalog_action: 'main_menu', catalog_product_offset: 0 },
             },
@@ -96,17 +159,17 @@ export class ListCatalogProductsNodeExecutor implements NodeExecutor {
         return this.deliverAndPause(execution, contactPhone, node.id, template.id, {
           catalog_products_offered: 0,
           catalog_product_offset: 0,
+          catalog_category_id: categoryId,
+          catalog_category_name: categoryName,
         });
       }
 
-      const page = products.slice(offset, offset + pageSize);
-      if (!page.length) {
-        // Cursor past end — restart from 0
+      let pageProducts = products.slice(offset, offset + pageSize);
+      if (!pageProducts.length) {
         offset = 0;
+        pageProducts = products.slice(0, pageSize);
       }
-      const pageProducts = products.slice(offset, offset + pageSize);
       const hasMore = offset + pageSize < products.length;
-      const isLastPage = !hasMore;
 
       for (const product of pageProducts) {
         await this.sendProductCard(execution, site.status === 'published', product);
@@ -127,15 +190,14 @@ export class ListCatalogProductsNodeExecutor implements NodeExecutor {
         const shortName = truncate(product.name, 14);
         items.push({
           optionText: truncate(`Order ${shortName}`, 20),
-          description: truncate(
-            `${formatPrice(product)} · In stock`,
-            72,
-          ),
+          description: truncate(`${formatPrice(product)} · In stock`, 72),
           displayOrder: displayOrder++,
           nextNodeId: createOrderNodeId,
           metadata: {
             catalog_action: 'order',
             catalog_product_id: product.id,
+            catalog_category_id: categoryId,
+            catalog_category_name: categoryName,
             context_field: 'catalog_product_id',
             context_value: product.id,
           },
@@ -144,72 +206,89 @@ export class ListCatalogProductsNodeExecutor implements NodeExecutor {
 
       if (hasMore) {
         items.push({
-          optionText: '➡️ More Products',
-          description: 'See the next page',
+          optionText: 'More Products',
+          description: 'Next products in this category',
           displayOrder: displayOrder++,
           nextNodeId: selfNodeId,
           metadata: {
             catalog_action: 'more',
             catalog_product_offset: offset + pageSize,
+            catalog_category_id: categoryId,
+            catalog_category_name: categoryName,
             context_field: 'catalog_product_offset',
             context_value: offset + pageSize,
           },
         });
       }
 
-      items.push({
-        optionText: '🏠 Main Menu',
-        description: 'Back to start',
-        displayOrder: displayOrder++,
-        nextNodeId: mainMenuNodeId,
-        metadata: {
-          catalog_action: 'main_menu',
-          catalog_product_offset: 0,
-          context_field: 'catalog_product_offset',
-          context_value: 0,
-        },
-      });
-
-      if (isLastPage) {
-        items.push({
-          optionText: '🔄 View Catalog',
-          description: 'Browse from the start',
+      // Keep nav rows within WhatsApp's 10-row list limit
+      const navBudget = Math.max(0, 10 - items.length);
+      const nav: typeof items = [
+        {
+          optionText: 'Main Menu',
+          description: 'Back to start',
           displayOrder: displayOrder++,
-          nextNodeId: selfNodeId,
+          nextNodeId: mainMenuNodeId,
           metadata: {
-            catalog_action: 'restart',
+            catalog_action: 'main_menu',
             catalog_product_offset: 0,
+            catalog_category_offset: 0,
             context_field: 'catalog_product_offset',
             context_value: 0,
           },
-        });
-      }
+        },
+        {
+          optionText: 'Categories',
+          description: 'Pick another category',
+          displayOrder: displayOrder++,
+          nextNodeId: categoriesNodeId,
+          metadata: {
+            catalog_action: 'categories',
+            catalog_category_offset: 0,
+            catalog_product_offset: 0,
+            catalog_category_id: null,
+            context_field: 'catalog_category_offset',
+            context_value: 0,
+          },
+        },
+        {
+          optionText: 'Catalog',
+          description: 'Shop from the start',
+          displayOrder: displayOrder++,
+          nextNodeId: categoriesNodeId,
+          metadata: {
+            catalog_action: 'catalog',
+            catalog_category_offset: 0,
+            catalog_product_offset: 0,
+            catalog_category_id: null,
+            context_field: 'catalog_category_offset',
+            context_value: 0,
+          },
+        },
+      ];
+      items.push(...nav.slice(0, navBudget));
 
-      // WhatsApp list max 10 rows
       const capped = items.slice(0, 10);
-      const body = isLastPage
-        ? substituteContext(
-            String(
-              data.end_body ??
-                'That’s the end of our catalog for *{{catalog_business_name}}*.\n\nTap a product to order, or use the menu below.',
-            ),
-            context,
-          )
-        : substituteContext(
-            String(
-              data.body ??
-                '🛍️ *Catalog* — page {{catalog_page_label}}\n\nTap *Order* on an in-stock item, or *More Products* to continue.',
-            ),
-            {
-              ...context,
-              catalog_page_label: `${Math.floor(offset / pageSize) + 1}`,
-            },
-          );
+      const pageLabel = String(Math.floor(offset / pageSize) + 1);
+      const body = hasMore
+        ? `*${categoryName}* — page ${pageLabel}\n\nProducts are listed above.\nTap *Order* for an in-stock item, or *More Products* to continue.`
+        : `*${categoryName}*\n\nProducts are listed above.\nTap *Order* for an in-stock item, or use the menu below.`;
 
       const template = await createDynamicInteractiveTemplate(this.prisma, execution.userId, {
-        name: `wf-${execution.id}-${node.id}-p${offset}`,
-        header: data.header ? substituteContext(String(data.header), context) : '🛍️ Catalog',
-        body,
+        name: `wf-${execution.id}-${node.id}-p${offset}-c${categoryId}`,
+        header: data.header
+          ? substituteContext(String(data.header), {
+              ...context,
+              catalog_category_name: categoryName,
+            })
+          : truncate(categoryName, 60),
+        body: data.body
+          ? substituteContext(String(data.body), {
+              ...context,
+              catalog_category_name: categoryName,
+              catalog_page_label: pageLabel,
+            })
+          : body,
         footer: data.footer ? substituteContext(String(data.footer), context) : undefined,
         items: capped,
         useButtons: capped.length <= 3,
@@ -219,6 +298,8 @@ export class ListCatalogProductsNodeExecutor implements NodeExecutor {
         catalog_products_offered: pageProducts.length,
         catalog_product_offset: offset,
         catalog_has_more: hasMore,
+        catalog_category_id: categoryId,
+        catalog_category_name: categoryName,
       });
     } catch (error: any) {
       this.logger.error(`list_catalog_products failed: ${error.message}`);
@@ -233,15 +314,13 @@ export class ListCatalogProductsNodeExecutor implements NodeExecutor {
   ): Promise<void> {
     if (!execution.conversationId) return;
 
-    const stockQty = product.stockQuantity ?? 0;
-    const stockLabel = stockQty > 0 ? '✅ In Stock' : '❌ Out of Stock';
     const price = formatPrice(product);
-    const caption = [
-      `*${product.name}*`,
-      price,
-      stockLabel,
-      product.description?.trim() ? product.description.trim().slice(0, 120) : '',
-    ]
+    const shortDesc = product.description?.trim()
+      ? truncate(product.description.trim(), 120)
+      : '';
+    const stockQty = product.stockQuantity ?? 0;
+    const stockLine = stockQty > 0 ? '' : 'Out of stock';
+    const caption = [`*${product.name}*`, price, shortDesc, stockLine]
       .filter(Boolean)
       .join('\n');
 

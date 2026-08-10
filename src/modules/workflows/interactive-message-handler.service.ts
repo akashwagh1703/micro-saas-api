@@ -200,6 +200,15 @@ export class InteractiveMessageHandlerService {
         if (meta.catalog_product_offset != null) {
           context.catalog_product_offset = meta.catalog_product_offset;
         }
+        if (meta.catalog_category_id !== undefined) {
+          context.catalog_category_id = meta.catalog_category_id;
+        }
+        if (meta.catalog_category_name != null) {
+          context.catalog_category_name = meta.catalog_category_name;
+        }
+        if (meta.catalog_category_offset != null) {
+          context.catalog_category_offset = meta.catalog_category_offset;
+        }
         if (meta.catalog_action != null) {
           context.catalog_action = meta.catalog_action;
         }

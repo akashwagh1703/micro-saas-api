@@ -25,3 +25,6 @@ export const CATALOG_ORDER_QUANTITY_V1 = 1;
 
 /** Phase 0 D4 — products per WhatsApp catalog page. */
 export const CATALOG_WA_PRODUCTS_PER_PAGE = 5;
+
+/** Categories per WhatsApp list page (leave room for More + Main Menu; WA max 10). */
+export const CATALOG_WA_CATEGORIES_PER_PAGE = 8;

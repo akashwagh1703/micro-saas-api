@@ -18,6 +18,7 @@ import { BookSlotNodeExecutor } from './nodes/book-slot-node.executor';
 import { PickOptionsNodeExecutor } from './nodes/pick-options-node.executor';
 // Phase 5: Interactive Message Node Executor
 import { InteractiveMessageNodeExecutor } from './nodes/interactive-message-node.executor';
+import { ListCatalogCategoriesNodeExecutor } from './nodes/list-catalog-categories-node.executor';
 import { ListCatalogProductsNodeExecutor } from './nodes/list-catalog-products-node.executor';
 import { CreateCatalogOrderNodeExecutor } from './nodes/create-catalog-order-node.executor';
 import { CollectPaymentScreenshotNodeExecutor } from './nodes/collect-payment-screenshot-node.executor';
@@ -53,6 +54,7 @@ export class WorkflowExecutionService {
     listSlots: ListSlotsNodeExecutor,
     bookSlot: BookSlotNodeExecutor,
     pickOptions: PickOptionsNodeExecutor,
+    listCatalogCategories: ListCatalogCategoriesNodeExecutor,
     listCatalogProducts: ListCatalogProductsNodeExecutor,
     createCatalogOrder: CreateCatalogOrderNodeExecutor,
     collectPaymentScreenshot: CollectPaymentScreenshotNodeExecutor,
@@ -73,6 +75,7 @@ export class WorkflowExecutionService {
       list_slots: listSlots,
       book_slot: bookSlot,
       pick_options: pickOptions,
+      list_catalog_categories: listCatalogCategories,
       list_catalog_products: listCatalogProducts,
       create_catalog_order: createCatalogOrder,
       collect_payment_screenshot: collectPaymentScreenshot,

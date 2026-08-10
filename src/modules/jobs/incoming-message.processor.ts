@@ -16,6 +16,7 @@ const INTERACTIVE_PAUSE_NODE_TYPES = new Set([
   'pick_options',
   'list_resources',
   'list_slots',
+  'list_catalog_categories',
   'list_catalog_products',
   'interactive_message',
 ]);
@@ -199,12 +200,14 @@ export class IncomingMessageProcessor {
       if (pausedNode && INTERACTIVE_PAUSE_NODE_TYPES.has(pausedNode.type)) {
         const conversationId = waiting.conversationId ?? message.conversationId;
         if (conversationId) {
-          const catalogBrowse = pausedNode.type === 'list_catalog_products';
+          const catalogBrowse =
+            pausedNode.type === 'list_catalog_products' ||
+            pausedNode.type === 'list_catalog_categories';
           await this.queue.enqueueSendMessage({
             userId: message.userId,
             conversationId,
             content: catalogBrowse
-              ? 'Please tap an option in our last catalog message to continue (Order, More Products, or Main Menu).'
+              ? 'Please tap an option in our last catalog message to continue.'
               : 'Please tap one of the buttons in our last message to continue your booking. ' +
                 'Or send *book* to start a fresh booking.',
           });

@@ -1,4 +1,5 @@
 import {
+  CatalogCategory,
   CatalogMedia,
   CatalogOrder,
   CatalogProduct,
@@ -10,7 +11,11 @@ import { buildCatalogPublicUrl } from './catalog.constants';
 type SiteWithRelations = CatalogSite & {
   sections?: CatalogSection[];
   media?: CatalogMedia[];
-  products?: (CatalogProduct & { image?: CatalogMedia | null })[];
+  categories?: CatalogCategory[];
+  products?: (CatalogProduct & {
+    image?: CatalogMedia | null;
+    category?: CatalogCategory | null;
+  })[];
 };
 
 export function serializeCatalogMedia(
@@ -48,14 +53,29 @@ export function serializeCatalogSection(s: CatalogSection) {
   };
 }
 
+export function serializeCatalogCategory(c: CatalogCategory) {
+  return {
+    id: c.id,
+    site_id: c.siteId,
+    name: c.name,
+    description: c.description,
+    sort_order: c.sortOrder,
+    is_active: c.isActive,
+    created_at: c.createdAt,
+    updated_at: c.updatedAt,
+  };
+}
+
 export function serializeCatalogProduct(
-  p: CatalogProduct & { image?: CatalogMedia | null },
+  p: CatalogProduct & { image?: CatalogMedia | null; category?: CatalogCategory | null },
   publicMediaUrl: (mediaId: number) => string,
 ) {
   const stockQuantity = p.stockQuantity ?? 0;
   return {
     id: p.id,
     site_id: p.siteId,
+    category_id: p.categoryId ?? null,
+    category: p.category ? serializeCatalogCategory(p.category) : null,
     name: p.name,
     description: p.description,
     price_amount: p.priceAmount != null ? Number(p.priceAmount) : null,
@@ -79,6 +99,7 @@ export function serializeCatalogSite(
   opts?: { includeDraft?: boolean },
 ) {
   const sections = [...(site.sections ?? [])].sort((a, b) => a.sortOrder - b.sortOrder);
+  const categories = [...(site.categories ?? [])].sort((a, b) => a.sortOrder - b.sortOrder);
   const products = [...(site.products ?? [])].sort((a, b) => a.sortOrder - b.sortOrder);
   const media = [...(site.media ?? [])].sort((a, b) => a.sortOrder - b.sortOrder);
 
@@ -99,6 +120,9 @@ export function serializeCatalogSite(
     created_at: site.createdAt,
     updated_at: site.updatedAt,
     sections: sections.map(serializeCatalogSection),
+    categories: categories
+      .filter((c) => opts?.includeDraft || c.isActive)
+      .map(serializeCatalogCategory),
     media: media.map((m) => serializeCatalogMedia(m, publicMediaUrl)),
     products: products
       .filter((p) => opts?.includeDraft || p.isActive)

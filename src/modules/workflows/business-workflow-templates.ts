@@ -960,15 +960,15 @@ const supportTeamAssistant: WorkflowTemplate = {
 };
 
 /**
- * Catalog commerce (Phase 4) — Hi → Website | Catalog.
- * Catalog → products 5/page → Order (in stock) → merchant QR → screenshot → pending verification.
+ * Catalog commerce — Hi → Website | Catalog.
+ * Catalog → categories (paginated) → products 5/page → Order (in stock) → merchant QR → screenshot → verify.
  * Placeholders {{catalog_*}} filled at runtime from CatalogSite.
  */
 const catalogShare: WorkflowTemplate = {
   slug: 'catalog-share',
   name: 'Catalog Shop',
   description:
-    'Welcome menu (Website / Catalog), browse products with stock, order via business UPI QR + screenshot verification.',
+    'Welcome menu (Website / Catalog), browse by category then products with stock, order via business UPI QR + screenshot verification.',
   category: 'guided',
   trigger_type: 'message_received',
   definition: graphFlow(
@@ -993,7 +993,7 @@ const catalogShare: WorkflowTemplate = {
               text: '🛍️ Catalog',
               description: 'Browse products & order',
               value: 'catalog',
-              next_node_id: 'list-catalog-products',
+              next_node_id: 'list-catalog-categories',
             },
           ],
           'We’re glad you’re here',
@@ -1006,23 +1006,38 @@ const catalogShare: WorkflowTemplate = {
         x: 280,
       },
       {
-        id: 'list-catalog-products',
-        type: 'list_catalog_products',
+        id: 'list-catalog-categories',
+        type: 'list_catalog_categories',
         y: 360,
         x: 40,
         data: {
-          label: 'Browse catalog',
-          summary: 'Products 5/page with Order when in stock',
+          label: 'Browse categories',
+          summary: 'Category picker (paginated if more than 8)',
+          page_size: 8,
+          products_node_id: 'list-catalog-products',
+          main_menu_node_id: 'pick-menu',
+          header: 'Catalog',
+        },
+      },
+      {
+        id: 'list-catalog-products',
+        type: 'list_catalog_products',
+        y: 480,
+        x: 40,
+        data: {
+          label: 'Browse products',
+          summary: 'Category products 5/page with Order when in stock',
           page_size: 5,
           create_order_node_id: 'create-catalog-order',
           main_menu_node_id: 'pick-menu',
-          header: '🛍️ Catalog',
+          categories_node_id: 'list-catalog-categories',
+          header: '{{catalog_category_name}}',
         },
       },
       {
         id: 'create-catalog-order',
         type: 'create_catalog_order',
-        y: 500,
+        y: 620,
         x: 40,
         data: {
           label: 'Create order',
@@ -1032,9 +1047,9 @@ const catalogShare: WorkflowTemplate = {
       {
         ...sendNode(
           'send-payment-qr',
-          640,
+          760,
           'Send payment QR',
-          '🧾 *Order {{catalog_order_number}}*\n\n*{{catalog_order_product_name}}*\nAmount: *₹{{catalog_order_amount}}*\n\n{{catalog_payment_upi_line}}\n\nScan the business UPI QR below to pay, then send a screenshot of the payment.',
+          '🧾 *Order {{catalog_order_number}}*\n\n*{{catalog_order_product_name}}*\nAmount: *₹{{catalog_order_amount}}*\n\n{{catalog_payment_upi_line}}\n\nScan the business UPI QR below to pay, then send a *screenshot* of the payment.',
           'Sends merchant payment QR (not AutoWave billing)',
           {
             media_url: '{{catalog_payment_qr_url}}',
@@ -1046,27 +1061,27 @@ const catalogShare: WorkflowTemplate = {
       {
         id: 'collect-payment-screenshot',
         type: 'collect_payment_screenshot',
-        y: 780,
+        y: 900,
         x: 40,
         data: {
           label: 'Collect payment screenshot',
           summary: 'Waits for customer UPI payment image',
           question:
-            '📸 Please send a *screenshot* of your UPI payment for order *{{catalog_order_number}}*.\n\nWe will verify it shortly — you will get a confirmation once approved.',
+            'Please send a *screenshot* of your UPI payment for order *{{catalog_order_number}}*.',
           retry_message:
             'Please send a *photo/screenshot* of your UPI payment (an image), not a text message.',
         },
       },
       {
+        // Acknowledgement is sent once by CatalogOrderNotificationService (full order details).
         ...sendNode(
           'send-payment-received',
-          920,
-          'Payment received',
-          '✅ Thanks! We received your payment screenshot for order *{{catalog_order_number}}*.\n\n*{{catalog_business_name}}* is verifying it now. You will get a WhatsApp message once it is confirmed or if we need anything else.',
-          'Acknowledges screenshot; owner verifies in Orders',
+          1040,
+          'Payment received (skip duplicate)',
+          '',
+          'Skipped — rich receipt is sent by order notification service',
           {
-            media_url: '{{catalog_wa_logo_url}}',
-            optional_media: true,
+            optional_text: true,
           },
         ),
         x: 40,
@@ -1088,8 +1103,9 @@ const catalogShare: WorkflowTemplate = {
     ],
     [
       { id: 'e1', source: 'trigger-1', target: 'pick-menu' },
-      { id: 'e2', source: 'pick-menu', target: 'list-catalog-products' },
+      { id: 'e2', source: 'pick-menu', target: 'list-catalog-categories' },
       { id: 'e3', source: 'pick-menu', target: 'send-website' },
+      { id: 'e3b', source: 'list-catalog-categories', target: 'list-catalog-products' },
       { id: 'e4', source: 'list-catalog-products', target: 'create-catalog-order' },
       { id: 'e5', source: 'create-catalog-order', target: 'send-payment-qr' },
       { id: 'e6', source: 'send-payment-qr', target: 'collect-payment-screenshot' },

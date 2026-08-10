@@ -147,6 +147,49 @@ export class ReorderCatalogSectionsDto {
   sections!: ReorderSectionItemDto[];
 }
 
+export class CreateCatalogCategoryDto {
+  @IsString()
+  @MinLength(1)
+  @MaxLength(80)
+  name!: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(255)
+  description?: string;
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  sort_order?: number;
+
+  @IsOptional()
+  @IsBoolean()
+  is_active?: boolean;
+}
+
+export class UpdateCatalogCategoryDto {
+  @IsOptional()
+  @IsString()
+  @MinLength(1)
+  @MaxLength(80)
+  name?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(255)
+  description?: string | null;
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  sort_order?: number;
+
+  @IsOptional()
+  @IsBoolean()
+  is_active?: boolean;
+}
+
 export class CreateCatalogProductDto {
   @IsString()
   @MinLength(1)
@@ -171,6 +214,10 @@ export class CreateCatalogProductDto {
   @IsOptional()
   @IsInt()
   image_media_id?: number;
+
+  @IsOptional()
+  @IsInt()
+  category_id?: number | null;
 
   @IsOptional()
   @IsInt()
@@ -212,6 +259,10 @@ export class UpdateCatalogProductDto {
   @IsOptional()
   @IsInt()
   image_media_id?: number | null;
+
+  @IsOptional()
+  @IsInt()
+  category_id?: number | null;
 
   @IsOptional()
   @IsInt()

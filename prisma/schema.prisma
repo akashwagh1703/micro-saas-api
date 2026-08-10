@@ -974,14 +974,34 @@ model CatalogSite {
   createdAt       DateTime  @default(now()) @map("created_at")
   updatedAt       DateTime  @updatedAt @map("updated_at")
 
-  user     User             @relation(fields: [userId], references: [id], onDelete: Cascade)
-  sections CatalogSection[]
-  media    CatalogMedia[]
-  products CatalogProduct[]
-  orders   CatalogOrder[]
+  user       User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  sections   CatalogSection[]
+  media      CatalogMedia[]
+  categories CatalogCategory[]
+  products   CatalogProduct[]
+  orders     CatalogOrder[]
 
   @@index([status])
   @@map("catalog_sites")
+}
+
+/// Product category for WhatsApp catalog browse (pick category → products).
+model CatalogCategory {
+  id          Int      @id @default(autoincrement())
+  siteId      Int      @map("site_id")
+  name        String   @db.VarChar(80)
+  description String?  @db.VarChar(255)
+  sortOrder   Int      @default(0) @map("sort_order")
+  isActive    Boolean  @default(true) @map("is_active")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  site     CatalogSite      @relation(fields: [siteId], references: [id], onDelete: Cascade)
+  products CatalogProduct[]
+
+  @@index([siteId, sortOrder])
+  @@index([siteId, isActive])
+  @@map("catalog_categories")
 }
 
 model CatalogSection {
@@ -1030,6 +1050,7 @@ model CatalogMedia {
 model CatalogProduct {
   id            Int      @id @default(autoincrement())
   siteId        Int      @map("site_id")
+  categoryId    Int?     @map("category_id")
   name          String   @db.VarChar(160)
   description   String?
   priceAmount   Decimal? @map("price_amount") @db.Decimal(12, 2)
@@ -1042,11 +1063,13 @@ model CatalogProduct {
   createdAt     DateTime @default(now()) @map("created_at")
   updatedAt     DateTime @updatedAt @map("updated_at")
 
-  site  CatalogSite   @relation(fields: [siteId], references: [id], onDelete: Cascade)
-  image CatalogMedia? @relation(fields: [imageMediaId], references: [id], onDelete: SetNull)
-  orders CatalogOrder[]
+  site     CatalogSite      @relation(fields: [siteId], references: [id], onDelete: Cascade)
+  category CatalogCategory? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  image    CatalogMedia?    @relation(fields: [imageMediaId], references: [id], onDelete: SetNull)
+  orders   CatalogOrder[]
 
   @@index([siteId, sortOrder])
+  @@index([siteId, categoryId, sortOrder])
   @@index([siteId, isActive, stockQuantity])
   @@map("catalog_products")
 }

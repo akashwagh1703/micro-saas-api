@@ -28,6 +28,7 @@ import { BookSlotNodeExecutor } from './nodes/book-slot-node.executor';
 import { PickOptionsNodeExecutor } from './nodes/pick-options-node.executor';
 // Phase 5: Interactive Message Services
 import { InteractiveMessageNodeExecutor } from './nodes/interactive-message-node.executor';
+import { ListCatalogCategoriesNodeExecutor } from './nodes/list-catalog-categories-node.executor';
 import { ListCatalogProductsNodeExecutor } from './nodes/list-catalog-products-node.executor';
 import { CreateCatalogOrderNodeExecutor } from './nodes/create-catalog-order-node.executor';
 import { CollectPaymentScreenshotNodeExecutor } from './nodes/collect-payment-screenshot-node.executor';
@@ -73,6 +74,7 @@ import { CryptoModule } from '../../common/crypto/crypto.module';
     PickOptionsNodeExecutor,
     // Phase 5: Interactive Message Services
     InteractiveMessageNodeExecutor,
+    ListCatalogCategoriesNodeExecutor,
     ListCatalogProductsNodeExecutor,
     CreateCatalogOrderNodeExecutor,
     CollectPaymentScreenshotNodeExecutor,

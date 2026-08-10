@@ -68,28 +68,67 @@ export class CatalogOrderNotificationService {
       `🛍️ New catalog payment\n\n${body}\n\nOpen AutoWave → Orders to confirm or reject.`,
     );
 
+    const customerName = order.customerName?.trim() || 'there';
     await this.sendCustomerText(
       userId,
       order,
-      `✅ Payment screenshot received for order *${order.orderNumber}*.\n\nWe are verifying your payment for *${order.productName}* (${amountLabel(order)}). You'll get a message once confirmed.`,
+      [
+        `✅ *Payment screenshot received*`,
+        ``,
+        `Hi ${customerName}, thank you. We have received your payment screenshot.`,
+        ``,
+        `*Order details*`,
+        `Order: *${order.orderNumber}*`,
+        `Product: *${order.productName}*`,
+        `Qty: ${order.quantity}`,
+        `Amount: *${amountLabel(order)}*`,
+        order.customerPhone ? `Phone: ${order.customerPhone}` : null,
+        ``,
+        `Our team is verifying your payment now. You will receive a confirmation message once it is approved.`,
+      ]
+        .filter((line) => line != null)
+        .join('\n'),
     );
   }
 
   async notifyConfirmed(userId: number, order: CatalogOrder): Promise<void> {
+    const customerName = order.customerName?.trim() || 'there';
     await this.sendCustomerText(
       userId,
       order,
-      `🎉 Payment confirmed!\n\nOrder *${order.orderNumber}*\n*${order.productName}* · ${amountLabel(order)}\n\nThank you — your order is confirmed.`,
+      [
+        `🎉 *Order confirmed*`,
+        ``,
+        `Hi ${customerName}, your payment is verified and your order is confirmed.`,
+        ``,
+        `*Confirmed order*`,
+        `Order: *${order.orderNumber}*`,
+        `Product: *${order.productName}*`,
+        `Qty: ${order.quantity}`,
+        `Amount paid: *${amountLabel(order)}*`,
+        ``,
+        `Thank you for shopping with us. We will update you on next steps shortly.`,
+      ].join('\n'),
     );
   }
 
   async notifyRejected(userId: number, order: CatalogOrder): Promise<void> {
     const reason = order.rejectionReason?.trim();
-    const reasonLine = reason ? `\n\nReason: ${reason}` : '';
+    const reasonLine = reason ? `\nReason: ${reason}` : '';
+    const customerName = order.customerName?.trim() || 'there';
     await this.sendCustomerText(
       userId,
       order,
-      `❌ We could not verify payment for order *${order.orderNumber}* (*${order.productName}*).${reasonLine}\n\nPlease reply if you need help, or place a new order.`,
+      [
+        `❌ *Payment not verified*`,
+        ``,
+        `Hi ${customerName}, we could not verify the payment for order *${order.orderNumber}*.`,
+        ``,
+        `Product: *${order.productName}*`,
+        `Amount: *${amountLabel(order)}*${reasonLine}`,
+        ``,
+        `Please reply here if you need help, or place a new order from the catalog.`,
+      ].join('\n'),
     );
   }
 

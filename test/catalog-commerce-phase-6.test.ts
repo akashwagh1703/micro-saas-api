@@ -22,16 +22,23 @@ describe('Catalog commerce Phase 6 — template + upgrade fingerprint', () => {
 
     const nodes = template!.definition.nodes ?? [];
     const types = new Set(nodes.map((n) => n.type));
+    assert.ok(types.has('list_catalog_categories'));
     assert.ok(types.has('list_catalog_products'));
     assert.ok(types.has('create_catalog_order'));
     assert.ok(types.has('collect_payment_screenshot'));
     assert.ok(!nodes.some((n) => n.id === 'save-lead-order'));
     assert.ok(!nodes.some((n) => n.id === 'send-image-1'));
+    assert.ok(nodes.some((n) => n.id === 'list-catalog-categories'));
 
     const menu = nodes.find((n) => n.id === 'pick-menu');
     const options = Array.isArray(menu?.data?.options) ? menu!.data!.options : [];
     assert.ok(options.some((o: { value?: string }) => o.value === 'website'));
-    assert.ok(options.some((o: { value?: string }) => o.value === 'catalog'));
+    assert.ok(
+      options.some(
+        (o: { value?: string; next_node_id?: string }) =>
+          o.value === 'catalog' && o.next_node_id === 'list-catalog-categories',
+      ),
+    );
     assert.ok(!options.some((o: { value?: string }) => o.value === 'order'));
   });
 

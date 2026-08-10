@@ -26,11 +26,13 @@ import { CatalogService } from './catalog.service';
 import { CatalogOrdersService } from './catalog-orders.service';
 import {
   AttachCatalogOrderScreenshotDto,
+  CreateCatalogCategoryDto,
   CreateCatalogOrderDto,
   CreateCatalogProductDto,
   CreateCatalogSiteDto,
   RejectCatalogOrderDto,
   ReorderCatalogSectionsDto,
+  UpdateCatalogCategoryDto,
   UpdateCatalogMediaDto,
   UpdateCatalogPaymentSettingsDto,
   UpdateCatalogProductDto,
@@ -106,6 +108,37 @@ export class CatalogController {
     @Body() dto: ReorderCatalogSectionsDto,
   ) {
     return this.catalog.reorderSections(userId, dto);
+  }
+
+  @Get('categories')
+  listCategories(@CurrentUser('id') userId: number) {
+    return this.catalog.listCategories(userId);
+  }
+
+  @Post('categories')
+  @HttpCode(HttpStatus.CREATED)
+  createCategory(
+    @CurrentUser('id') userId: number,
+    @Body() dto: CreateCatalogCategoryDto,
+  ) {
+    return this.catalog.createCategory(userId, dto);
+  }
+
+  @Patch('categories/:id')
+  updateCategory(
+    @CurrentUser('id') userId: number,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: UpdateCatalogCategoryDto,
+  ) {
+    return this.catalog.updateCategory(userId, id, dto);
+  }
+
+  @Delete('categories/:id')
+  deleteCategory(
+    @CurrentUser('id') userId: number,
+    @Param('id', ParseIntPipe) id: number,
+  ) {
+    return this.catalog.deleteCategory(userId, id);
   }
 
   @Get('products')

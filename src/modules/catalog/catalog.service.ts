@@ -39,7 +39,9 @@ import {
 import {
   CreateCatalogProductDto,
   CreateCatalogSiteDto,
+  CreateCatalogCategoryDto,
   ReorderCatalogSectionsDto,
+  UpdateCatalogCategoryDto,
   UpdateCatalogMediaDto,
   UpdateCatalogPaymentSettingsDto,
   UpdateCatalogProductDto,
@@ -47,6 +49,7 @@ import {
   UpdateCatalogSiteDto,
 } from './dto/catalog.dto';
 import {
+  serializeCatalogCategory,
   serializeCatalogMedia,
   serializeCatalogPayment,
   serializeCatalogProduct,
@@ -331,11 +334,65 @@ export class CatalogService {
     return { sections: sections.map(serializeCatalogSection) };
   }
 
+  async listCategories(userId: number) {
+    const site = await this.requireSite(userId);
+    const categories = await this.prisma.catalogCategory.findMany({
+      where: { siteId: site.id },
+      orderBy: [{ sortOrder: 'asc' }, { id: 'asc' }],
+    });
+    return { categories: categories.map(serializeCatalogCategory) };
+  }
+
+  async createCategory(userId: number, dto: CreateCatalogCategoryDto) {
+    const site = await this.requireSite(userId);
+    const category = await this.prisma.catalogCategory.create({
+      data: {
+        siteId: site.id,
+        name: dto.name.trim(),
+        description: dto.description?.trim() || null,
+        sortOrder: dto.sort_order ?? 0,
+        isActive: dto.is_active ?? true,
+      },
+    });
+    return { category: serializeCatalogCategory(category) };
+  }
+
+  async updateCategory(userId: number, categoryId: number, dto: UpdateCatalogCategoryDto) {
+    const site = await this.requireSite(userId);
+    const category = await this.prisma.catalogCategory.findFirst({
+      where: { id: categoryId, siteId: site.id },
+    });
+    if (!category) throw new NotFoundException('Category not found');
+
+    const updated = await this.prisma.catalogCategory.update({
+      where: { id: category.id },
+      data: {
+        ...(dto.name !== undefined ? { name: dto.name.trim() } : {}),
+        ...(dto.description !== undefined
+          ? { description: dto.description?.trim() || null }
+          : {}),
+        ...(dto.sort_order !== undefined ? { sortOrder: dto.sort_order } : {}),
+        ...(dto.is_active !== undefined ? { isActive: dto.is_active } : {}),
+      },
+    });
+    return { category: serializeCatalogCategory(updated) };
+  }
+
+  async deleteCategory(userId: number, categoryId: number) {
+    const site = await this.requireSite(userId);
+    const category = await this.prisma.catalogCategory.findFirst({
+      where: { id: categoryId, siteId: site.id },
+    });
+    if (!category) throw new NotFoundException('Category not found');
+    await this.prisma.catalogCategory.delete({ where: { id: category.id } });
+    return { ok: true };
+  }
+
   async listProducts(userId: number) {
     const site = await this.requireSite(userId);
     const products = await this.prisma.catalogProduct.findMany({
       where: { siteId: site.id },
-      include: { image: true },
+      include: { image: true, category: true },
       orderBy: { sortOrder: 'asc' },
     });
     return {
@@ -348,9 +405,13 @@ export class CatalogService {
     if (dto.image_media_id != null) {
       await this.assertMediaOnSite(site.id, dto.image_media_id);
     }
+    if (dto.category_id != null) {
+      await this.assertCategoryOnSite(site.id, dto.category_id);
+    }
     const product = await this.prisma.catalogProduct.create({
       data: {
         siteId: site.id,
+        categoryId: dto.category_id ?? null,
         name: dto.name.trim(),
         description: dto.description?.trim() || null,
         priceAmount:
@@ -361,7 +422,7 @@ export class CatalogService {
         isActive: dto.is_active ?? true,
         stockQuantity: dto.stock_quantity ?? 0,
       },
-      include: { image: true },
+      include: { image: true, category: true },
     });
     return { product: serializeCatalogProduct(product, this.mediaUrl) };
   }
@@ -375,6 +436,9 @@ export class CatalogService {
 
     if (dto.image_media_id != null) {
       await this.assertMediaOnSite(site.id, dto.image_media_id);
+    }
+    if (dto.category_id != null) {
+      await this.assertCategoryOnSite(site.id, dto.category_id);
     }
 
     const updated = await this.prisma.catalogProduct.update({
@@ -398,11 +462,12 @@ export class CatalogService {
         ...(dto.image_media_id !== undefined
           ? { imageMediaId: dto.image_media_id }
           : {}),
+        ...(dto.category_id !== undefined ? { categoryId: dto.category_id } : {}),
         ...(dto.sort_order !== undefined ? { sortOrder: dto.sort_order } : {}),
         ...(dto.is_active !== undefined ? { isActive: dto.is_active } : {}),
         ...(dto.stock_quantity !== undefined ? { stockQuantity: dto.stock_quantity } : {}),
       },
-      include: { image: true },
+      include: { image: true, category: true },
     });
     return { product: serializeCatalogProduct(updated, this.mediaUrl) };
   }
@@ -696,13 +761,22 @@ export class CatalogService {
     );
   }
 
+  private async assertCategoryOnSite(siteId: number, categoryId: number): Promise<void> {
+    const category = await this.prisma.catalogCategory.findFirst({
+      where: { id: categoryId, siteId },
+      select: { id: true },
+    });
+    if (!category) throw new BadRequestException('Category not found on this site');
+  }
+
   private siteInclude() {
     return {
       sections: { orderBy: { sortOrder: 'asc' as const } },
       media: { orderBy: { sortOrder: 'asc' as const } },
+      categories: { orderBy: { sortOrder: 'asc' as const } },
       products: {
         orderBy: { sortOrder: 'asc' as const },
-        include: { image: true },
+        include: { image: true, category: true },
       },
     };
   }
