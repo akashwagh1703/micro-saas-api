@@ -13,6 +13,7 @@ import { CatalogStorageService } from './catalog-storage.service';
 import { CatalogWhatsAppContextService } from './catalog-whatsapp-context.service';
 import { CatalogOrdersService } from './catalog-orders.service';
 import { CatalogOrderNotificationService } from './catalog-order-notification.service';
+import { CatalogPackingSlipService } from './catalog-packing-slip.service';
 
 @Module({
   imports: [
@@ -31,12 +32,14 @@ import { CatalogOrderNotificationService } from './catalog-order-notification.se
     CatalogWhatsAppContextService,
     CatalogOrdersService,
     CatalogOrderNotificationService,
+    CatalogPackingSlipService,
   ],
   exports: [
     CatalogService,
     CatalogShareService,
     CatalogWhatsAppContextService,
     CatalogOrdersService,
+    CatalogOrderNotificationService,
   ],
 })
 export class CatalogModule {}

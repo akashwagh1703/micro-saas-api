@@ -17,10 +17,25 @@ import {
 import { CATALOG_IMAGE_MIME, CATALOG_MAX_IMAGE_BYTES } from './catalog.constants';
 import {
   AttachCatalogOrderScreenshotDto,
+  BulkMarkCatalogOrdersShippedDto,
   CreateCatalogOrderDto,
+  MarkCatalogOrderShippedDto,
   RejectCatalogOrderDto,
+  SetCatalogOrderShippingAddressDto,
 } from './dto/catalog.dto';
 import { serializeCatalogOrder } from './catalog.serializer';
+import { CatalogPackingSlipService } from './catalog-packing-slip.service';
+import { buildCourierTrackingUrl } from './catalog-tracking-url.util';
+
+export type CatalogOrderListOpts = {
+  order_status?: string;
+  payment_status?: string;
+  q?: string;
+  from?: string;
+  to?: string;
+  limit?: number;
+  offset?: number;
+};
 
 @Injectable()
 export class CatalogOrdersService {
@@ -29,6 +44,7 @@ export class CatalogOrdersService {
     private readonly share: CatalogShareService,
     private readonly storage: CatalogStorageService,
     private readonly notify: CatalogOrderNotificationService,
+    private readonly packingSlips: CatalogPackingSlipService,
   ) {}
 
   private readonly mediaUrl = (mediaId: number) => this.share.buildPublicMediaUrl(mediaId);
@@ -113,25 +129,9 @@ export class CatalogOrdersService {
     return this.attachScreenshot(userId, orderId, { media_id: media.id });
   }
 
-  async list(
-    userId: number,
-    opts?: { order_status?: string; payment_status?: string; limit?: number; offset?: number },
-  ) {
+  async list(userId: number, opts?: CatalogOrderListOpts) {
     await this.requireSite(userId);
-
-    const where: Prisma.CatalogOrderWhereInput = { userId };
-    if (opts?.order_status) {
-      if (!(CATALOG_ORDER_STATUSES as readonly string[]).includes(opts.order_status)) {
-        throw new BadRequestException('Invalid order_status filter');
-      }
-      where.orderStatus = opts.order_status;
-    }
-    if (opts?.payment_status) {
-      if (!(CATALOG_PAYMENT_STATUSES as readonly string[]).includes(opts.payment_status)) {
-        throw new BadRequestException('Invalid payment_status filter');
-      }
-      where.paymentStatus = opts.payment_status;
-    }
+    const where = this.buildListWhere(userId, opts);
 
     const take = Math.min(Math.max(opts?.limit ?? 50, 1), 100);
     const skip = Math.max(opts?.offset ?? 0, 0);
@@ -153,6 +153,278 @@ export class CatalogOrdersService {
       limit: take,
       offset: skip,
     };
+  }
+
+  /** CSV export (opens in Excel) for the current filters. */
+  async exportCsv(userId: number, opts?: CatalogOrderListOpts): Promise<string> {
+    await this.requireSite(userId);
+    const where = this.buildListWhere(userId, opts);
+    const orders = await this.prisma.catalogOrder.findMany({
+      where,
+      orderBy: { createdAt: 'desc' },
+      take: 2000,
+    });
+
+    const headers = [
+      'Order Number',
+      'Created At',
+      'Status',
+      'Payment Status',
+      'Customer Name',
+      'Customer Phone',
+      'Product',
+      'Qty',
+      'Amount INR',
+      'Shipping Name',
+      'Address',
+      'City',
+      'State',
+      'Pincode',
+      'Landmark',
+      'Shipping Phone',
+      'Courier',
+      'Tracking',
+      'Shipped At',
+      'Delivered At',
+    ];
+
+    const rows = orders.map((o) => [
+      o.orderNumber,
+      o.createdAt?.toISOString() ?? '',
+      o.orderStatus,
+      o.paymentStatus,
+      o.customerName ?? '',
+      o.customerPhone ?? '',
+      o.productName,
+      String(o.quantity),
+      String(Number(o.amountInr)),
+      o.shippingName ?? '',
+      o.shippingAddressLine ?? '',
+      o.shippingCity ?? '',
+      o.shippingState ?? '',
+      o.shippingPincode ?? '',
+      o.shippingLandmark ?? '',
+      o.shippingPhone ?? '',
+      o.courierName ?? '',
+      o.trackingNumber ?? '',
+      o.shippedAt?.toISOString() ?? '',
+      o.deliveredAt?.toISOString() ?? '',
+    ]);
+
+    return [headers, ...rows].map((row) => row.map(csvEscape).join(',')).join('\r\n');
+  }
+
+  async setShippingAddress(
+    userId: number,
+    orderId: number,
+    dto: SetCatalogOrderShippingAddressDto,
+    opts?: { notifyCustomer?: boolean },
+  ) {
+    const order = await this.requireOrder(userId, orderId);
+    if (!['confirmed', 'ready_to_ship'].includes(order.orderStatus)) {
+      throw new ConflictException(
+        `Shipping address can only be set when order is confirmed or ready to ship (now: ${order.orderStatus})`,
+      );
+    }
+
+    const pincode = String(dto.shipping_pincode || '').replace(/\D/g, '').slice(0, 12);
+    if (pincode.length < 6) {
+      throw new BadRequestException('A valid 6-digit pincode is required');
+    }
+
+    const updated = await this.prisma.catalogOrder.update({
+      where: { id: order.id },
+      data: {
+        shippingName: dto.shipping_name?.trim() || order.customerName || null,
+        shippingAddressLine: dto.shipping_address_line.trim(),
+        shippingCity: dto.shipping_city?.trim() || null,
+        shippingState: dto.shipping_state?.trim() || null,
+        shippingPincode: pincode,
+        shippingLandmark: dto.shipping_landmark?.trim() || null,
+        shippingPhone: dto.shipping_phone?.trim() || order.customerPhone || null,
+        orderStatus: 'ready_to_ship',
+      },
+      include: { paymentScreenshot: true },
+    });
+
+    if (opts?.notifyCustomer !== false) {
+      void this.notify.notifyAddressReceived(userId, updated);
+    }
+
+    return { order: serializeCatalogOrder(updated, this.mediaUrl) };
+  }
+
+  async markShipped(userId: number, orderId: number, dto: MarkCatalogOrderShippedDto) {
+    const updated = await this.shipOne(userId, orderId, dto);
+    void this.notify.notifyShipped(userId, updated);
+    return { order: serializeCatalogOrder(updated, this.mediaUrl) };
+  }
+
+  /** Phase B — ship many ready_to_ship orders in one request. */
+  async bulkMarkShipped(userId: number, dto: BulkMarkCatalogOrdersShippedDto) {
+    await this.requireSite(userId);
+    const results: Array<{ order_id: number; ok: boolean; error?: string; order?: unknown }> = [];
+
+    for (const item of dto.items) {
+      try {
+        const updated = await this.shipOne(userId, item.order_id, {
+          tracking_number: item.tracking_number,
+          courier_name: item.courier_name,
+          tracking_url: item.tracking_url,
+        });
+        void this.notify.notifyShipped(userId, updated);
+        results.push({
+          order_id: item.order_id,
+          ok: true,
+          order: serializeCatalogOrder(updated, this.mediaUrl),
+        });
+      } catch (error: any) {
+        results.push({
+          order_id: item.order_id,
+          ok: false,
+          error: error?.message || 'Failed to ship',
+        });
+      }
+    }
+
+    const shipped = results.filter((r) => r.ok).length;
+    return { shipped, failed: results.length - shipped, results };
+  }
+
+  async packingSlipPdf(userId: number, orderIds: number[]): Promise<Buffer> {
+    const site = await this.requireSite(userId);
+    const uniqueIds = [...new Set(orderIds.filter((id) => Number.isFinite(id) && id > 0))];
+    if (!uniqueIds.length) {
+      throw new BadRequestException('Provide at least one order id');
+    }
+    if (uniqueIds.length > 50) {
+      throw new BadRequestException('Maximum 50 packing slips per PDF');
+    }
+
+    const orders = await this.prisma.catalogOrder.findMany({
+      where: { userId, id: { in: uniqueIds } },
+      orderBy: { createdAt: 'asc' },
+    });
+    if (!orders.length) throw new NotFoundException('No matching orders');
+
+    const byId = new Map(orders.map((o) => [o.id, o]));
+    const ordered = uniqueIds.map((id) => byId.get(id)).filter(Boolean) as typeof orders;
+
+    return this.packingSlips.buildPdf(
+      ordered.map((o) => ({
+        orderNumber: o.orderNumber,
+        productName: o.productName,
+        quantity: o.quantity,
+        amountInr: Number(o.amountInr),
+        customerName: o.customerName,
+        customerPhone: o.customerPhone,
+        shippingName: o.shippingName,
+        shippingAddressLine: o.shippingAddressLine,
+        shippingCity: o.shippingCity,
+        shippingState: o.shippingState,
+        shippingPincode: o.shippingPincode,
+        shippingLandmark: o.shippingLandmark,
+        shippingPhone: o.shippingPhone,
+        courierName: o.courierName,
+        trackingNumber: o.trackingNumber,
+        createdAt: o.createdAt,
+        businessName: site.businessName,
+      })),
+    );
+  }
+
+  private async shipOne(userId: number, orderId: number, dto: MarkCatalogOrderShippedDto) {
+    const order = await this.requireOrder(userId, orderId);
+    if (order.orderStatus !== 'ready_to_ship' && order.orderStatus !== 'confirmed') {
+      throw new ConflictException(
+        `Order can only be shipped from ready_to_ship (now: ${order.orderStatus})`,
+      );
+    }
+    if (!order.shippingAddressLine || !order.shippingPincode) {
+      throw new BadRequestException('Add a shipping address before marking as shipped');
+    }
+
+    const tracking = dto.tracking_number.trim();
+    if (tracking.length < 3) {
+      throw new BadRequestException('Tracking number is required');
+    }
+
+    const courier = dto.courier_name?.trim() || null;
+    const trackingUrl =
+      dto.tracking_url?.trim() || buildCourierTrackingUrl(courier, tracking) || null;
+
+    return this.prisma.catalogOrder.update({
+      where: { id: order.id },
+      data: {
+        orderStatus: 'shipped',
+        trackingNumber: tracking,
+        courierName: courier,
+        trackingUrl,
+        shippedAt: new Date(),
+      },
+      include: { paymentScreenshot: true },
+    });
+  }
+
+  async markDelivered(userId: number, orderId: number) {
+    const order = await this.requireOrder(userId, orderId);
+    if (order.orderStatus !== 'shipped') {
+      throw new ConflictException(
+        `Order can only be marked delivered from shipped (now: ${order.orderStatus})`,
+      );
+    }
+
+    const updated = await this.prisma.catalogOrder.update({
+      where: { id: order.id },
+      data: {
+        orderStatus: 'delivered',
+        deliveredAt: new Date(),
+      },
+      include: { paymentScreenshot: true },
+    });
+
+    void this.notify.notifyDelivered(userId, updated);
+    return { order: serializeCatalogOrder(updated, this.mediaUrl) };
+  }
+
+  private buildListWhere(userId: number, opts?: CatalogOrderListOpts): Prisma.CatalogOrderWhereInput {
+    const where: Prisma.CatalogOrderWhereInput = { userId };
+
+    if (opts?.order_status) {
+      if (!(CATALOG_ORDER_STATUSES as readonly string[]).includes(opts.order_status)) {
+        throw new BadRequestException('Invalid order_status filter');
+      }
+      where.orderStatus = opts.order_status;
+    }
+    if (opts?.payment_status) {
+      if (!(CATALOG_PAYMENT_STATUSES as readonly string[]).includes(opts.payment_status)) {
+        throw new BadRequestException('Invalid payment_status filter');
+      }
+      where.paymentStatus = opts.payment_status;
+    }
+
+    const q = opts?.q?.trim();
+    if (q) {
+      where.OR = [
+        { orderNumber: { contains: q, mode: 'insensitive' } },
+        { customerName: { contains: q, mode: 'insensitive' } },
+        { customerPhone: { contains: q, mode: 'insensitive' } },
+        { productName: { contains: q, mode: 'insensitive' } },
+        { shippingPincode: { contains: q, mode: 'insensitive' } },
+        { trackingNumber: { contains: q, mode: 'insensitive' } },
+      ];
+    }
+
+    const from = parseDayStart(opts?.from);
+    const to = parseDayEnd(opts?.to);
+    if (from || to) {
+      where.createdAt = {
+        ...(from ? { gte: from } : {}),
+        ...(to ? { lte: to } : {}),
+      };
+    }
+
+    return where;
   }
 
   async get(userId: number, orderId: number) {
@@ -406,4 +678,24 @@ export class CatalogOrdersService {
     }
     throw new ConflictException('Could not generate a unique order number — retry');
   }
+}
+
+function parseDayStart(raw?: string): Date | null {
+  if (!raw?.trim()) return null;
+  const d = new Date(`${raw.trim()}T00:00:00.000`);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
+function parseDayEnd(raw?: string): Date | null {
+  if (!raw?.trim()) return null;
+  const d = new Date(`${raw.trim()}T23:59:59.999`);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
+function csvEscape(value: string): string {
+  const s = String(value ?? '');
+  if (/[",\r\n]/.test(s)) {
+    return `"${s.replace(/"/g, '""')}"`;
+  }
+  return s;
 }

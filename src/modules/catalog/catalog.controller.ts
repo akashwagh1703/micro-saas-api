@@ -30,8 +30,11 @@ import {
   CreateCatalogOrderDto,
   CreateCatalogProductDto,
   CreateCatalogSiteDto,
+  BulkMarkCatalogOrdersShippedDto,
+  MarkCatalogOrderShippedDto,
   RejectCatalogOrderDto,
   ReorderCatalogSectionsDto,
+  SetCatalogOrderShippingAddressDto,
   UpdateCatalogCategoryDto,
   UpdateCatalogMediaDto,
   UpdateCatalogPaymentSettingsDto,
@@ -186,12 +189,15 @@ export class CatalogController {
     return this.catalog.updatePaymentSettings(userId, dto);
   }
 
-  /** Catalog commerce orders (Phase 3). */
+  /** Catalog commerce orders (Phase 3 + shipping Phase A). */
   @Get('orders')
   listOrders(
     @CurrentUser('id') userId: number,
     @Query('order_status') orderStatus?: string,
     @Query('payment_status') paymentStatus?: string,
+    @Query('q') q?: string,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
     @Query('limit') limitRaw?: string,
     @Query('offset') offsetRaw?: string,
   ) {
@@ -200,9 +206,68 @@ export class CatalogController {
     return this.orders.list(userId, {
       order_status: orderStatus,
       payment_status: paymentStatus,
+      q,
+      from,
+      to,
       limit: Number.isFinite(limit) ? limit : undefined,
       offset: Number.isFinite(offset) ? offset : undefined,
     });
+  }
+
+  /** CSV export for Excel — must be registered before orders/:id */
+  @Get('orders/export.csv')
+  async exportOrdersCsv(
+    @CurrentUser('id') userId: number,
+    @Res() res: Response,
+    @Query('order_status') orderStatus?: string,
+    @Query('payment_status') paymentStatus?: string,
+    @Query('q') q?: string,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
+  ) {
+    const csv = await this.orders.exportCsv(userId, {
+      order_status: orderStatus,
+      payment_status: paymentStatus,
+      q,
+      from,
+      to,
+    });
+    const stamp = new Date().toISOString().slice(0, 10);
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="catalog-orders-${stamp}.csv"`,
+    );
+    // BOM so Excel opens UTF-8 correctly
+    res.send(`\uFEFF${csv}`);
+  }
+
+  /** Static paths must stay above orders/:id */
+  @Get('orders/packing-slips.pdf')
+  async packingSlipsPdf(
+    @CurrentUser('id') userId: number,
+    @Query('ids') idsRaw: string | undefined,
+    @Res() res: Response,
+  ) {
+    const ids = String(idsRaw || '')
+      .split(',')
+      .map((s) => parseInt(s.trim(), 10))
+      .filter((n) => Number.isFinite(n) && n > 0);
+    const pdf = await this.orders.packingSlipPdf(userId, ids);
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader(
+      'Content-Disposition',
+      `inline; filename="packing-slips-${ids.length}.pdf"`,
+    );
+    res.send(pdf);
+  }
+
+  @Post('orders/bulk-ship')
+  bulkMarkOrdersShipped(
+    @CurrentUser('id') userId: number,
+    @Body() dto: BulkMarkCatalogOrdersShippedDto,
+  ) {
+    return this.orders.bulkMarkShipped(userId, dto);
   }
 
   @Get('orders/:id')
@@ -211,6 +276,47 @@ export class CatalogController {
     @Param('id', ParseIntPipe) id: number,
   ) {
     return this.orders.get(userId, id);
+  }
+
+  @Post('orders/:id/shipping-address')
+  setOrderShippingAddress(
+    @CurrentUser('id') userId: number,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: SetCatalogOrderShippingAddressDto,
+  ) {
+    return this.orders.setShippingAddress(userId, id, dto, { notifyCustomer: true });
+  }
+
+  @Post('orders/:id/ship')
+  markOrderShipped(
+    @CurrentUser('id') userId: number,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: MarkCatalogOrderShippedDto,
+  ) {
+    return this.orders.markShipped(userId, id, dto);
+  }
+
+  @Get('orders/:id/packing-slip.pdf')
+  async packingSlipPdf(
+    @CurrentUser('id') userId: number,
+    @Param('id', ParseIntPipe) id: number,
+    @Res() res: Response,
+  ) {
+    const pdf = await this.orders.packingSlipPdf(userId, [id]);
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader(
+      'Content-Disposition',
+      `inline; filename="packing-slip-${id}.pdf"`,
+    );
+    res.send(pdf);
+  }
+
+  @Post('orders/:id/deliver')
+  markOrderDelivered(
+    @CurrentUser('id') userId: number,
+    @Param('id', ParseIntPipe) id: number,
+  ) {
+    return this.orders.markDelivered(userId, id);
   }
 
   @Post('orders')

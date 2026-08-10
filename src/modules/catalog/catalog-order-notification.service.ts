@@ -8,6 +8,8 @@ import { SettingsService } from '../settings/settings.service';
 import { WhatsAppApiService } from '../integrations/whatsapp-api.service';
 import { OwnerNotificationsService } from '../notifications/owner-notifications.service';
 import { OwnerNotificationType } from '../notifications/owner-notification.types';
+import { formatAddressAskMessage } from './catalog-shipping-address.util';
+import { buildCourierTrackingUrl } from './catalog-tracking-url.util';
 
 function customerLabel(order: CatalogOrder): string {
   const name = order.customerName?.trim() || null;
@@ -92,22 +94,72 @@ export class CatalogOrderNotificationService {
   }
 
   async notifyConfirmed(userId: number, order: CatalogOrder): Promise<void> {
-    const customerName = order.customerName?.trim() || 'there';
+    await this.sendCustomerText(userId, order, formatAddressAskMessage(order));
+  }
+
+  async notifyAddressReceived(userId: number, order: CatalogOrder): Promise<void> {
+    const customerName = order.customerName?.trim() || order.shippingName?.trim() || 'there';
+    const addressBits = [
+      order.shippingName,
+      order.shippingAddressLine,
+      [order.shippingCity, order.shippingState].filter(Boolean).join(', '),
+      order.shippingPincode ? `PIN ${order.shippingPincode}` : null,
+      order.shippingLandmark ? `Landmark: ${order.shippingLandmark}` : null,
+    ]
+      .filter(Boolean)
+      .join('\n');
+
     await this.sendCustomerText(
       userId,
       order,
       [
-        `🎉 *Order confirmed*`,
+        `📦 *Address received*`,
         ``,
-        `Hi ${customerName}, your payment is verified and your order is confirmed.`,
+        `Hi ${customerName}, thanks — we saved your delivery address for order *${order.orderNumber}*.`,
         ``,
-        `*Confirmed order*`,
-        `Order: *${order.orderNumber}*`,
-        `Product: *${order.productName}*`,
-        `Qty: ${order.quantity}`,
-        `Amount paid: *${amountLabel(order)}*`,
+        addressBits,
         ``,
-        `Thank you for shopping with us. We will update you on next steps shortly.`,
+        `Your order is now *ready to ship*. We will message you with tracking once it is dispatched.`,
+      ].join('\n'),
+    );
+  }
+
+  async notifyShipped(userId: number, order: CatalogOrder): Promise<void> {
+    const customerName = order.customerName?.trim() || order.shippingName?.trim() || 'there';
+    const courier = order.courierName?.trim();
+    const tracking = order.trackingNumber?.trim();
+    const trackingUrl =
+      order.trackingUrl?.trim() ||
+      buildCourierTrackingUrl(order.courierName, order.trackingNumber);
+    await this.sendCustomerText(
+      userId,
+      order,
+      [
+        `🚚 *Order shipped*`,
+        ``,
+        `Hi ${customerName}, great news — your order *${order.orderNumber}* (*${order.productName}*) has been dispatched.`,
+        courier ? `Courier: *${courier}*` : null,
+        tracking ? `AWB / Tracking: *${tracking}*` : null,
+        trackingUrl ? `Track here: ${trackingUrl}` : null,
+        ``,
+        `You will receive updates from the courier as it moves. Thank you for shopping with us.`,
+      ]
+        .filter((line) => line != null)
+        .join('\n'),
+    );
+  }
+
+  async notifyDelivered(userId: number, order: CatalogOrder): Promise<void> {
+    const customerName = order.customerName?.trim() || order.shippingName?.trim() || 'there';
+    await this.sendCustomerText(
+      userId,
+      order,
+      [
+        `✅ *Order delivered*`,
+        ``,
+        `Hi ${customerName}, your order *${order.orderNumber}* (*${order.productName}*) has been marked as delivered.`,
+        ``,
+        `We hope you enjoy it. Reply here if you need any help.`,
       ].join('\n'),
     );
   }

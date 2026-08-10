@@ -12,6 +12,7 @@ import {
 } from '../workflows/incoming-workflow-matcher';
 import { normalizeWhatsAppPhone } from '../workflows/nodes/booking-node.helpers';
 import { CatalogWebsiteOrderHandler } from './catalog-website-order.handler';
+import { CatalogShippingAddressHandler } from './catalog-shipping-address.handler';
 
 const INTERACTIVE_PAUSE_NODE_TYPES = new Set([
   'pick_options',
@@ -33,6 +34,7 @@ export class IncomingMessageProcessor {
     private readonly billing: BillingService,
     private readonly careerIncoming: CareerIncomingHandler,
     private readonly websiteOrder: CatalogWebsiteOrderHandler,
+    private readonly shippingAddress: CatalogShippingAddressHandler,
     private readonly userStateService: UserStateService,
     @Inject(JOB_DISPATCHER) private readonly queue: JobDispatcher,
   ) {}
@@ -68,6 +70,11 @@ export class IncomingMessageProcessor {
 
     // Website "Order" deep link — start checkout before interactive resume / menu.
     if (await this.websiteOrder.tryHandle(message)) {
+      return;
+    }
+
+    // Delivery address reply after payment confirm.
+    if (await this.shippingAddress.tryHandle(message)) {
       return;
     }
 

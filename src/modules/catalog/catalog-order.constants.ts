@@ -8,11 +8,14 @@ export const CATALOG_PAYMENT_STATUSES = [
 
 export type CatalogPaymentStatus = (typeof CATALOG_PAYMENT_STATUSES)[number];
 
-/** Order fulfillment lifecycle (catalog commerce). */
+/** Order fulfillment lifecycle (catalog commerce + shipping Phase A). */
 export const CATALOG_ORDER_STATUSES = [
   'pending_payment',
   'pending_verification',
-  'confirmed',
+  'confirmed', // payment verified; awaiting shipping address
+  'ready_to_ship', // address collected
+  'shipped',
+  'delivered',
   'rejected',
   'cancelled',
   'completed',

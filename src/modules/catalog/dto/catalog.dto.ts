@@ -370,5 +370,89 @@ export class RejectCatalogOrderDto {
   reason?: string | null;
 }
 
+export class SetCatalogOrderShippingAddressDto {
+  @IsOptional()
+  @IsString()
+  @MaxLength(160)
+  shipping_name?: string | null;
+
+  @IsString()
+  @MinLength(5)
+  @MaxLength(500)
+  shipping_address_line!: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  shipping_city?: string | null;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  shipping_state?: string | null;
+
+  @IsString()
+  @MinLength(6)
+  @MaxLength(12)
+  shipping_pincode!: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(255)
+  shipping_landmark?: string | null;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(30)
+  shipping_phone?: string | null;
+}
+
+export class MarkCatalogOrderShippedDto {
+  @IsString()
+  @MinLength(3)
+  @MaxLength(80)
+  tracking_number!: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  courier_name?: string | null;
+
+  /** Optional override; otherwise inferred from courier + AWB. */
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  tracking_url?: string | null;
+}
+
+export class BulkShipItemDto {
+  @Type(() => Number)
+  @IsInt()
+  order_id!: number;
+
+  @IsString()
+  @MinLength(3)
+  @MaxLength(80)
+  tracking_number!: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  courier_name?: string | null;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  tracking_url?: string | null;
+}
+
+export class BulkMarkCatalogOrdersShippedDto {
+  @IsArray()
+  @ArrayMinSize(1)
+  @ValidateNested({ each: true })
+  @Type(() => BulkShipItemDto)
+  items!: BulkShipItemDto[];
+}
+
 /** Used only for OpenAPI/docs clarity; section type validation is in constants. */
 export const CATALOG_SECTION_TYPE_VALUES = [...CATALOG_SECTION_TYPES];
