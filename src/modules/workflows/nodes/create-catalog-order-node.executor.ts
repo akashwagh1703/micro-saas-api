@@ -55,7 +55,9 @@ export class CreateCatalogOrderNodeExecutor implements NodeExecutor {
         contact_id: execution.contactId ?? null,
         conversation_id: execution.conversationId ?? null,
         workflow_execution_id: execution.id,
-        notes: 'WhatsApp catalog order',
+        notes: context.catalog_website_order
+          ? 'Website catalog order'
+          : 'WhatsApp catalog order',
       });
 
       const payment = await this.orders.resolvePaymentQrUrl(execution.userId);

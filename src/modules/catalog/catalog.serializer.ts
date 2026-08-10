@@ -220,6 +220,7 @@ export function serializePublicCatalog(
     published_at: full.published_at,
     sections: full.sections.filter((s) => s.enabled),
     media: full.media,
+    categories: full.categories,
     products: full.products,
   };
 }

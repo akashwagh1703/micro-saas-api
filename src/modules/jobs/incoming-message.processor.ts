@@ -11,6 +11,7 @@ import {
   selectWorkflowForBusiness,
 } from '../workflows/incoming-workflow-matcher';
 import { normalizeWhatsAppPhone } from '../workflows/nodes/booking-node.helpers';
+import { CatalogWebsiteOrderHandler } from './catalog-website-order.handler';
 
 const INTERACTIVE_PAUSE_NODE_TYPES = new Set([
   'pick_options',
@@ -31,6 +32,7 @@ export class IncomingMessageProcessor {
     private readonly settings: SettingsService,
     private readonly billing: BillingService,
     private readonly careerIncoming: CareerIncomingHandler,
+    private readonly websiteOrder: CatalogWebsiteOrderHandler,
     private readonly userStateService: UserStateService,
     @Inject(JOB_DISPATCHER) private readonly queue: JobDispatcher,
   ) {}
@@ -63,6 +65,11 @@ export class IncomingMessageProcessor {
 
     const content = String(message.content ?? '');
     const messageChannel = message.contact.channel || 'whatsapp';
+
+    // Website "Order" deep link — start checkout before interactive resume / menu.
+    if (await this.websiteOrder.tryHandle(message)) {
+      return;
+    }
 
     const waiting = await this.prisma.workflowExecution.findFirst({
       where: {

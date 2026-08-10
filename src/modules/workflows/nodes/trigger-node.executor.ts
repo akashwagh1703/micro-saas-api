@@ -31,6 +31,16 @@ export class TriggerNodeExecutor implements NodeExecutor {
       catalogCtx.catalog_business_name = business_name;
     }
 
+    const contactName = String(context.contact_name ?? '').trim();
+    const personalizedUrl = withVisitorName(catalogCtx.catalog_url, contactName);
+    if (personalizedUrl) {
+      catalogCtx.catalog_url = personalizedUrl;
+      if (catalogCtx.catalog_is_published === '1') {
+        catalogCtx.catalog_website_block = `🌐 Explore *${catalogCtx.catalog_business_name || business_name}* online:\n\n${personalizedUrl}\n\nPhotos, products, and more — all in one place.`;
+        catalogCtx.catalog_link_block = `Browse our full catalog anytime:\n${personalizedUrl}\n\n`;
+      }
+    }
+
     return {
       success: true,
       output: {
@@ -46,5 +56,20 @@ export class TriggerNodeExecutor implements NodeExecutor {
         ...catalogCtx,
       },
     };
+  }
+}
+
+/** Appends ?n=VisitorName so the public site can greet the WhatsApp contact. */
+function withVisitorName(catalogUrl: string, contactName: string): string {
+  const base = String(catalogUrl || '').trim();
+  const name = String(contactName || '').trim();
+  if (!base || !name) return base;
+  try {
+    const url = new URL(base);
+    url.searchParams.set('n', name);
+    return url.toString();
+  } catch {
+    const sep = base.includes('?') ? '&' : '?';
+    return `${base}${sep}n=${encodeURIComponent(name)}`;
   }
 }

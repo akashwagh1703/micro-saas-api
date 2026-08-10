@@ -8,10 +8,17 @@ import { IntegrationsModule } from '../integrations/integrations.module';
 import { IncomingMessageProcessor } from './incoming-message.processor';
 import { InteractiveMessageProcessor } from './interactive-message.processor';
 import { CareerTaskProcessor } from './career-task.processor';
+import { CatalogWebsiteOrderHandler } from './catalog-website-order.handler';
 import { QueueWorker } from './queue.worker';
 
 @Module({
   imports: [SettingsModule, BillingModule, WorkflowsModule, InboxModule, CareerModule, IntegrationsModule],
-  providers: [IncomingMessageProcessor, InteractiveMessageProcessor, CareerTaskProcessor, QueueWorker],
+  providers: [
+    IncomingMessageProcessor,
+    InteractiveMessageProcessor,
+    CareerTaskProcessor,
+    CatalogWebsiteOrderHandler,
+    QueueWorker,
+  ],
 })
 export class JobsModule {}
