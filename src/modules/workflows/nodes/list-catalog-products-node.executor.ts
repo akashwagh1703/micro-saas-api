@@ -172,7 +172,7 @@ export class ListCatalogProductsNodeExecutor implements NodeExecutor {
       const hasMore = offset + pageSize < products.length;
 
       for (const product of pageProducts) {
-        await this.sendProductCard(execution, site.status === 'published', product);
+        await this.sendProductCard(execution, product);
       }
 
       const items: Array<{
@@ -309,8 +309,7 @@ export class ListCatalogProductsNodeExecutor implements NodeExecutor {
 
   private async sendProductCard(
     execution: WorkflowExecution,
-    published: boolean,
-    product: CatalogProduct & { image: { id: number } | null },
+    product: CatalogProduct & { image: { id: number; url?: string | null } | null },
   ): Promise<void> {
     if (!execution.conversationId) return;
 
@@ -324,18 +323,8 @@ export class ListCatalogProductsNodeExecutor implements NodeExecutor {
       .filter(Boolean)
       .join('\n');
 
-    let imageUrl = '';
-    if (product.imageMediaId) {
-      if (published) {
-        imageUrl = this.share.buildPublicMediaUrl(product.imageMediaId);
-      } else {
-        try {
-          imageUrl = this.share.buildSignedUrl(product.imageMediaId, execution.userId, 72);
-        } catch {
-          imageUrl = this.share.buildPublicMediaUrl(product.imageMediaId);
-        }
-      }
-    }
+    // Prefer signed URL so images work even when the brochure site is still draft.
+    const imageUrl = this.resolveProductImageUrl(execution.userId, product);
 
     if (imageUrl) {
       const result = await this.inbox.sendOutgoingImageByLink(
@@ -350,6 +339,9 @@ export class ListCatalogProductsNodeExecutor implements NodeExecutor {
         },
       );
       if (result.success) return;
+      this.logger.warn(
+        `Product image send failed for product ${product.id}: ${result.error ?? 'unknown'}`,
+      );
     }
 
     await this.jobs.enqueueSendMessage({
@@ -357,6 +349,25 @@ export class ListCatalogProductsNodeExecutor implements NodeExecutor {
       conversationId: execution.conversationId,
       content: caption,
     });
+  }
+
+  private resolveProductImageUrl(
+    userId: number,
+    product: CatalogProduct & { image: { id: number; url?: string | null } | null },
+  ): string {
+    const mediaId = product.imageMediaId ?? product.image?.id ?? null;
+    if (mediaId == null) return '';
+
+    try {
+      return this.share.buildSignedUrl(mediaId, userId, 72);
+    } catch (error: any) {
+      this.logger.warn(`Signed product image URL failed (${mediaId}): ${error?.message}`);
+    }
+
+    const stored = String(product.image?.url || '').trim();
+    if (/^https?:\/\//i.test(stored)) return stored;
+
+    return this.share.buildPublicMediaUrl(mediaId);
   }
 
   private async deliverAndPause(
